@@ -14,7 +14,7 @@ os.environ["RLM_MODEL_API_KEY"] = os.environ.get("GEMINI_API_KEY", "")
 
 config = RLMConfig.default()
 # Tell fast-rlm to use Gemini models instead of the default z-ai/minimax models
-config.primary_agent = "gemini-3.5-flash"
-config.sub_agent = "gemini-3.5-flash"
+config.primary_agent = "gemini-3.1-pro-preview"
+config.sub_agent = "gemini-3.1-pro-preview"
 
 print("✅ RLM Config created with Gemini adapter")
