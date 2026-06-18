@@ -1,5 +1,7 @@
 # CAD RLM — Skills Overview
 
+The RLM runtime must use backend bridge tools for filesystem and execution work. It should call structured tools such as `list_skills`, `read_skill`, `scan_repo`, `read_file`, `write_file`, `list_dir`, `run_pipeline`, `execute_tool`, `inspect_output`, `save_trace`, and `get_trace` and inspect the returned JSON response.
+
 Welcome to the CAD Recursive Language Model (RLM) reasoning framework. This system utilizes a set of 8 structured reasoning guidelines (skills) stored in `skills/*.md` to guide planning, compilation, verification, and error recovery.
 
 ## The Multi-Phase Pipeline
