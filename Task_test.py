@@ -7,8 +7,10 @@ from skills.skills_loader import load_skills_md, inject_skills_into_task
 
 load_dotenv()
 
+#Edit this to change the task everytime
+
 base_task = """
-Generate 50 fruit names. Count how many contain the letter 'r'.
+Design a basic 60mm x 60mm cube, Assume anything you might need.
 
 IMPORTANT INSTRUCTIONS FOR SUBAGENTS:
 1. When you spawn a subagent, you MUST pass tools explicitly
