@@ -1,16 +1,40 @@
+---
+name: repair_guidance
+version: "1.0"
+purpose: >
+  Help the Repair Sub-Agent identify the root cause of a CadQuery execution
+  traceback and apply the minimal targeted fix to produce valid, compilable code.
+used_by:
+  - repair_sub_agent (W·01 inner repair loop, max 3 attempts)
+inputs:
+  - broken_code: "The Python code string that failed"
+  - traceback: "Full Python traceback / error message from execute_cadquery"
+  - primitive_plan: "PrimitivePlan dict for parameter reference"
+outputs:
+  - fixed_code: "Corrected Python code string assigning final solid to `result`"
+tags: [repair, debugging, cadquery, errors, W01, inner-loop]
+token_budget: medium  # ~600 tokens — load only when repair is triggered
+sub_agent_contract: >
+  Return ONLY the corrected Python code string.
+  No markdown fences, no explanations.
+  Final solid MUST be assigned to `result`.
+---
+
 # Skill: Repair Guidance (Inner Loop)
 
-This guide provides strategies for the Repair Sub-Agent to identify and fix python execution tracebacks and CadQuery API errors.
+Fix CadQuery execution errors. This is used by the **Repair Sub-Agent**
+inside the **W·01 inner repair loop** (max 3 attempts).
 
-> **Sub-Agent Contract**: Always return ONLY the corrected code block. The final result must be assigned to the variable `result`.
+> **Contract**: Return ONLY the corrected Python code. No markdown, no prose.
+> The fixed code MUST assign the final solid to `result`.
 
 ---
 
-## ⚠️ Critical API Reference (Commit this to memory)
+## ⚠️ Critical API Reference
 
-CadQuery v2 does NOT have `.cone()` or `.torus()` as Workplane methods. Use the `cq.Solid` factory directly:
+CadQuery v2 does **NOT** have `.cone()` or `.torus()` as Workplane methods.
 
-| Shape | Correct API |
+| Shape | ✅ Correct API |
 |---|---|
 | Box | `cq.Workplane("XY").box(length, width, height)` |
 | Cylinder | `cq.Workplane("XY").cylinder(height, radius)` |
@@ -24,37 +48,34 @@ CadQuery v2 does NOT have `.cone()` or `.torus()` as Workplane methods. Use the 
 
 ---
 
-## Common CadQuery Errors & Fixes
+## Common Errors & Targeted Fixes
 
-### 1. `AttributeError: 'Workplane' object has no attribute 'cone'`
-The `.cone()` and `.torus()` methods do not exist on `Workplane`.
-- **Fix**: Use `cq.Workplane("XY").add(cq.Solid.makeCone(r1, r2, h))` instead.
+### Error 1 — `AttributeError: 'Workplane' has no attribute 'cone'`
+`.cone()` and `.torus()` don't exist on Workplane.
+- **Fix**: `cq.Workplane("XY").add(cq.Solid.makeCone(r1, r2, h))`
 
-### 2. Non-Manifold Solid (`BRep_API: command not done`, `Standard_ConstructionError`)
-Occurs when subtracting or unioning bodies whose faces are perfectly co-planar (zero-thickness contact) or are completely separate (disjoint).
-- **Fix for cuts**: Make the cutter `2mm` taller than the target pocket, offset by `1mm` outside the face.
-- **Fix for unions**: Ensure the primitives overlap by at least `0.1mm` before merging.
+### Error 2 — Non-Manifold (`BRep_API: command not done`, `Standard_ConstructionError`)
+Bodies whose faces are exactly co-planar or completely disjoint.
+- **Fix for cuts**: Make cutter `2mm` taller, offset `1mm` outward.
+- **Fix for unions**: Ensure overlap ≥ `0.1mm` before `.union()`.
 
-### 3. Empty Selector (`IndexError`, `.faces(">Z")` returned nothing)
-Occurs when a face selector finds no geometry because the model was rotated or the selector direction is wrong.
-- **Fix**: Use `.faces("#Z")` to find faces with a Z-normal regardless of sign, or use `.faces().item(0)` to select the first face by index.
-- Double-check that no `.translate()` or `.rotate()` moved the solid so the expected face is no longer axis-aligned.
+### Error 3 — Empty Selector (`IndexError` from `.faces(">Z")`)
+The model was rotated/translated and the face is no longer axis-aligned.
+- **Fix**: Use `.faces("#Z")` (Z-normal regardless of sign) or `.faces().item(0)`.
 
-### 4. Syntax and Import Errors
-- Always import cadquery at the top of the script: `import cadquery as cq`
-- Match all open brackets and parentheses.
-- String quotes must be consistent (`"XY"` not `'XY'` mixed mid-chain).
+### Error 4 — Syntax / Import Errors
+- Always `import cadquery as cq` at the top.
+- Match all brackets and quotes consistently.
 
-### 5. `.union()` / `.cut()` Shape Type Mismatch
-Only `Workplane` objects can be unioned or cut with other `Workplane` objects.
-- **Fix**: If using `cq.Solid.makeCone(...)` directly, wrap it first: `cq.Workplane("XY").add(solid)`.
+### Error 5 — `.union()` / `.cut()` Type Mismatch
+Only `Workplane` objects can be combined with other `Workplane` objects.
+- **Fix**: Wrap bare Solids: `cq.Workplane("XY").add(cq.Solid.makeCone(...))`.
 
 ---
 
-## Repair Sub-Agent Workflow
+## Repair Workflow
 
-1. Read the failing code and the traceback.
-2. Identify the error line and category above.
-3. Apply the targeted fix — do NOT rewrite the entire script.
-4. Ensure the final corrected object is assigned to `result`.
-5. Return ONLY the corrected Python script.
+1. Read traceback → identify error category above.
+2. Apply the **targeted** fix — do NOT rewrite the whole script.
+3. Ensure final solid is assigned to `result`.
+4. Return ONLY the corrected Python script.
