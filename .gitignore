@@ -34,3 +34,8 @@ artifacts/
 
 # Large papers / binaries
 *.pdf
+
+.pytest_cache/
+.benchmarks/
+
+

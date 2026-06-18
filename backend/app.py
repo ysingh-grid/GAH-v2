@@ -6,7 +6,9 @@ add one include_router line here. Keeps routing out of server.py.
 
 from fastapi import FastAPI
 
-from backend.primitives.routes import router as primitives_router
+
+from backend.primitives_read.routes import router as primitives_router
+from backend.skills_read.routes import router as skills_router
 
 
 def create_app() -> FastAPI:
@@ -19,4 +21,5 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": "0.1.0"}
 
     app.include_router(primitives_router)
+    app.include_router(skills_router)
     return app

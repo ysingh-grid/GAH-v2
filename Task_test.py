@@ -1,50 +1,82 @@
-import os
-from dotenv import load_dotenv
-import fast_rlm
-from rlm.rlm_config import config
-from tools.tools_registry import registry
-from skills.skills_loader import load_skills_md, inject_skills_into_task
+"""Smoke test: do the PULL tools work from INSIDE the Pyodide sandbox?
 
-load_dotenv()
+Host-Python proved the tool LOGIC. This proves the part that matters: a tool
+running in the Deno/Pyodide REPL can (a) read DTCM_BACKEND_URL from os.environ
+(injected via env_variables=), and (b) reach the host's uvicorn on
+127.0.0.1:8001 through requests.
 
-#Edit this to change the task everytime
+Prereqs:
+  - backend up:  uv run uvicorn backend.server:app --port 8001
+  - GEMINI_API_KEY set in .env  (rlm_config wires the rest)
 
-base_task = """
-Design a basic 60mm x 60mm cube, Assume anything you might need.
-
-IMPORTANT INSTRUCTIONS FOR SUBAGENTS:
-1. When you spawn a subagent, you MUST pass tools explicitly
-2. Example: await llm_query("task here", tools=[count_letter, sum_numbers])
-3. The subagent will NOT have tools unless you pass them
-4. Subagents cannot access parent REPL variables - use explicit parameters
-
-Strategy:
-1. Generate 50 fruits (or use provided list)
-2. Split into 2 groups (fruits 1-25, 26-50)
-3. Call subagent 1: "Count r's in first 25 fruits" WITH tools=[count_letter]
-4. Call subagent 2: "Count r's in second 25 fruits" WITH tools=[count_letter]
-5. Combine counts using sum_numbers tool
-6. Return FINAL(total)
+Run:
+  uv run python Task_test.py
 """
 
-skills_md = load_skills_md()
-full_task = inject_skills_into_task(base_task, skills_md)
+import fast_rlm
+from pydantic import BaseModel
 
-print("🚀 Running task with Sub-Agents calling Tools...\n")
+from rlm.rlm_config import config          # already Gemini-direct wired
+from rlm.pull_tools import (
+    list_primitives,
+    lookup_primitive,
+    list_skills,
+    read_skill,
+)
 
-tools_list = registry.get_all()
-print(f"[DEBUG] Main agent has {len(tools_list)} tools available\n")
+
+class PullProof(BaseModel):
+    primitive_count: int        # len(list_primitives())
+    box_param_names: list[str]  # keys of lookup_primitive("box")["parameters"]
+    skill_names: list[str]      # list_skills()
+    verification_planning_skill_content: str   # read_skill("verification_planning")
+
+
+task = """
+You are smoke-testing four HTTP tools pre-loaded in your REPL:
+  - list_primitives()      -> list[str]
+  - lookup_primitive(key)  -> dict
+  - list_skills()          -> list[str]
+  - read_skill(name)       -> str
+
+Do EXACTLY this, then FINAL the result:
+  1. list_primitives()             -> count them
+  2. lookup_primitive("box")       -> take the keys of its "parameters"
+  3. list_skills()
+  4. read_skill("verification_planning")        -> get the returned text
+
+FINAL a dict matching:
+  {"primitive_count": int, "box_param_names": [str],
+   "skill_names": [str], "verification_planning_skill_content": str}
+
+If ANY tool raises, FINAL with primitive_count = -1 and put the exception
+text into box_param_names so we can debug.
+"""
+
+# Flat run: 4 sequential calls need no subagent fan-out.
+config.max_depth = 1
+config.max_calls_per_subagent = 8
+
+print("🚀 PULL smoke test (tools running INSIDE the sandbox)...\n")
 
 try:
     result = fast_rlm.run(
-        full_task,
+        task,
         config=config,
-        tools=tools_list  # ← Main agent gets tools
+        prefix="smoke_pull",
+        tools=[list_primitives, lookup_primitive, list_skills, read_skill],
+        env_variables={"DTCM_BACKEND_URL": "http://127.0.0.1:8001"},
+        output_schema=PullProof,
     )
-    
-    print(f"\n✅ Final Result: {result['results']}")
-    print(f"Usage: {result['usage']}")
-    
+    r = result["results"]
+    print("\n=== PULL SMOKE RESULT ===")
+    print("primitive_count     :", r["primitive_count"])
+    print("box_param_names     :", r["box_param_names"])
+    print("skill_names         :", r["skill_names"])
+    print("verification_planning_skill_content:\n", r["verification_planning_skill_content"])
+    print("\nUsage:", result.get("usage"))
+    print("Log  :", result.get("log_file"))
+
 except Exception as e:
     print(f"❌ Error: {e}")
     import traceback

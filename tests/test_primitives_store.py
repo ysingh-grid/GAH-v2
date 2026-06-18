@@ -2,7 +2,7 @@
 
 import pytest
 
-from backend.primitives import store
+from backend.primitives_read import store
 
 
 def test_load_all_primitives_returns_full_catalog():
