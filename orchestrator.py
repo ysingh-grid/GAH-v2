@@ -29,13 +29,11 @@ load_dotenv()
 if not os.environ.get("RLM_MODEL_API_KEY"):
     raise RuntimeError("RLM_MODEL_API_KEY is missing. Please set it in your .env file.")
 
-# Intelligent endpoint router:
-# If using a Google Gemini key (which begins with "AIzaSy"), automatically use the Google AI Studio endpoint.
-# Otherwise, fall back to the defaults (OpenRouter, OpenAI, etc.).
 api_key = os.environ.get("RLM_MODEL_API_KEY", "")
-if api_key.startswith("AIzaSy"):
+if api_key.startswith("AIzaSy") or api_key.startswith("AQ."):
     os.environ["RLM_MODEL_BASE_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai"
     print(f"[INFO] Google Gemini API Key detected. Using endpoint: {os.environ['RLM_MODEL_BASE_URL']}")
+
 
 # ==========================================
 # 2. Main Execution

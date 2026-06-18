@@ -57,7 +57,8 @@ Create a `.env` file in the root directory and specify your key:
 ```env
 RLM_MODEL_API_KEY="your-gemini-api-key"
 ```
-*Note: If your key starts with `AIzaSy`, requests are automatically routed to the Google AI Studio endpoint.*
+*Note: If your key starts with `AIzaSy` or `AQ.`, requests are automatically routed to the Google AI Studio endpoint.*
+
 
 ---
 
