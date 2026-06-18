@@ -136,3 +136,8 @@ Icon
 
 # Project logs
 logs/*.jsonl
+
+# Problem statement and reference documents
+AI_Harness_ForgeCAD_Magazine.html
+Copy of Design Process.pdf
+

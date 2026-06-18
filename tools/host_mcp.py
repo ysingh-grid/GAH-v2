@@ -35,5 +35,31 @@ def execute_python_package_check() -> str:
     res = subprocess.run(["pip", "--version"], capture_output=True, text=True)
     return res.stdout.strip()
 
+@mcp.tool()
+def ask_user(question: str) -> str:
+    """Ask a question to the user to clarify requirements or get additional context.
+    
+    Args:
+        question: The question to ask the user.
+        
+    Returns:
+        The response typed by the user.
+    """
+    safe_question = question.replace('"', '\\"').replace("'", "\\'")
+    apple_script = f'display dialog "{safe_question}" default answer "" buttons {{"OK"}} default button "OK" with title "Geometry Agent Harness: Clarification"'
+    try:
+        res = subprocess.run(
+            ["osascript", "-e", apple_script],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        output = res.stdout.strip()
+        if "text returned:" in output:
+            return output.split("text returned:", 1)[1]
+        return ""
+    except Exception as e:
+        return f"Error prompting user: {e}"
+
 if __name__ == "__main__":
     mcp.run()

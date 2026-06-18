@@ -1,10 +1,4 @@
-from .calculate_string_length import calculate_string_length
-from .count_vowels import count_vowels_in_long_word
-
-REGISTRY = {
-    "string_length": calculate_string_length,
-    "count_vowels": count_vowels_in_long_word,
-}
+REGISTRY = {}
 
 
 def get_tools(names=None):

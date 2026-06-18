@@ -31,7 +31,7 @@ frequency_penalty:                            # Blank = use model default
 
 # --- (4) Orchestrator Custom Flags (Consumed by orchestrator.py) -------------
 skill:                  skills/core.md      # Path to system skill file
-schema:                 schemas/fruit_analysis.py  # Path to system schema file
+schema:                 schemas/geometry_plan.py  # Path to system schema file
 # prefix:                 block1              # Log filename prefix
 # verbose:                true                # Stream Raw Deno engine output to stdout
 # show_trace:             true                # Print execution tree on completion

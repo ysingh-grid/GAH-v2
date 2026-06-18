@@ -75,10 +75,12 @@ def load_pydantic_schema(path: Path):
 
     from pydantic import BaseModel
     for attr_name in dir(module):
+        if attr_name.startswith("_"):
+            continue
         attr = getattr(module, attr_name)
         if isinstance(attr, type) and issubclass(attr, BaseModel) and attr is not BaseModel:
-            # Wrap the found BaseModel in list[...] since the output is expected to be a list
-            return list[attr]
+            # Return the schema class directly for single-object validation
+            return attr
     raise ValueError(f"No Pydantic BaseModel subclass found in {path}")
 
 
@@ -89,25 +91,29 @@ def main():
     # ==========================================
     config, llm_kwargs, flags = load_run_config()
 
+    print("\n--- Geometry Agent Harness: Plan Stage ---")
+    user_prompt = input("Enter your CAD design request (or press enter for default: 'Design a mounting bracket for a camera enclosure to be mounted outdoors on a brick wall'): ")
+    if not user_prompt.strip():
+        user_prompt = "Design a mounting bracket for a camera enclosure to be mounted outdoors on a brick wall"
+
     payload = {
         "role_instructions": "",
         "task_instructions": (
-            "Follow guidelines: 1. Call mcp_list_tools() for tool. 2. Read 'todos.txt' for rules, analyze 5 fruits (at least 2 >=8 chars), return schema with 'mcp_tools_used' and 'file_preview' (2 lines)."
+            f"You are the Planning Agent. The user wants to design: '{user_prompt}'.\n"
+            "Your task is to create a detailed Engineering Specification and Geometric Primitive Plan.\n"
+            "CRITICAL: You must execute your commands using ```repl code blocks. You CANNOT call FINAL() in your first turn.\n"
+            "Steps:\n"
+            "1. Turn 1 (First code execution): Ask a clarifying question (e.g. about mounting, dimensions, or environment) using the host MCP tool by executing:\n"
+            "   `ans = await mcp_call(\"host_tools\", \"ask_user\", question=\"...\")`\n"
+            "   `print(\"USER_RESPONSE:\", ans)`\n"
+            "   Do not call FINAL() in this turn. Just run this code and wait.\n"
+            "2. Turn 2 (Second code execution): Read the USER_RESPONSE printed in the previous turn. Formulate requirements, assumptions, and the geometric primitives sequence, and then call `FINAL(...)` with the conforming GeometryPlan object."
         ),
         "workflow": [
             {
                 "step": 1,
-                "description": "Generate a list of 5 common fruits. Return the validated output structure.",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "fruits": {
-                            "type": "array",
-                            "items": {"type": "string"}
-                        }
-                    },
-                    "required": ["fruits"]
-                }
+                "description": "Formulate requirements, ask clarifying questions if needed, make assumptions, and output a validated geometric primitive plan.",
+                "schema": None
             }
         ]
     }
@@ -127,18 +133,12 @@ def main():
     else:
         # Fallback to the default hardcoded schema if no file is specified
         schema = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "fruit": {"type": "string", "description": "The name of the fruit"},
-                    "a_count": {"type": "integer", "description": "Number of 'a's in the name"},
-                    "name_length": {"type": "integer", "description": "Character length of the name"},
-                    "vowel_count": {"type": ["integer", "null"], "description": "The number of vowels, calculated using the tool only if name_length >= 8, otherwise NONE"},
-                    "tools_used": {"type": "object", "description": "A dictionary mapping the purpose of the call to the name of the tool function executed"},
-                },
-                "required": ["fruit", "a_count", "name_length", "vowel_count", "tools_used"],
-            }
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short descriptive title of the design project"},
+                "assumptions": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["title", "assumptions"]
         }
 
     # ==========================================
@@ -163,7 +163,7 @@ def main():
     # ==========================================
     # 6. Call fast-rlm runner
     # ==========================================
-    prefix = flags.get("prefix", "fruit_analysis")
+    prefix = flags.get("prefix", "geometry_planning")
     log_file = None
     
     # Find a python interpreter that has 'mcp' installed for our host MCP server
