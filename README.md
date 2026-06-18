@@ -77,3 +77,20 @@ outputs/                  # STEP, STL, PNG renders, trace JSON
 uv run Task_test.py   # Example multi-agent task
 uv run main.py                    # Basic entry point
 ```
+
+## RLM Backend Bridge
+
+The project also includes a FastAPI bridge for sandboxed RLM tool access. Start it from the project root:
+
+```bash
+bash scripts/start_backend.sh
+```
+
+Then run the smoke test or full backend demo:
+
+```bash
+python scripts/rlm_backend_smoke.py
+python scripts/run_full_rlm_backend_demo.py
+```
+
+The bridge exposes skills, safe repo/file access, allowlisted project tools, pipelines, output inspection, and traces through `/internal/*` JSON endpoints.
