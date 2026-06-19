@@ -1,9 +1,7 @@
-from .calculate_string_length import calculate_string_length
-from .count_vowels import count_vowels_in_long_word
+from .check_environment import check_environment
 
 REGISTRY = {
-    "string_length": calculate_string_length,
-    "count_vowels": count_vowels_in_long_word,
+    "check_environment": check_environment,
 }
 
 

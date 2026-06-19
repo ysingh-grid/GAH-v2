@@ -1,0 +1,34 @@
+# ==============================================================================
+# fast-rlm Run Configuration (run_cad.yaml)
+# ==============================================================================
+
+# --- (1) Model + Budget Settings (Mapped to RLMConfig) -----------------------
+primary_agent:          gemini-3.1-pro-preview     # The model for the root agent
+sub_agent:              gemini-3.1-pro-preview     # The model for child sub-agents
+max_depth:              3                   # Max recursion depth for sub-agents
+max_calls_per_subagent: 40                  # Max LLM calls per sub-agent run
+truncate_len:           4000                  # Max REPL output characters shown to LLM per step
+max_money_spent:        0.50                  # Hard USD budget limit
+max_completion_tokens:  60000                 # Hard completion token cap across run
+max_prompt_tokens:      1000000               # Hard prompt token cap across run
+api_max_retries:                              # Blank = use fast-rlm default (3)
+api_timeout_ms:         120000                # Per-call API timeout limit in milliseconds
+
+# --- (2) Ablation & Optimization Flags (Mapped to RLMConfig) -----------------
+# enable_tools:           false                 # Disable sandboxed local tools to force host MCP usage
+enable_structured_io:                         # Blank = use fast-rlm default (true)
+enable_compression_guard:                     # Blank = use fast-rlm default (true)
+compression_min_chars:                        # Blank = use fast-rlm default (5000)
+compression_ratio:                            # Blank = use fast-rlm default (0.6)
+
+# --- (3) LLM Generation Parameters (Mapped to llm_kwargs) ---------------------
+temperature:            0.1                   # Generation temperature
+seed:                                        # RNG seed for reproducibility
+top_p:                                        # Blank = use model default
+top_k:                                        # Blank = use model default
+presence_penalty:                             # Blank = use model default
+frequency_penalty:                            # Blank = use model default
+
+# --- (4) Orchestrator Custom Flags (Consumed by orchestrator.py) -------------
+skill:                  skills/forgecad_designer.md      # Path to system skill file
+schema:                 schemas/cad_generation.py  # Path to system schema file
