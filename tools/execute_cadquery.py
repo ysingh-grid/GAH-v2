@@ -24,13 +24,12 @@ def execute_cadquery(code: str, run_id: str) -> dict:
     import subprocess
     import tempfile
     
-    # Path setup
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    outputs_dir = os.path.join(base_dir, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
-    
-    step_path = os.path.join(outputs_dir, f"{run_id}.step")
-    stl_path = os.path.join(outputs_dir, f"{run_id}.stl")
+    # Path setup — run-scoped folder owns all artifacts for this run
+    from .artifacts import run_dir
+    outputs_dir = str(run_dir(run_id))
+
+    step_path = os.path.join(outputs_dir, "solid.step")
+    stl_path = os.path.join(outputs_dir, "solid.stl")
     
     # Python script wrapper to execute user code and extract measurements
     wrapper_script = f"""

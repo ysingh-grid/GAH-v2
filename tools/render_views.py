@@ -23,10 +23,9 @@ def render_views(stl_path: str, run_id: str) -> dict:
     import os
     import traceback
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    outputs_dir = os.path.join(base_dir, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
-    out_png = os.path.join(outputs_dir, f"{run_id}_threeview.png")
+    from .artifacts import run_dir
+    outputs_dir = str(run_dir(run_id))
+    out_png = os.path.join(outputs_dir, "threeview.png")
 
     if not os.path.exists(stl_path):
         return {"success": False, "error": f"STL file not found at {stl_path}"}
