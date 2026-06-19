@@ -101,10 +101,11 @@ def extract_email_and_phone_from_user_input(raw_input: str) -> tuple[str, str]:
    - Temporal owns coarse stage state, retries, and approval gates.
    - Geometry Runtime trace owns detailed primitive execution artifacts. Do not bloat Temporal history with primitive calls.
    - Failed verification re-enters as a new planning attempt; no hidden state mutation.
+   - **Storage model (PRD §09):** persistence = **artifact store** (one folder per run) + **Temporal history** (coarse stage state, heavy payloads by reference) + **trace JSON**. There is **no relational DB / ORM** in the MVP. The DB-flavoured items in the Production Checklist below (alembic migrations, testcontainers, ORM/SQL-injection, N+1 queries, connection pools) apply **only if** a relational store is later added — until then they are N/A.
 
 9. **Trace Capture & Evals First**
    - Every attempt must produce an auditable trace (plan, geometry evidence, visual evidence, outcome labels).
-   - **Failure Taxonomy**: Explicitly tag any workflow failure with a specific root cause (e.g., primitive gap, geometry invalidity, visual mismatch, translation drift) before saving the trace, rather than just returning a generic "Error".
+   - **Failure Taxonomy**: Explicitly tag any workflow failure with one of the **6 canonical root causes (PRD §14)** before saving the trace, rather than returning a generic "Error": `primitive_gap`, `geometry_invalidity`, `visual_mismatch`, `translation_drift`, `verifier_miss`, `user_ambiguity`. The trace failure enum MUST carry all six — the "0 silent geometry failures" gate (PRD §11) depends on every failure having a category to land in.
    - Use traces for evaluation and regression testing first. Fine-tune models only after label trust is established.
 
 10. **Clean Workspace**
@@ -246,6 +247,36 @@ GAH-v2/
 
 **Rule:** The Geometry Runtime owns the detailed primitive loop. `CadQuery` is the geometry authority for solids, `MeshLib` for inspection. `ForgeCAD` receives editable output but is NOT the geometry authority. Temporal handles coarse stages, primitive-level detail stays in trace logs.
 
+**ForgeCAD Handoff Contract** (source: github.com/KoStard/forgecad-public-kit)
+
+*What it is:* browser-based, code-first parametric CAD. A model is a `.forge.js`
+plain-JS file; the forge API (`box()`, `cylinder()`, `union()`, `difference()`,
+`fillet()`, `.shell()`, `.onFace()`, `.extrude()`, ...) is injected as GLOBALS —
+never `import` / `require`-destructure / shadow those names. Units = mm, angles =
+degrees. Volumetric primitives are centered on XY with base at Z=0 (same
+convention as our CadQuery solids).
+
+*To display + edit in the UI, the emitted artifact must:*
+1. Live in an initialized project folder (`forgecad.json` + `forgecad project init`);
+   the long-lived `forgecad studio <path>` live-updates the 3D viewport on save and
+   turns `Param.*` into interactive sliders.
+2. RETURN a renderable — a single `Shape`/`Sketch`/`ShapeGroup`/`Assembly`/`SdfShape`,
+   an array of those or named descriptors `{ name, tags?, shape|sketch|group, color? }`,
+   or a metadata object whose keys each become a named group. Ops are immutable.
+3. Declare parameters via `Param.number("Width", 90, { min, max, unit: "mm" })`
+   — these become the UI sliders.
+
+*`forgecad_emit` direction (NON-NEGOTIABLE):* emit `.forge.js` FROM the
+PrimitivePlan, NOT by converting our STEP/STL. ForgeCAD's own reconstruct skill:
+"imports are for measurement, rendering, and scoring only" — `Import.step()/mesh()`
+of our solid is not an editable deliverable and kills parametric editability.
+STEP stays the canonical artifact to validate against.
+
+*Translation-drift gate (PRD §13) is a built-in command, not custom code:*
+`forgecad compare 3d <our_canonical.step> <emitted.forge.js> --samples 5000 --json`
+returns a 0-100 similarity score (surface + feature-edge F-score, volume IoU,
+bounds/volume delta). Gate handoff on this score.
+
 **Rule:** Additional folders may be created as the system scales, but all code MUST remain simple, modular, readable, and reusable.
 
 ### RLM (Recursive Language Model) Architecture
@@ -257,7 +288,7 @@ The key components and principles of the RLM architecture in this project are:
    RLMs completely abandon rigid JSON tool-calling schemas. Instead, the language model is dropped into a live Python REPL harness. It writes actual Python code to interact with its environment, manipulate context objects, and call sub-agents or tools directly as Python functions.
    
 2. **Infinite Context via Recursion:** 
-   Instead of shoving complex spatial reasoning or dense documentation into a single prompt, RLMs handle long contexts programmatically. The Root Agent can spawn isolated child agents (e.g., via `await rlm.completion(...)`) dedicated to specific sub-tasks like `repair_guidance` or `dimension_reasoning`. The sub-agent returns its result back to the root agent's code execution state, preventing context window overflow.
+   Instead of shoving complex spatial reasoning or dense documentation into a single prompt, RLMs handle long contexts programmatically. The Root Agent can spawn isolated child agents (e.g., via `await llm_query(...)` inside the REPL) dedicated to specific sub-tasks like `repair_guidance` or `dimension_reasoning`. The sub-agent returns its result back to the root agent's code execution state, preventing context window overflow. (Top-level entry point from host Python is `fast_rlm.run(...)`; `llm_query` is the in-REPL recursion primitive — see `fast-rlm-reference`. There is no `rlm.completion`.)
 
 3. **Pluggable REPL Sandboxes:** 
    Because the agent executes raw code, the "Brain" (LLM) is decoupled from the "Environment" (Sandbox). The system supports varying levels of isolation:
