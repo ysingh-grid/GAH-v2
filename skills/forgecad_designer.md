@@ -11,7 +11,6 @@ Use this skill to generate direct ForgeCAD `.forge.js` models and compile them w
 - Do not create scratch output folders. Write only `outputs/<design_name>/model.forge.js` through the combined host tool.
 - Do not use silent `try/catch` fallbacks in generated code. If geometry must be simplified, make the simplification explicit.
 - Every generated `.forge.js` file must end with a top-level `return <shape_or_renderable>;`.
-- Stay inside one root RLM run. Do not call `llm_query` or create subagents.
 - **CRITICAL ANTI-HALLUCINATION LOOKUP RULE**: NEVER guess, invent, or assume the name, existence, or signature of any ForgeCAD function, method, class, or parameter. If you have even a shadow of doubt:
   1. You MUST call `forgecad_api_lookup(symbol)` or `forgecad_web_doc_lookup(topic)` to verify the exact definition, existence, and signature of that symbol in the reference codebase before writing it in your code!
   2. If the lookup returns a local-miss or does not exist, DO NOT write that function. Switch to a standard, verified primitive (like `box` or `cylinder`) that you have confirmed through doc lookups.
@@ -19,16 +18,15 @@ Use this skill to generate direct ForgeCAD `.forge.js` models and compile them w
 
 ## Workflow
 
-1. Call `mcp_list_tools()` once.
-2. Call `forgecad_decompose_prompt(prompt)` and `forgecad_doc_topics(prompt)`.
-   - **CRITICAL MCP LOOKUP RULE**: All `forgecad_*` lookup tools (like `forgecad_api_lookup`, `forgecad_doc_topics`, and `forgecad_decompose_prompt`) return **JSON-serialized strings** inside the Pyodide sandbox. You MUST parse them with `import json; data = json.loads(response)` before accessing their keys (e.g. `topics = json.loads(await mcp_call('host_tools', 'forgecad_doc_topics', prompt=...))['result']`).
-3. Call `forgecad_api_lookup(topic)` for the selected topics. Use `forgecad_web_doc_lookup(topic)` only when local lookup misses an API needed for compile repair. Make sure to parse the response with `json.loads(response)`.
-4. Choose one short kebab-case `design_name`.
-5. Author one sequential top-level ForgeCAD script.
-6. Call `forgecad_code_lint(js_content)` and fix all lint errors.
-7. Prefer `write_and_export_forgecad_model(design_name, js_content)` over separate write/export tools.
-8. If compilation fails, repair the ForgeCAD source using the compiler error and retry at most twice. Do not switch APIs.
-9. Return the schema-ready result from the successful combined tool call.
+1. Discover host tools using `mcp_list_tools()`.
+2. Generate a structured plan for the prompt using `forgecad_decompose_prompt(prompt)`.
+3. Select a short kebab-case `design_name`.
+4. If you are unsure of any API signatures, call `forgecad_api_lookup(symbol)` first to verify them. NEVER GUESS.
+5. Author one sequential top-level ForgeCAD `.forge.js` script that returns the final shape or grouped assembly.
+6. Call `forgecad_code_lint(js_content)` and resolve all lint issues before compilation.
+7. Compile and export the model using `write_and_export_forgecad_model(design_name, js_content)`.
+8. If compilation fails, analyze the error logs, repair the code, and re-export.
+9. Return the final successfully compiled result matching `schemas/cad_generation.py`.
 
 ## Terminal Trace
 

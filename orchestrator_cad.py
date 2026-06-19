@@ -107,6 +107,7 @@ def select_forgecad_skills(skill_override: str | None, prompt: str | None = None
         "skills/forgecad_runtime_core.md",
         "skills/forgecad_doc_index.md",
         "skills/forgecad_planner.md",
+        "skills/forgecad_delegation.md",
     ]:
         if skill_file not in selected_skills:
             selected_skills.append(skill_file)
@@ -140,8 +141,6 @@ def main():
             custom_prompt = " ".join(sys.argv[1:])
             
     config, llm_kwargs, flags = load_run_config(config_path)
-    # Single-root-RLM mode: tools may help, but no recursive LLM subagents.
-    config["max_depth"] = 0
 
     # If no custom prompt is passed on CLI, default to a robust solid triangle
     if not custom_prompt:
@@ -158,8 +157,7 @@ def main():
             "Hard constraints:\n"
             "- Generate ForgeCAD JavaScript only.\n"
             "- Never use CadQuery, Python CAD code, OpenSCAD, JSCAD, CSG, or @jscad/modeling.\n"
-            "- Never guess, invent, or assume any API names or signatures. You MUST use 'forgecad_api_lookup(symbol)' or 'forgecad_web_doc_lookup(topic)' to verify the exact signature of any function before writing it.\n"
-            "- Use one root RLM only. Do not call llm_query and do not spawn subagents.\n"
+            "- Never guess, invent, or assume any API names or signatures. If you are not 100% certain of a function's name or exact parameter ordering, you MUST use 'forgecad_api_lookup(symbol)' or 'forgecad_web_doc_lookup(topic)' to verify it in the reference codebase before writing it!\n"
             "- Do not create scratch output folders.\n"
             "- Do not use silent try/catch fallbacks.\n"
             "- Do not inspect or print full context, docs, schema, or role instructions.\n\n"
@@ -169,16 +167,15 @@ def main():
             "- Print tool output summaries and full compiler/export errors.\n"
             "- Do not print hidden chain-of-thought; use concise visible reasoning summaries only.\n\n"
             "Required workflow:\n"
-            "1. Call mcp_list_tools() exactly once to discover host tools.\n"
-            "2. Call forgecad_decompose_prompt(prompt) to get a structured scaffold.\n"
-            "3. Call forgecad_doc_topics(prompt), then forgecad_api_lookup(topic) for selected topics.\n"
-            "4. Use forgecad_web_doc_lookup(topic) only if local lookup is missing a required API or compile repair needs it.\n"
-            "5. Choose a short kebab-case design_name.\n"
-            "6. Write one clean sequential ForgeCAD .forge.js script that returns the final renderable.\n"
-            "7. Call forgecad_code_lint(js_content) and fix all lint errors before export.\n"
-            "8. Prefer write_and_export_forgecad_model(design_name, js_content) to write and export in one step. IMPORTANT: This tool returns a JSON-serialized string! You MUST parse it to a dictionary using `import json; res_dict = json.loads(res)` before returning it to `FINAL({\"results\": [res_dict]})`.\n"
-            "9. If compilation fails, print the error, use lookup/lint if needed, repair the .forge.js, and retry at most twice.\n"
-            "10. Return the final validated structure matching schemas/cad_generation.py.\n"
+            "1. Discover host tools using mcp_list_tools().\n"
+            "2. Generate a structured plan for the prompt using forgecad_decompose_prompt(prompt).\n"
+            "3. Select a short kebab-case design_name.\n"
+            "4. If you are unsure of any API signatures, call forgecad_api_lookup(symbol) first to verify them. NEVER GUESS.\n"
+            "5. Write one clean sequential ForgeCAD .forge.js script that returns the final shape or grouped assembly.\n"
+            "6. Call forgecad_code_lint(js_content) and resolve all lint issues before compilation.\n"
+            "7. Compile and export the model using write_and_export_forgecad_model(design_name, js_content).\n"
+            "8. If compilation fails, analyze the error logs, repair the code, and re-export.\n"
+            "9. Return the final successfully compiled result matching schemas/cad_generation.py.\n"
         ),
     }
     # 3. Load Output Verification Schema

@@ -75,7 +75,7 @@ TOPICS: dict[str, dict[str, Any]] = {
     "lib": {
         "url": "https://forgecad.io/docs/lib",
         "docs": ["docs/generated/lib.md"],
-        "keywords": ["lib", "library", "bolt", "screw", "nut", "washer", "gear", "bearing", "fastener", "hardware"],
+        "keywords": ["lib", "library", "modeled-screw", "bolt", "nut", "washer", "gear", "bearing", "fastener", "hardware"],
         "symbols": ["bolt", "nut", "washer", "gear", "bearing"],
         "summary": "Fasteners, gears, bearings, and reusable hardware.",
     },
@@ -124,6 +124,9 @@ FORBIDDEN_PATTERNS = [
     (r"@jscad/modeling|modeling\.primitives", "JSCAD modeling API is forbidden"),
     (r"\bmodule\.exports\b|\bexports\.", "ForgeCAD scripts should return top-level geometry, not module exports"),
     (r"\bfunction\s+main\b|\bconst\s+main\b|\blet\s+main\b", "Do not wrap generated ForgeCAD in main()"),
+    (r"\.translate\s*\(\s*\[", "NEVER pass an array to .translate([x, y, z]). Use positional arguments: .translate(x, y, z)"),
+    (r"\.rotate\s*\(\s*\[", "NEVER pass an array to .rotate([degX, degY, degZ]). Use positional arguments: .rotate(degX, degY, degZ)"),
+    (r"\.subtract\s*\(\s*\)|\.union\s*\(\s*\)", "Boolean operations cannot be empty. Pass shape operands as arguments"),
 ]
 
 
@@ -184,10 +187,18 @@ def _extract_doc_section(source: str, doc_name: str) -> str:
 
 
 def _window_for_term(text: str, term: str, radius: int = 850) -> str:
-    match = re.search(rf"(^|\n)#+\s+.*`?{re.escape(term)}`?.*?(?=\n#+\s|\Z)", text, re.IGNORECASE | re.DOTALL)
+    # 1. Prioritize precise heading block matching for the symbol (e.g. ### `symbol` or #### symbol(...))
+    heading_pattern = rf"(?:^|\n)(#+\s+[^#\n]*\b{re.escape(term)}\b[^#\n]*\n.*?)(?=(?:\n#+\s)|\Z)"
+    match = re.search(heading_pattern, text, re.IGNORECASE | re.DOTALL)
     if match:
-        snippet = match.group(0).strip()
-        return snippet[:1800]
+        snippet = match.group(1).strip()
+        return snippet[:1500]
+
+    # 2. Fallback to looser heading matching
+    match_fallback = re.search(rf"(?:^|\n)(#+\s+.*`?{re.escape(term)}`?.*.*?)(?=(?:\n#+\s)|\Z)", text, re.IGNORECASE | re.DOTALL)
+    if match_fallback:
+        snippet = match_fallback.group(1).strip()
+        return snippet[:1500]
 
     index = text.lower().find(term.lower())
     if index < 0:
@@ -385,6 +396,18 @@ def forgecad_code_lint(js_content: str) -> dict[str, Any]:
                 "severity": "error",
                 "message": f"Local declaration shadows injected ForgeCAD global: {name}",
                 "pattern": name,
+            })
+
+    # Warning for reversed cylinder arguments: cylinder(radius, height)
+    cyl_matches = re.findall(r"\bcylinder\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\)", code)
+    for r_str, h_str in cyl_matches:
+        r_val = float(r_str)
+        h_val = float(h_str)
+        if r_val > h_val * 3 and r_val > 5:
+            issues.append({
+                "severity": "warning",
+                "message": f"Possible reversed cylinder arguments: cylinder(radius, height). You passed radius={r_val}, height={h_val}. First parameter MUST be radius, second is height.",
+                "pattern": f"cylinder({r_str}, {h_str})",
             })
 
     if not re.search(r"(^|\n)\s*return\s+[^;]+;?\s*(//.*)?\s*$", code.strip()):
