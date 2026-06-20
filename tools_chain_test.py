@@ -27,8 +27,8 @@ from tools import (
     inspect_mesh,
     render_views,
     verify_geometry,
-    write_trace,
 )
+from runtime.trace import build_trace, write_trace
 from tools.artifacts import new_run_id
 
 RUN_ID = new_run_id("manual")   # e.g. manual_20260619-153012_a1b2 — fresh folder each run
@@ -106,19 +106,21 @@ print("  feedback   :", verdict["feedback"])
 
 # --- 5. write_trace: persist everything ---------------------------------
 banner(5, "write_trace (JSON artifact)")
-tr = write_trace(
+trace = build_trace(
     run_id=RUN_ID,
     prompt=prompt,
-    plan={"note": "no PrimitivePlan yet; code.py is the direct input (runtime/schema.py not built)"},
+    plan={"note": "no PrimitivePlan yet; code.py is the direct input"},
     code=code,
     execution_result=ex,
     mesh_report=mesh,
     renders=rend,
     verdict=verdict,
+    status="success",
+    attempts=1,
+    failure_category=None,
 )
-if not tr.get("success"):
-    die("write_trace", tr)
-print("  trace      :", tr["trace_path"])
+trace_path = write_trace(trace)
+print("  trace      :", trace_path)
 
 print(f"\n✅ Chain complete. Verdict passed={verdict['passed']}")
-print(f"   Inspect: {png}  and  {tr['trace_path']}")
+print(f"   Inspect: {png}  and  {trace_path}")
