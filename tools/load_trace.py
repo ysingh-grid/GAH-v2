@@ -18,7 +18,7 @@ def load_trace(run_id: str) -> dict:
     import json
     
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    trace_path = os.path.join(base_dir, "outputs", "traces", run_id, "trace.json")
+    trace_path = os.path.join(base_dir, "outputs", run_id, "trace.json")
     
     if not os.path.exists(trace_path):
         return {
@@ -52,13 +52,14 @@ def list_traces() -> list[str]:
     import os
     
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    traces_dir = os.path.join(base_dir, "outputs", "traces")
-    
-    if not os.path.exists(traces_dir):
+    outputs_dir = os.path.join(base_dir, "outputs")
+
+    if not os.path.exists(outputs_dir):
         return []
-    
+
+    # A run = any outputs/{run_id}/ folder that contains a trace.json
     return sorted([
-        d for d in os.listdir(traces_dir)
-        if os.path.isdir(os.path.join(traces_dir, d)) and
-           os.path.exists(os.path.join(traces_dir, d, "trace.json"))
+        d for d in os.listdir(outputs_dir)
+        if os.path.isdir(os.path.join(outputs_dir, d)) and
+           os.path.exists(os.path.join(outputs_dir, d, "trace.json"))
     ])

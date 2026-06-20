@@ -24,3 +24,18 @@ outputs/
 
 # Claude
 .claude/
+
+# Scratch / temp reference (fast-rlm-reference deleted after implementation)
+scratch/
+fast-rlm-reference/
+
+# Per-run artifacts (regenerated)
+artifacts/
+
+# Large papers / binaries
+*.pdf
+
+.pytest_cache/
+.benchmarks/
+
+

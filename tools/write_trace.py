@@ -9,7 +9,7 @@ def write_trace(
     verdict: dict
 ) -> dict:
     """
-    Writes a complete run execution trace as a JSON file under outputs/traces/{run_id}/trace.json.
+    Writes a complete run execution trace as a JSON file under outputs/{run_id}/trace.json.
     
     Args:
         run_id: Unique run identifier.
@@ -28,12 +28,9 @@ def write_trace(
     import json
     from datetime import datetime, timezone
     
-    # Path setup
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    trace_dir = os.path.join(base_dir, "outputs", "traces", run_id)
-    os.makedirs(trace_dir, exist_ok=True)
-    
-    trace_path = os.path.join(trace_dir, "trace.json")
+    # Path setup — trace lives alongside the run's other artifacts
+    from .artifacts import run_dir
+    trace_path = os.path.join(str(run_dir(run_id)), "trace.json")
     
     trace_data = {
         "run_id": run_id,
