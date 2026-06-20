@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GAH — Geometry-Aware Helper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="style.css">
+
+  <!--
+    Configuration (override before app.js loads):
+      window.BACKEND_URL        = 'http://localhost:8001';  // default
+      window.FORGECAD_STUDIO_URL = 'http://localhost:4000'; // set in M10 docker-compose
+  -->
+</head>
+<body>
+
+  <!-- ── Connection error banner ──────────────────────────────────────── -->
+  <div id="conn-banner"></div>
+
+  <!-- ── Header ────────────────────────────────────────────────────────── -->
+  <header>
+    <h1>GAH</h1>
+    <span>Geometry-Aware Helper · text-to-CAD</span>
+    <div id="status-badge" class="idle">Idle</div>
+  </header>
+
+  <!-- ── Main: chat | preview ──────────────────────────────────────────── -->
+  <main>
+
+    <!-- Left: Chat panel -->
+    <section id="chat-panel">
+      <div id="messages">
+
+        <!-- Initial system greeting -->
+        <div>
+          <div class="message-label">System</div>
+          <div class="message system">
+            Describe a mechanical part you want to design.
+            I'll ask a few questions, then generate the geometry for you.
+          </div>
+        </div>
+
+        <!-- Thinking dots — shown while planner is computing -->
+        <div id="thinking-indicator" style="display:none; align-items:center; gap:6px; padding:4px 0;">
+          <div class="message-label">Planner</div>
+          <div class="thinking-dots">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+
+      </div><!-- #messages -->
+
+      <!-- Input area -->
+      <div id="input-area">
+        <textarea
+          id="user-input"
+          rows="1"
+          placeholder="Describe a part, e.g. 'a 30mm hex bolt head, M8 thread'…"
+          autofocus
+        ></textarea>
+        <button id="send-btn">Send</button>
+      </div>
+    </section><!-- #chat-panel -->
+
+    <!-- Right: Preview panel -->
+    <section id="preview-panel">
+
+      <!-- Tabs -->
+      <div id="preview-tabs">
+        <div class="tab active" data-tab="forge">ForgeCAD Script</div>
+        <div class="tab" data-tab="studio">Studio</div>
+        <div class="tab" data-tab="plan">Plan JSON</div>
+      </div>
+
+      <!-- Content area -->
+      <div id="preview-content">
+
+        <!-- Generating spinner overlay -->
+        <div id="generating-overlay">
+          <div class="spinner"></div>
+          <div class="stage-label" id="gen-stage">Compiling…</div>
+        </div>
+
+        <!-- Empty state -->
+        <div id="preview-empty">
+          <div class="icon">⬡</div>
+          <p>Your generated part will appear here once the planner produces a plan.</p>
+        </div>
+
+        <!-- ForgeCAD studio iframe (populated after success + M10 studio URL) -->
+        <div id="forge-iframe-wrap">
+          <iframe
+            id="forge-iframe"
+            src="about:blank"
+            title="ForgeCAD Studio"
+            sandbox="allow-scripts allow-same-origin allow-forms"
+          ></iframe>
+        </div>
+
+        <!-- ForgeCAD .forge.js script -->
+        <div id="forge-code-wrap">
+          <pre><code id="forge-code"></code></pre>
+        </div>
+
+        <!-- PrimitivePlan JSON -->
+        <div id="plan-wrap">
+          <pre><code id="plan-json"></code></pre>
+        </div>
+
+      </div><!-- #preview-content -->
+    </section><!-- #preview-panel -->
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
