@@ -63,14 +63,15 @@ print("  faces      :", ex["faces_count"])
 print("  stl        :", ex["stl_path"])
 stl_path = ex["stl_path"]
 
-# --- 2. inspect_mesh: trimesh quality gate ------------------------------
+# --- 2. inspect_mesh: MeshLib quality gate ------------------------------
 banner(2, "inspect_mesh (mesh validity)")
 mesh = inspect_mesh(stl_path)
 if not mesh.get("success"):
     die("inspect_mesh", mesh)
 print("  watertight :", mesh["is_watertight"])
-print("  open_edges :", mesh["open_edges"], "(must be 0)")
-print("  manifold   :", mesh["is_manifold"])
+print("  open_holes :", mesh["open_holes"], "(must be 0)")
+print("  self_inter :", mesh["self_intersections"])
+print("  components :", mesh["num_components"])
 print("  passes     :", mesh["passes"])
 
 # --- 3. render_views: 3-view composite PNG ------------------------------
@@ -92,9 +93,9 @@ metrics = {
     "num_faces": ex["faces_count"],
     "is_watertight": mesh["is_watertight"],
     "is_valid": mesh["passes"],
-    "num_edges": mesh["open_edges"],
-    "normals_consistent": mesh["is_manifold"],
-    "mesh_defect_count": mesh["open_edges"],
+    "num_edges": mesh["open_holes"],
+    "normals_consistent": mesh["num_components"] == 1,
+    "mesh_defect_count": mesh["open_holes"] + mesh["self_intersections"],
 }
 
 # --- 4. verify_geometry: Gemini multimodal judge ------------------------
