@@ -196,5 +196,25 @@
     },
     "verification": ["measure_outer_radius", "measure_inner_radius", "measure_thickness"],
     "template": "cq.Workplane(\"XY\").circle({outer_radius}).circle({inner_radius}).extrude({thickness})"
+  },
+  "profile_extrude": {
+    "name": "profile_extrude",
+    "description": "Extrude an arbitrary closed 2D polygon profile (list of [x, y] points in mm) to a given height along +Z. Force-multiplier for brackets, cams, gears, and other prismatic parts the fixed primitives can't express.",
+    "parameters": {
+      "profile": {"type": "profile", "description": "Ordered list of [x, y] points (mm) forming the closed cross-section; do not repeat the first point", "default": [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]},
+      "height": {"type": "float", "description": "Extrusion height along Z", "default": 5.0}
+    },
+    "verification": ["measure_height"],
+    "template": "cq.Workplane(\"XY\").polyline({profile}).close().extrude({height})"
+  },
+  "revolve": {
+    "name": "revolve",
+    "description": "Revolve a closed 2D profile (list of [x, y] points, all x >= 0) about the Y axis to sweep a solid of revolution. Force-multiplier for bottles, nozzles, flanges, and turned parts.",
+    "parameters": {
+      "profile": {"type": "profile", "description": "Ordered list of [x, y] points (mm) with x >= 0; revolved about the line x = 0 (the Y axis)", "default": [[0.0, 0.0], [5.0, 0.0], [5.0, 10.0], [0.0, 10.0]]},
+      "angle": {"type": "float", "description": "Sweep angle in degrees (360 for a full solid of revolution)", "default": 360.0}
+    },
+    "verification": ["measure_angle"],
+    "template": "cq.Workplane(\"XY\").polyline({profile}).close().revolve({angle}, (0, 0, 0), (0, 1, 0))"
   }
 }

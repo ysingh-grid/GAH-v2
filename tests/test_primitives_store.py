@@ -8,7 +8,7 @@ from backend.primitives_read import store
 def test_load_all_primitives_returns_full_catalog():
     catalog = store.load_all_primitives()
     assert isinstance(catalog, dict)
-    assert len(catalog) == 18
+    assert len(catalog) == 20
     assert "box" in catalog
 
 

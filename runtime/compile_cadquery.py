@@ -108,7 +108,8 @@ def _accumulate_line(step: PrimitiveStep, index: int) -> str:
         return f"result = result.cut({var})"
     raise CompileError(
         f"operation '{step.operation.value}' (step '{step.id}') is not supported by the "
-        f"CadQuery compiler yet (finish/modifier ops arrive in M4)"
+        f"CadQuery compiler yet (finish/modifier ops — fillet/chamfer/shell on the body — "
+        f"are a planned additive extension; basic fillet/chamfer shapes exist as primitives)"
     )
 
 

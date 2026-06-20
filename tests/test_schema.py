@@ -184,8 +184,10 @@ def test_int_param_given_float_is_reported():
     assert any("expects int" in e for e in errors)
 
 
-def test_load_library_returns_eighteen_primitives():
+def test_load_library_returns_full_catalog():
     library = schema.load_library()
     assert isinstance(library, dict)
-    assert len(library) == 18
+    assert len(library) == 20
     assert "box" in library
+    assert "profile_extrude" in library
+    assert "revolve" in library
