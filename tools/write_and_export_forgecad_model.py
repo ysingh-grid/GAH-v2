@@ -25,14 +25,16 @@ def write_and_export_forgecad_model(design_name: str, js_content: str) -> dict[s
 
     js_path = Path("outputs") / design_name / "model.forge.js"
     stl_path = Path("outputs") / design_name / "model.stl"
+    step_path = Path("outputs") / design_name / "model.step"
 
     write_workspace_file(js_path.as_posix(), js_content)
     try:
-        logs = export_forgecad_to_stl(js_path.as_posix(), stl_path.as_posix())
+        logs = export_forgecad_to_stl(js_path.as_posix(), stl_path.as_posix(), step_path.as_posix())
         return {
             "design_name": design_name,
             "js_file_path": js_path.as_posix(),
             "stl_file_path": stl_path.as_posix(),
+            "step_file_path": step_path.as_posix(),
             "success": True,
             "compilation_logs": logs,
         }
@@ -41,6 +43,7 @@ def write_and_export_forgecad_model(design_name: str, js_content: str) -> dict[s
             "design_name": design_name,
             "js_file_path": js_path.as_posix(),
             "stl_file_path": stl_path.as_posix(),
+            "step_file_path": step_path.as_posix(),
             "success": False,
             "compilation_logs": str(e),
         }

@@ -5,6 +5,7 @@ class CADGenerationResult(BaseModel):
     design_name: str
     js_file_path: str = Field(pattern=r"^outputs/[a-zA-Z0-9_-]+/model\.forge\.js$")
     stl_file_path: str = Field(pattern=r"^outputs/[a-zA-Z0-9_-]+/model\.stl$")
+    step_file_path: str = Field(pattern=r"^outputs/[a-zA-Z0-9_-]+/model\.step$")
     success: Literal[True]
     compilation_logs: str
 
