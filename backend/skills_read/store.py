@@ -6,8 +6,11 @@ _SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
 
 def load_all_skills() -> list[str]:
-    """Names of every skill guide, e.g. ['overview', 'intent_extraction', ...]."""
-    return sorted(p.stem for p in _SKILLS_DIR.glob("*.md"))
+    """Names of every skill guide, e.g. ['playbook', 'intent_extraction', ...].
+
+    SKILLS.md is the human index, not a skill — excluded.
+    """
+    return sorted(p.stem for p in _SKILLS_DIR.glob("*.md") if p.stem != "SKILLS")
 
 
 def read_skill(name: str) -> str:

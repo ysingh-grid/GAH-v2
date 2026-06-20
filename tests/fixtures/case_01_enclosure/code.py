@@ -6,7 +6,7 @@ fillet_r = 4.0                  # vertical-edge fillet
 wall = 2.0                      # shell wall thickness
 boss_d, boss_h = 8.0, 28.0      # screw boss diameter / height
 hole_d = 3.0                    # through-hole diameter
-bx, by = 27.0, 17.0            # boss offsets from center (X, Y)
+bx, by = 27.0, 17.0            # boss offsets from center (X, Y) original value is 27x17
 
 pts = [(bx, by), (bx, -by), (-bx, by), (-bx, -by)]   # 4 symmetric positions
 

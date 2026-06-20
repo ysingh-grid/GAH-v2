@@ -45,8 +45,9 @@ def lookup_primitive(key: str) -> dict:
 def list_skills() -> list[str]:
     """Return the names of every reasoning-guide skill available.
 
-    The RLM calls this to see which guides it can pull in to reason about
-    intent, decomposition, dimensions, repair, etc.
+    The RLM's live catalog of guides. Playbook names the core read-order, but
+    this reads the skills dir directly — so newly-added guides are discoverable
+    even before the playbook mentions them.
     """
     import os
     import requests
@@ -57,12 +58,11 @@ def list_skills() -> list[str]:
     return resp.json()
 
 
-
 def read_skill(name: str) -> str:
     """Return the full markdown text of one skill guide.
 
-    The RLM calls this after list_skills to actually read a guide's
-    reasoning instructions into its working context.
+    Call after list_skills (or with a name from the playbook) to read a guide's
+    reasoning instructions into your working context.
     """
     import os
     import requests

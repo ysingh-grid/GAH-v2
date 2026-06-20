@@ -45,7 +45,7 @@ def list_skills() -> list[str]:
         
     skills = []
     for f in os.listdir(skills_dir):
-        if f.endswith(".md"):
+        if f.endswith(".md") and f != "SKILLS.md":   # SKILLS.md is the index, not a skill
             skills.append(f[:-3])
-            
+
     return sorted(skills)
