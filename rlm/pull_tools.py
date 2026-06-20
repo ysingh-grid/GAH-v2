@@ -1,3 +1,12 @@
+# mypy: ignore-errors
+# These are PULL TOOLS executed inside the RLM's Pyodide sandbox via
+# inspect.getsource. Each function must be self-contained (imports inside the
+# body, no module-level deps) and use only builtin annotations (bare `dict`,
+# `list[str]`) because `typing.Any` is not importable in the REPL. mypy --strict
+# would demand `dict[str, Any]`, which would NameError at REPL exec time, so we
+# exempt this one file from type-checking by design.
+
+
 def list_primitives() -> list[str]:
     """Return the keys of every primitive in the catalog.
 
@@ -9,6 +18,7 @@ def list_primitives() -> list[str]:
   we hand it in. Bracket access (not .get) so a missing var fails loud.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -18,15 +28,14 @@ def list_primitives() -> list[str]:
     return list(resp.json().keys())
 
 
-
 def lookup_primitive(key: str) -> dict:
-
     """Return the full spec of one primitive: params, verification, template.
 
     The RLM calls this once it has picked a shape and needs its real
     parameter names and constraints to fill the plan correctly.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -39,9 +48,6 @@ def lookup_primitive(key: str) -> dict:
     return resp.json()
 
 
-
-
-
 def list_skills() -> list[str]:
     """Return the names of every reasoning-guide skill available.
 
@@ -50,6 +56,7 @@ def list_skills() -> list[str]:
     even before the playbook mentions them.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -65,6 +72,7 @@ def read_skill(name: str) -> str:
     reasoning instructions into your working context.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -75,3 +83,22 @@ def read_skill(name: str) -> str:
     )
     resp.raise_for_status()
     return resp.text
+
+
+def web_search(query: str) -> dict:
+    """Search the web for a real-world measurement or standard.
+
+    Use during the chat to look up values the user may not know (e.g. standard
+    DIN-rail width, an M5 clearance hole, a typical wall thickness) and then
+    ALWAYS offer the user concrete options to choose from. Returns
+    {"query", "answer", "sources": [{"title", "uri"}]}; an "error" key (and
+    empty answer) means the lookup found nothing — treat that as "ask the user".
+    """
+    import os
+
+    import requests
+
+    base = os.environ["DTCM_BACKEND_URL"]
+    resp = requests.get(f"{base}/internal/web-search", params={"q": query}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
