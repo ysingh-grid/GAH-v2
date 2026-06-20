@@ -1,11 +1,12 @@
-from .read_skill import read_skill, list_skills
-from .primitive_lookup import lookup_primitive, list_primitives
 from .execute_cadquery import execute_cadquery
 from .inspect_mesh import inspect_mesh
-from .repair_mesh import repair_mesh
+from .load_trace import list_traces, load_trace
+from .primitive_lookup import list_primitives, lookup_primitive
+from .read_skill import list_skills, read_skill
 from .render_views import render_views
+from .repair_mesh import repair_mesh
+from .run_forgecad import run_forgecad
 from .verify_geometry import verify_geometry
-from .load_trace import load_trace, list_traces
 
 __all__ = [
     "read_skill",
@@ -19,4 +20,5 @@ __all__ = [
     "verify_geometry",
     "load_trace",
     "list_traces",
+    "run_forgecad",
 ]

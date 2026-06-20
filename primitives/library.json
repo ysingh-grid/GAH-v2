@@ -8,7 +8,8 @@
       "height": {"type": "float", "description": "Size along the Z axis", "default": 10.0}
     },
     "verification": ["measure_length", "measure_width", "measure_height"],
-    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height})"
+    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height})",
+    "forge_template": "box({length}, {width}, {height})"
   },
   "cylinder": {
     "name": "cylinder",
@@ -18,7 +19,8 @@
       "height": {"type": "float", "description": "Height along the cylinder axis", "default": 10.0}
     },
     "verification": ["measure_radius", "measure_height"],
-    "template": "cq.Workplane(\"XY\").cylinder({height}, {radius})"
+    "template": "cq.Workplane(\"XY\").cylinder({height}, {radius})",
+    "forge_template": "cylinder({height}, {radius})"
   },
   "cone": {
     "name": "cone",
@@ -29,7 +31,8 @@
       "height": {"type": "float", "description": "Height along the cone axis", "default": 10.0}
     },
     "verification": ["measure_base_diameter", "measure_top_diameter", "measure_height"],
-    "template": "cq.Workplane(\"XY\").add(cq.Solid.makeCone({base_diameter}/2.0, {top_diameter}/2.0, {height}))"
+    "template": "cq.Workplane(\"XY\").add(cq.Solid.makeCone({base_diameter}/2.0, {top_diameter}/2.0, {height}))",
+    "forge_template": "cylinder({height}, {base_diameter}/2.0, {top_diameter}/2.0)"
   },
   "sphere": {
     "name": "sphere",
@@ -38,7 +41,8 @@
       "radius": {"type": "float", "description": "Radius of the sphere", "default": 5.0}
     },
     "verification": ["measure_radius"],
-    "template": "cq.Workplane(\"XY\").sphere({radius})"
+    "template": "cq.Workplane(\"XY\").sphere({radius})",
+    "forge_template": "sphere({radius})"
   },
   "torus": {
     "name": "torus",
@@ -48,7 +52,8 @@
       "tube_radius": {"type": "float", "description": "Radius of the tube", "default": 2.0}
     },
     "verification": ["measure_ring_radius", "measure_tube_radius"],
-    "template": "cq.Workplane(\"XY\").add(cq.Solid.makeTorus({ring_radius}, {tube_radius}))"
+    "template": "cq.Workplane(\"XY\").add(cq.Solid.makeTorus({ring_radius}, {tube_radius}))",
+    "forge_template": "_torus({ring_radius}, {tube_radius})"
   },
   "wedge": {
     "name": "wedge",
@@ -63,7 +68,8 @@
       "ymax": {"type": "float", "description": "End position on Y", "default": 5.0}
     },
     "verification": ["measure_dx", "measure_dy", "measure_dz"],
-    "template": "cq.Workplane(\"XY\").wedge({dx}, {dy}, {dz}, {xmin}, {ymin}, {xmax}, {ymax})"
+    "template": "cq.Workplane(\"XY\").wedge({dx}, {dy}, {dz}, {xmin}, {ymin}, {xmax}, {ymax})",
+    "forge_template": "_wedge({dx}, {dy}, {dz}, {xmin}, {ymin}, {xmax}, {ymax})"
   },
   "pyramid": {
     "name": "pyramid",
@@ -75,7 +81,8 @@
       "taper_angle": {"type": "float", "description": "Taper angle in degrees", "default": 30.0}
     },
     "verification": ["measure_length", "measure_width", "measure_height"],
-    "template": "cq.Workplane(\"XY\").rect({length}, {width}).extrude({height}, taper={taper_angle})"
+    "template": "cq.Workplane(\"XY\").rect({length}, {width}).extrude({height}, taper={taper_angle})",
+    "forge_template": "rect({length}, {width}).extrude({height}, {{scaleTop: 0.0, divisions: 2}})"
   },
   "prism": {
     "name": "prism",
@@ -86,7 +93,8 @@
       "height": {"type": "float", "description": "Height of extrusion", "default": 10.0}
     },
     "verification": ["measure_sides", "measure_radius", "measure_height"],
-    "template": "cq.Workplane(\"XY\").polygon({sides}, {radius}*2.0).extrude({height})"
+    "template": "cq.Workplane(\"XY\").polygon({sides}, {radius}*2.0).extrude({height})",
+    "forge_template": "ngon({sides}, {radius}).extrude({height})"
   },
   "hexagon_prism": {
     "name": "hexagon_prism",
@@ -96,7 +104,8 @@
       "height": {"type": "float", "description": "Height of the prism", "default": 10.0}
     },
     "verification": ["measure_flat_to_flat", "measure_height"],
-    "template": "cq.Workplane(\"XY\").polygon(6, {flat_to_flat}, circumscribed=True).extrude({height})"
+    "template": "cq.Workplane(\"XY\").polygon(6, {flat_to_flat}, circumscribed=True).extrude({height})",
+    "forge_template": "ngon(6, {flat_to_flat} / Math.sqrt(3)).extrude({height})"
   },
   "octagonal_prism": {
     "name": "octagonal_prism",
@@ -106,7 +115,8 @@
       "height": {"type": "float", "description": "Height of the prism", "default": 10.0}
     },
     "verification": ["measure_flat_to_flat", "measure_height"],
-    "template": "cq.Workplane(\"XY\").polygon(8, {flat_to_flat}, circumscribed=True).extrude({height})"
+    "template": "cq.Workplane(\"XY\").polygon(8, {flat_to_flat}, circumscribed=True).extrude({height})",
+    "forge_template": "ngon(8, {flat_to_flat} / (2 * Math.cos(Math.PI / 8))).extrude({height})"
   },
   "hollow_cylinder": {
     "name": "hollow_cylinder",
@@ -117,7 +127,8 @@
       "height": {"type": "float", "description": "Height", "default": 10.0}
     },
     "verification": ["measure_outer_radius", "measure_inner_radius", "measure_height"],
-    "template": "cq.Workplane(\"XY\").circle({outer_radius}).circle({inner_radius}).extrude({height})"
+    "template": "cq.Workplane(\"XY\").circle({outer_radius}).circle({inner_radius}).extrude({height})",
+    "forge_template": "cylinder({height}, {outer_radius}).subtract(cylinder({height}, {inner_radius}))"
   },
   "hollow_box": {
     "name": "hollow_box",
@@ -129,7 +140,8 @@
       "wall_thickness": {"type": "float", "description": "Wall thickness", "default": 1.0}
     },
     "verification": ["measure_length", "measure_width", "measure_height", "measure_wall_thickness"],
-    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).faces(\">Z\").shell(-{wall_thickness})"
+    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).faces(\">Z\").shell(-{wall_thickness})",
+    "forge_template": "box({length}, {width}, {height}).subtract(box({length} - {wall_thickness}*2, {width} - {wall_thickness}*2, {height}).translate(0, 0, {wall_thickness}))"
   },
   "ellipsoid": {
     "name": "ellipsoid",
@@ -139,7 +151,8 @@
       "z_radius": {"type": "float", "description": "Radius along Z axis", "default": 3.0}
     },
     "verification": ["measure_x_radius", "measure_z_radius"],
-    "template": "cq.Workplane(\"XY\").ellipseArc({x_radius}, {z_radius}, 0, 180).close().revolve()"
+    "template": "cq.Workplane(\"XY\").ellipseArc({x_radius}, {z_radius}, 0, 180).close().revolve()",
+    "forge_template": "_ellipsoid({x_radius}, {z_radius})"
   },
   "capsule": {
     "name": "capsule",
@@ -149,7 +162,8 @@
       "length": {"type": "float", "description": "Length of the cylindrical body", "default": 8.0}
     },
     "verification": ["measure_radius", "measure_length"],
-    "template": "cq.Workplane(\"XY\").cylinder({length}, {radius}).union(cq.Workplane(\"XY\").workplane(offset={length}/2.0).sphere({radius})).union(cq.Workplane(\"XY\").workplane(offset=-{length}/2.0).sphere({radius}))"
+    "template": "cq.Workplane(\"XY\").cylinder({length}, {radius}).union(cq.Workplane(\"XY\").workplane(offset={length}/2.0).sphere({radius})).union(cq.Workplane(\"XY\").workplane(offset=-{length}/2.0).sphere({radius}))",
+    "forge_template": "union(cylinder({length}, {radius}), sphere({radius}).translate(0, 0, {length}/2), sphere({radius}).translate(0, 0, -{length}/2))"
   },
   "chamfered_box": {
     "name": "chamfered_box",
@@ -161,7 +175,8 @@
       "chamfer_val": {"type": "float", "description": "Chamfer dimension", "default": 1.0}
     },
     "verification": ["measure_length", "measure_width", "measure_height", "measure_chamfer"],
-    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).chamfer({chamfer_val})"
+    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).chamfer({chamfer_val})",
+    "forge_template": "chamfer(box({length}, {width}, {height}), {chamfer_val})"
   },
   "filleted_box": {
     "name": "filleted_box",
@@ -173,7 +188,8 @@
       "fillet_val": {"type": "float", "description": "Fillet radius", "default": 1.0}
     },
     "verification": ["measure_length", "measure_width", "measure_height", "measure_fillet"],
-    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).fillet({fillet_val})"
+    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).fillet({fillet_val})",
+    "forge_template": "fillet(box({length}, {width}, {height}), {fillet_val})"
   },
   "rounded_cylinder": {
     "name": "rounded_cylinder",
@@ -184,7 +200,8 @@
       "fillet_val": {"type": "float", "description": "Fillet radius on the cylinder edges", "default": 0.5}
     },
     "verification": ["measure_radius", "measure_height", "measure_fillet"],
-    "template": "cq.Workplane(\"XY\").cylinder({height}, {radius}).edges().fillet({fillet_val})"
+    "template": "cq.Workplane(\"XY\").cylinder({height}, {radius}).edges().fillet({fillet_val})",
+    "forge_template": "fillet(cylinder({height}, {radius}), {fillet_val})"
   },
   "ring": {
     "name": "ring",
@@ -195,7 +212,8 @@
       "thickness": {"type": "float", "description": "Thickness of the ring", "default": 2.0}
     },
     "verification": ["measure_outer_radius", "measure_inner_radius", "measure_thickness"],
-    "template": "cq.Workplane(\"XY\").circle({outer_radius}).circle({inner_radius}).extrude({thickness})"
+    "template": "cq.Workplane(\"XY\").circle({outer_radius}).circle({inner_radius}).extrude({thickness})",
+    "forge_template": "cylinder({thickness}, {outer_radius}).subtract(cylinder({thickness}, {inner_radius}))"
   },
   "profile_extrude": {
     "name": "profile_extrude",
@@ -205,7 +223,8 @@
       "height": {"type": "float", "description": "Extrusion height along Z", "default": 5.0}
     },
     "verification": ["measure_height"],
-    "template": "cq.Workplane(\"XY\").polyline({profile}).close().extrude({height})"
+    "template": "cq.Workplane(\"XY\").polyline({profile}).close().extrude({height})",
+    "forge_template": "polygon({profile}).extrude({height})"
   },
   "revolve": {
     "name": "revolve",
@@ -215,6 +234,7 @@
       "angle": {"type": "float", "description": "Sweep angle in degrees (360 for a full solid of revolution)", "default": 360.0}
     },
     "verification": ["measure_angle"],
-    "template": "cq.Workplane(\"XY\").polyline({profile}).close().revolve({angle}, (0, 0, 0), (0, 1, 0))"
+    "template": "cq.Workplane(\"XY\").polyline({profile}).close().revolve({angle}, (0, 0, 0), (0, 1, 0))",
+    "forge_template": "polygon({profile}).revolve({angle})"
   }
 }
