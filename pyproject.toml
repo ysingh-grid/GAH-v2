@@ -7,13 +7,9 @@ requires-python = ">=3.11"
 dependencies = [
     "cadquery>=2.7.0",
     "deno>=2.8.3",
-    "fastapi>=0.115.0",
     "fast-rlm>=0.1.18",
     "matplotlib>=3.11.0",
-    "pydantic-settings>=2.0.0",
-    "pytest>=8.0.0",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "trimesh>=4.12.2",
-    "uvicorn>=0.30.0",
 ]
