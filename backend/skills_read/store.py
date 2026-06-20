@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 # parents[2] = repo root (store.py -> skills_read -> backend -> ROOT), then /skills

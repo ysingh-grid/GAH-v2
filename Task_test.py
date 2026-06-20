@@ -16,20 +16,20 @@ Run:
 import fast_rlm
 from pydantic import BaseModel
 
-from rlm.rlm_config import config          # already Gemini-direct wired
 from rlm.pull_tools import (
     list_primitives,
-    lookup_primitive,
     list_skills,
+    lookup_primitive,
     read_skill,
 )
+from rlm.rlm_config import config  # already Gemini-direct wired
 
 
 class PullProof(BaseModel):
-    primitive_count: int        # len(list_primitives())
+    primitive_count: int  # len(list_primitives())
     box_param_names: list[str]  # keys of lookup_primitive("box")["parameters"]
-    skill_names: list[str]      # list_skills()
-    verification_planning_skill_content: str   # read_skill("verification_planning")
+    skill_names: list[str]  # list_skills()
+    verification_planning_skill_content: str  # read_skill("verification_planning")
 
 
 task = """
@@ -80,4 +80,5 @@ try:
 except Exception as e:
     print(f"❌ Error: {e}")
     import traceback
+
     traceback.print_exc()

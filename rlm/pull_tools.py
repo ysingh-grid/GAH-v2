@@ -9,6 +9,7 @@ def list_primitives() -> list[str]:
   we hand it in. Bracket access (not .get) so a missing var fails loud.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -18,15 +19,14 @@ def list_primitives() -> list[str]:
     return list(resp.json().keys())
 
 
-
 def lookup_primitive(key: str) -> dict:
-
     """Return the full spec of one primitive: params, verification, template.
 
     The RLM calls this once it has picked a shape and needs its real
     parameter names and constraints to fill the plan correctly.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -39,9 +39,6 @@ def lookup_primitive(key: str) -> dict:
     return resp.json()
 
 
-
-
-
 def list_skills() -> list[str]:
     """Return the names of every reasoning-guide skill available.
 
@@ -50,6 +47,7 @@ def list_skills() -> list[str]:
     even before the playbook mentions them.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -65,6 +63,7 @@ def read_skill(name: str) -> str:
     reasoning instructions into your working context.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]

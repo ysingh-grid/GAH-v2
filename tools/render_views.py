@@ -24,6 +24,7 @@ def render_views(stl_path: str, run_id: str) -> dict:
     import traceback
 
     from .artifacts import run_dir
+
     outputs_dir = str(run_dir(run_id))
     out_png = os.path.join(outputs_dir, "threeview.png")
 

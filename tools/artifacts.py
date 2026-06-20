@@ -5,9 +5,10 @@ where to write, instead of each recomputing the repo root. Single source of trut
 for "where do artifacts live" — swap outputs/ for blob storage later by editing
 only this file. This is the MVP stand-in for the PRD "artifact store".
 """
-from pathlib import Path
-from datetime import datetime, timezone
+
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 # this file = <repo>/tools/artifacts.py  ->  parent.parent = repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -20,7 +21,7 @@ def new_run_id(label: str | None = None) -> str:
     UTC timestamp (so `ls` sorts chronologically) + 4 hex chars (collision guard).
     Pass `label` to prefix it, e.g. new_run_id("manual") -> 'manual_20260619-153012_a1b2'.
     """
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     short = uuid.uuid4().hex[:4]
     base = f"{ts}_{short}"
     return f"{label}_{base}" if label else base
