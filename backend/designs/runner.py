@@ -23,12 +23,13 @@ from typing import Any
 
 from backend.designs.models import DesignSession
 from runtime.compile_forge import compile_plan_to_forge
-from runtime.loop import run_geometry_loop
+from runtime.loop import LoopResult, run_geometry_loop
 from runtime.planner import PlannerOutput, run_planner_turn
-from runtime.schema import load_library, plan_to_dict
+from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from tools.artifacts import new_run_id
 
 _BACKEND_URL_DEFAULT = os.environ.get("BACKEND_URL", "http://localhost:8001")
+_USE_TEMPORAL = bool(os.environ.get("TEMPORAL_HOST"))
 
 # Callable the routes layer passes so we can swap WebSocket.send_json for tests.
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
@@ -77,7 +78,7 @@ async def run_chat_turn(
         )
         return
 
-    # ── 2. plan_ready → geometry loop (blocking → thread) ────────────────────
+    # ── 2. plan_ready → geometry loop ────────────────────────────────────────
     plan = output.plan
     if plan is None:
         await send({"type": "error", "message": "planner returned plan_ready with no plan"})
@@ -89,6 +90,22 @@ async def run_chat_turn(
 
     await send({"type": "generating", "stage": "cadquery_compile"})
 
+    if _USE_TEMPORAL:
+        await _run_via_temporal(session, plan, run_id, send, backend_url=backend_url)
+    else:
+        await _run_in_process(session, plan, run_id, send, backend_url=backend_url, ev_loop=ev_loop)
+
+
+async def _run_in_process(
+    session: DesignSession,
+    plan: PrimitivePlan,
+    run_id: str,
+    send: SendFn,
+    *,
+    backend_url: str,
+    ev_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Original path: geometry loop runs in a thread-pool executor."""
     library = load_library()
     planner_fn = _make_planner_fn(backend_url)
 
@@ -108,7 +125,82 @@ async def run_chat_turn(
         await send({"type": "error", "message": str(exc)})
         return
 
-    # ── 3. Emit outcome event ─────────────────────────────────────────────────
+    await _emit_loop_result(session, plan, result, run_id, send, ev_loop=ev_loop)
+
+
+async def _run_via_temporal(
+    session: DesignSession,
+    plan: PrimitivePlan,
+    run_id: str,
+    send: SendFn,
+    *,
+    backend_url: str,
+) -> None:
+    """Temporal path: start a DesignWorkflow and await its result."""
+    from temporal.client import get_client
+    from temporal.shared import DesignInput
+    from temporal.workflow import DesignWorkflow
+
+    plan_dict = plan_to_dict(plan)
+    inp = DesignInput(
+        original_prompt=session.original_prompt,
+        plan_dict=plan_dict,
+        run_id=run_id,
+        backend_url=backend_url,
+    )
+
+    try:
+        client = await get_client()
+        result_dc = await client.execute_workflow(
+            DesignWorkflow.run,
+            inp,
+            id=run_id,
+            task_queue=os.environ.get("TEMPORAL_TASK_QUEUE", "design"),
+        )
+    except Exception as exc:
+        session.status = "failed"
+        await send({"type": "error", "message": f"Temporal error: {exc}"})
+        return
+
+    # Map DesignResult dataclass → WS events
+    if result_dc.status == "success":
+        session.forge_js = result_dc.forge_js or None
+        session.status = "done"
+        await send(
+            {
+                "type": "success",
+                "forge_js": result_dc.forge_js or None,
+                "run_id": run_id,
+                "plan": result_dc.final_plan,
+            }
+        )
+    elif result_dc.status == "needs_user":
+        question = result_dc.question or "Can you clarify the design requirements?"
+        session.status = "needs_user"
+        session.history.append({"role": "planner", "content": question})
+        await send({"type": "needs_user", "question": question, "options": []})
+    else:
+        session.status = "failed"
+        await send(
+            {
+                "type": "failed",
+                "category": result_dc.failure_category or "unknown",
+                "message": result_dc.message,
+            }
+        )
+
+
+async def _emit_loop_result(
+    session: DesignSession,
+    plan: PrimitivePlan,
+    result: LoopResult,
+    run_id: str,
+    send: SendFn,
+    *,
+    ev_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Translate a LoopResult into WS events (in-process path)."""
+    library = load_library()
     if result.status == "success":
         try:
             forge_js: str | None = await ev_loop.run_in_executor(
@@ -126,13 +218,11 @@ async def run_chat_turn(
                 "plan": result.final_plan,
             }
         )
-
     elif result.status == "needs_user":
         question = result.question or "Can you clarify the design requirements?"
         session.status = "needs_user"
         session.history.append({"role": "planner", "content": question})
         await send({"type": "needs_user", "question": question, "options": []})
-
     else:
         session.status = "failed"
         await send(

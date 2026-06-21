@@ -1,18 +1,23 @@
 # GAH v2 — docker-compose
 #
-# Default (backend only):
+# Default (backend only, geometry loop runs in-process):
 #   docker compose up
 #
-# With ForgeCAD Studio embedded in the browser:
-#   docker compose --profile studio up
+# With Temporal durability (geometry loop runs in a durable workflow):
+#   docker compose --profile temporal up
 #
-# The frontend is served by the backend at http://localhost:8001/ui/
-# When the studio profile is active, FORGECAD_STUDIO_URL is passed to the
-# backend's /config endpoint and the frontend embeds the studio in an iframe.
+# With ForgeCAD Studio embedded:
+#   FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile studio up
+#
+# All three together:
+#   FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile temporal --profile studio up
+#
+# Frontend served at http://localhost:8001/ui/
+# Temporal UI at http://localhost:8088
 
 services:
 
-  # ── GAH backend (FastAPI + WebSocket + frontend static files) ─────────────
+  # ── GAH backend (FastAPI + WebSocket + static frontend) ───────────────────
   backend:
     build:
       context: .
@@ -27,10 +32,11 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       BACKEND_URL: "http://localhost:8001"
-      # Populated automatically when studio profile is active:
       FORGECAD_STUDIO_URL: "${FORGECAD_STUDIO_URL:-}"
+      # Set by temporal profile; empty = in-process fallback
+      TEMPORAL_HOST: "${TEMPORAL_HOST:-}"
+      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-design}"
     volumes:
-      # Persist generated artifacts (traces, STL, forge.js outputs)
       - ./artifacts:/app/artifacts
     restart: unless-stopped
     healthcheck:
@@ -40,14 +46,60 @@ services:
       start_period: 20s
       retries: 3
 
+  # ── Temporal server (opt-in via --profile temporal) ───────────────────────
+  #
+  # Single-node auto-setup with SQLite persistence (no Postgres needed for dev).
+  # Exposes gRPC on :7233 (SDK target) and Web UI on :8088.
+  temporal:
+    image: temporalio/auto-setup:1.25
+    platform: linux/amd64
+    container_name: gah-temporal
+    profiles:
+      - temporal
+    ports:
+      - "7233:7233"   # gRPC — Temporal SDK connects here
+      - "8088:8088"   # Temporal Web UI
+    environment:
+      - DB=sqlite
+      - SKIP_DEFAULT_NAMESPACE_CREATION=false
+    volumes:
+      - temporal-data:/tmp/temporal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "temporal", "workflow", "list", "--address", "localhost:7233"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+
+  # ── GAH Temporal worker (opt-in via --profile temporal) ───────────────────
+  #
+  # Polls the 'design' task queue and executes the geometry pipeline activities.
+  # Shares the same image as the backend (same Python environment).
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gah-backend:latest
+    platform: linux/amd64
+    container_name: gah-worker
+    profiles:
+      - temporal
+    command: ["uv", "run", "python", "-m", "temporal.worker"]
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      TEMPORAL_HOST: "temporal:7233"
+      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-design}"
+    volumes:
+      - ./artifacts:/app/artifacts
+    depends_on:
+      temporal:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ── ForgeCAD Studio (opt-in via --profile studio) ─────────────────────────
-  #
-  # Serves the ForgeCAD 3D viewport at http://localhost:4000
-  # The backend reads FORGECAD_STUDIO_URL and returns it from /config so the
-  # frontend can embed the studio in its main iframe.
-  #
-  # Usage:
-  #   FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile studio up
   forgecad-studio:
     image: node:20-slim
     container_name: gah-forgecad
@@ -60,7 +112,6 @@ services:
     ports:
       - "4000:4000"
     volumes:
-      # ForgeCAD workspace — generated .forge.js files land here
       - ./artifacts/forgecad:/workspace
     restart: unless-stopped
     healthcheck:
@@ -69,3 +120,6 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 5
+
+volumes:
+  temporal-data:
