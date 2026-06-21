@@ -39,8 +39,8 @@ _INNER_STAGES = {
     "mesh_repair",
     "forge_compile",
 }
-INNER_CAP = 3
-OUTER_CAP = 5
+INNER_CAP = 5
+OUTER_CAP = 2
 
 
 class PlannerFn(Protocol):

@@ -21,21 +21,21 @@ _CUBE = plan_from_dict(
 )
 
 
-def test_inner_stage_cap_is_three():
-    assert cap_for_stage("cadquery_compile") == INNER_CAP == 3
-    assert cap_for_stage("mesh_repair") == 3
-    assert cap_for_stage("primitive_gap") == 3
+def test_inner_stage_cap_is_five():
+    assert cap_for_stage("cadquery_compile") == INNER_CAP == 5
+    assert cap_for_stage("mesh_repair") == 5
+    assert cap_for_stage("primitive_gap") == 5
 
 
-def test_outer_stage_cap_is_five():
-    assert cap_for_stage("visual_mismatch") == OUTER_CAP == 5
+def test_outer_stage_cap_is_two():
+    assert cap_for_stage("visual_mismatch") == OUTER_CAP == 2
 
 
 def test_is_exhausted_at_cap():
-    assert not is_exhausted("cadquery_compile", 2)
-    assert is_exhausted("cadquery_compile", 3)
-    assert not is_exhausted("visual_mismatch", 4)
-    assert is_exhausted("visual_mismatch", 5)
+    assert not is_exhausted("cadquery_compile", 4)
+    assert is_exhausted("cadquery_compile", 5)
+    assert not is_exhausted("visual_mismatch", 1)
+    assert is_exhausted("visual_mismatch", 2)
 
 
 def test_every_stage_has_a_skill():
