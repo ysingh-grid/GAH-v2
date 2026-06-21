@@ -3,115 +3,119 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GAH — Geometry-Aware Helper</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="style.css">
+  <title>GAH — Text-to-CAD</title>
 
   <!--
-    Configuration (override before app.js loads):
-      window.BACKEND_URL        = 'http://localhost:8001';  // default
-      window.FORGECAD_STUDIO_URL = 'http://localhost:4000'; // set in M10 docker-compose
+    Override before app.js loads:
+      window.BACKEND_URL         = 'http://localhost:8001';   // default
+      window.FORGECAD_STUDIO_URL = 'http://localhost:4000';   // set in M10 docker-compose
   -->
+
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- ── Connection error banner ──────────────────────────────────────── -->
-  <div id="conn-banner"></div>
+  <!-- ── Layer 1: Main viewport (ForgeCAD studio or hero) ──────────────── -->
+  <main id="main-area">
 
-  <!-- ── Header ────────────────────────────────────────────────────────── -->
-  <header>
-    <h1>GAH</h1>
-    <span>Geometry-Aware Helper · text-to-CAD</span>
-    <div id="status-badge" class="idle">Idle</div>
-  </header>
-
-  <!-- ── Main: chat | preview ──────────────────────────────────────────── -->
-  <main>
-
-    <!-- Left: Chat panel -->
-    <section id="chat-panel">
-      <div id="messages">
-
-        <!-- Initial system greeting -->
-        <div>
-          <div class="message-label">System</div>
-          <div class="message system">
-            Describe a mechanical part you want to design.
-            I'll ask a few questions, then generate the geometry for you.
-          </div>
+    <!-- Hero — shown until first design arrives -->
+    <div id="hero-view">
+      <div class="hero-inner">
+        <h1>Text to <span class="gradient-text">CAD</span></h1>
+        <p>Describe a part — the AI designs it, geometry checks it, ForgeCAD renders it.</p>
+        <div class="hero-hint">
+          <span class="hero-icon">✦</span>
+          Click the button to start a conversation
         </div>
-
-        <!-- Thinking dots — shown while planner is computing -->
-        <div id="thinking-indicator" style="display:none; align-items:center; gap:6px; padding:4px 0;">
-          <div class="message-label">Planner</div>
-          <div class="thinking-dots">
-            <span></span><span></span><span></span>
-          </div>
-        </div>
-
-      </div><!-- #messages -->
-
-      <!-- Input area -->
-      <div id="input-area">
-        <textarea
-          id="user-input"
-          rows="1"
-          placeholder="Describe a part, e.g. 'a 30mm hex bolt head, M8 thread'…"
-          autofocus
-        ></textarea>
-        <button id="send-btn">Send</button>
       </div>
-    </section><!-- #chat-panel -->
+    </div>
 
-    <!-- Right: Preview panel -->
-    <section id="preview-panel">
+    <!-- ForgeCAD studio iframe (visible when FORGECAD_STUDIO_URL is set) -->
+    <div id="studio-view" style="display:none; width:100%; height:100%;">
+      <iframe
+        id="forge-iframe"
+        src="about:blank"
+        title="ForgeCAD Studio"
+        sandbox="allow-scripts allow-same-origin allow-forms"
+        style="width:100%; height:100%; border:none;"
+      ></iframe>
+    </div>
 
-      <!-- Tabs -->
-      <div id="preview-tabs">
-        <div class="tab active" data-tab="forge">ForgeCAD Script</div>
-        <div class="tab" data-tab="studio">Studio</div>
-        <div class="tab" data-tab="plan">Plan JSON</div>
+    <!-- .forge.js code preview (fallback when studio not configured) -->
+    <div id="code-view" style="display:none">
+      <div class="code-header">
+        <h2>Generated Part <span id="code-badge" class="badge">✓ Verified</span></h2>
+        <button class="copy-btn" id="copy-btn" onclick="window.__gah.copyCode()">Copy .forge.js</button>
       </div>
-
-      <!-- Content area -->
-      <div id="preview-content">
-
-        <!-- Generating spinner overlay -->
-        <div id="generating-overlay">
-          <div class="spinner"></div>
-          <div class="stage-label" id="gen-stage">Compiling…</div>
-        </div>
-
-        <!-- Empty state -->
-        <div id="preview-empty">
-          <div class="icon">⬡</div>
-          <p>Your generated part will appear here once the planner produces a plan.</p>
-        </div>
-
-        <!-- ForgeCAD studio iframe (populated after success + M10 studio URL) -->
-        <div id="forge-iframe-wrap">
-          <iframe
-            id="forge-iframe"
-            src="about:blank"
-            title="ForgeCAD Studio"
-            sandbox="allow-scripts allow-same-origin allow-forms"
-          ></iframe>
-        </div>
-
-        <!-- ForgeCAD .forge.js script -->
-        <div id="forge-code-wrap">
-          <pre><code id="forge-code"></code></pre>
-        </div>
-
-        <!-- PrimitivePlan JSON -->
-        <div id="plan-wrap">
-          <pre><code id="plan-json"></code></pre>
-        </div>
-
-      </div><!-- #preview-content -->
-    </section><!-- #preview-panel -->
+      <div class="code-scroll">
+        <pre id="forge-code"></pre>
+      </div>
+      <p class="code-hint">
+        Paste this into
+        <a href="https://forgecad.io/studio" target="_blank" rel="noopener">ForgeCAD Studio</a>
+        to render the 3D preview — or set <code>FORGECAD_STUDIO_URL</code> in docker-compose (M10)
+        to embed the studio above.
+      </p>
+    </div>
 
   </main>
+
+  <!-- ── Layer 2: FAB ──────────────────────────────────────────────────── -->
+  <button class="fab" id="fab" onclick="window.__gah.toggleChat()" title="Open design assistant" aria-label="Open design assistant">
+    <span class="fab-icon" id="fab-icon">✦</span>
+    <span class="fab-dot" id="fab-dot" aria-hidden="true"></span>
+  </button>
+
+  <!-- ── Layer 3: Sliding chat panel ───────────────────────────────────── -->
+  <div class="chat-panel" id="chat-panel" role="complementary" aria-label="Design assistant">
+
+    <!-- Header -->
+    <div class="chat-header">
+      <div class="chat-logo" aria-hidden="true">✦</div>
+      <h2 class="chat-title">Design Assistant</h2>
+      <span class="header-dot" id="conn-dot" aria-label="Status"></span>
+      <button class="close-btn" onclick="window.__gah.toggleChat()" title="Close panel" aria-label="Close">✕</button>
+    </div>
+
+    <!-- Message list -->
+    <div class="chat-body" id="chat-body" role="log" aria-live="polite">
+      <div class="msg assistant" id="greeting-msg">
+        <div class="msg-bubble">
+          Hi! Describe the part you want to create — a bracket, housing, flange, or anything else.
+          I'll gather the dimensions and generate the geometry for you.
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick-start chips (hidden after first message) -->
+    <div class="chat-suggestions" id="chat-suggestions">
+      <div class="suggestions-label">Quick start</div>
+      <div class="suggestion-chips">
+        <button class="suggestion-chip" onclick="window.__gah.useSuggestion(this)">A mounting bracket with 4 bolt holes</button>
+        <button class="suggestion-chip" onclick="window.__gah.useSuggestion(this)">A hexagonal knob, M6 through-hole</button>
+        <button class="suggestion-chip" onclick="window.__gah.useSuggestion(this)">A flanged cylinder, DN25 pipe</button>
+      </div>
+    </div>
+
+    <!-- Ready banner (shown while generating) -->
+    <div class="ready-banner" id="ready-banner">
+      <span>All dimensions confirmed — generating now…</span>
+    </div>
+
+    <!-- Input row -->
+    <div class="chat-input-row">
+      <textarea
+        id="chat-input"
+        placeholder="Describe your part…"
+        rows="1"
+        oninput="window.__gah.autoResize(this)"
+        onkeydown="window.__gah.handleKey(event)"
+        aria-label="Message input"
+      ></textarea>
+      <button class="send-btn" id="send-btn" onclick="window.__gah.sendChatMsg()" title="Send" aria-label="Send message">➤</button>
+    </div>
+
+  </div><!-- .chat-panel -->
 
   <script src="app.js"></script>
 </body>
