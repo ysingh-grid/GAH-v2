@@ -4,118 +4,132 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GAH — Text-to-CAD</title>
-
   <!--
     Override before app.js loads:
-      window.BACKEND_URL         = 'http://localhost:8001';   // default
-      window.FORGECAD_STUDIO_URL = 'http://localhost:4000';   // set in M10 docker-compose
+      window.BACKEND_URL         = 'http://localhost:8001';
+      window.FORGECAD_STUDIO_URL = 'http://localhost:4000';
   -->
-
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- ── Layer 1: Main viewport (ForgeCAD studio or hero) ──────────────── -->
-  <main id="main-area">
+  <!-- Full-viewport main area -->
+  <div id="ga-main">
 
-    <!-- Hero — shown until first design arrives -->
-    <div id="hero-view">
-      <div class="hero-inner">
-        <h1>Text to <span class="gradient-text">CAD</span></h1>
-        <p>Describe a part — the AI designs it, geometry checks it, ForgeCAD renders it.</p>
-        <div class="hero-hint">
-          <span class="hero-icon">✦</span>
-          Click the button to start a conversation
-        </div>
+    <!-- Hero — until first design -->
+    <div id="ga-hero">
+      <div class="ga-hero-inner">
+        <div class="ga-hero-logo">✦</div>
+        <h1>Text to <span class="ga-grad">CAD</span></h1>
+        <p>Describe a part — AI clarifies dimensions, geometry checks it, ForgeCAD renders it.</p>
+        <div class="ga-hero-hint">Click <span class="ga-hint-key">✦</span> to start</div>
       </div>
     </div>
 
-    <!-- ForgeCAD studio iframe (visible when FORGECAD_STUDIO_URL is set) -->
-    <div id="studio-view" style="display:none; width:100%; height:100%;">
+    <!-- ForgeCAD Studio iframe (visible when FORGECAD_STUDIO_URL is set) -->
+    <div id="ga-studio" style="display:none; width:100%; height:100%;">
       <iframe
-        id="forge-iframe"
+        id="ga-iframe"
         src="about:blank"
         title="ForgeCAD Studio"
         sandbox="allow-scripts allow-same-origin allow-forms"
-        style="width:100%; height:100%; border:none;"
+        style="width:100%;height:100%;border:none;"
       ></iframe>
     </div>
 
-    <!-- .forge.js code preview (fallback when studio not configured) -->
-    <div id="code-view" style="display:none">
-      <div class="code-header">
-        <h2>Generated Part <span id="code-badge" class="badge">✓ Verified</span></h2>
-        <button class="copy-btn" id="copy-btn" onclick="window.__gah.copyCode()">Copy .forge.js</button>
+    <!-- .forge.js code view (fallback when studio not configured) -->
+    <div id="ga-code" style="display:none;">
+      <div class="ga-code-bar">
+        <div class="ga-dots-row">
+          <span class="ga-tdot red"></span>
+          <span class="ga-tdot amber"></span>
+          <span class="ga-tdot green"></span>
+        </div>
+        <span class="ga-code-label">generated_part.forge.js</span>
+        <button id="ga-copy-btn" onclick="window.__gah.copyCode()">Copy</button>
       </div>
-      <div class="code-scroll">
-        <pre id="forge-code"></pre>
-      </div>
-      <p class="code-hint">
-        Paste this into
-        <a href="https://forgecad.io/studio" target="_blank" rel="noopener">ForgeCAD Studio</a>
-        to render the 3D preview — or set <code>FORGECAD_STUDIO_URL</code> in docker-compose (M10)
-        to embed the studio above.
-      </p>
+      <div class="ga-code-scroll"><pre id="ga-code-pre"></pre></div>
     </div>
 
-  </main>
+  </div><!-- #ga-main -->
 
-  <!-- ── Layer 2: FAB ──────────────────────────────────────────────────── -->
-  <button class="fab" id="fab" onclick="window.__gah.toggleChat()" title="Open design assistant" aria-label="Open design assistant">
-    <span class="fab-icon" id="fab-icon">✦</span>
-    <span class="fab-dot" id="fab-dot" aria-hidden="true"></span>
+  <!-- FAB -->
+  <button id="ga-fab" onclick="window.__gah.toggle()" title="AI Design Assistant" aria-label="AI Design Assistant">
+    <span id="ga-fab-icon">✦</span>
+    <span id="ga-notif"></span>
   </button>
 
-  <!-- ── Layer 3: Sliding chat panel ───────────────────────────────────── -->
-  <div class="chat-panel" id="chat-panel" role="complementary" aria-label="Design assistant">
+  <!-- Sliding panel (forge-assistant.js style) -->
+  <div id="ga-panel" role="complementary" aria-label="Design assistant">
 
     <!-- Header -->
-    <div class="chat-header">
-      <div class="chat-logo" aria-hidden="true">✦</div>
-      <h2 class="chat-title">Design Assistant</h2>
-      <span class="header-dot" id="conn-dot" aria-label="Status"></span>
-      <button class="close-btn" onclick="window.__gah.toggleChat()" title="Close panel" aria-label="Close">✕</button>
+    <div id="ga-header">
+      <div class="ga-header-left">
+        <div class="ga-title">🔬 Measurement Assistant <span class="ga-badge">AI</span></div>
+        <div class="ga-sub">Clarifies dimensions before CAD generation</div>
+      </div>
+      <div class="ga-header-right">
+        <span id="ga-conn-dot" class="ga-conn-dot" title="Disconnected"></span>
+        <button id="ga-close" onclick="window.__gah.toggle()" aria-label="Close">✕</button>
+      </div>
     </div>
 
-    <!-- Message list -->
-    <div class="chat-body" id="chat-body" role="log" aria-live="polite">
-      <div class="msg assistant" id="greeting-msg">
-        <div class="msg-bubble">
-          Hi! Describe the part you want to create — a bracket, housing, flange, or anything else.
-          I'll gather the dimensions and generate the geometry for you.
+    <!-- Params strip -->
+    <div id="ga-params">
+      <div class="ga-params-title">✓ Captured measurements</div>
+      <div id="ga-chips" class="ga-chips"></div>
+    </div>
+
+    <!-- Message body -->
+    <div id="ga-body" role="log" aria-live="polite">
+      <div class="ga-msg assistant">
+        <div class="ga-bubble">
+          👋 Hi! I'm your <strong>measurement assistant</strong>.<br><br>
+          Tell me what part you want to design and I'll ask the right questions to nail down every dimension — then generate it directly in ForgeCAD.
         </div>
+        <div class="ga-time">Just now</div>
       </div>
     </div>
 
-    <!-- Quick-start chips (hidden after first message) -->
-    <div class="chat-suggestions" id="chat-suggestions">
-      <div class="suggestions-label">Quick start</div>
-      <div class="suggestion-chips">
-        <button class="suggestion-chip" onclick="window.__gah.useSuggestion(this)">A mounting bracket with 4 bolt holes</button>
-        <button class="suggestion-chip" onclick="window.__gah.useSuggestion(this)">A hexagonal knob, M6 through-hole</button>
-        <button class="suggestion-chip" onclick="window.__gah.useSuggestion(this)">A flanged cylinder, DN25 pipe</button>
-      </div>
+    <!-- Suggestion chips -->
+    <div id="ga-suggestions">
+      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A mounting bracket with 4 bolt holes</button>
+      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A hexagonal knob, M6 through-hole</button>
+      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A flanged cylinder, DN25 pipe</button>
+      <button class="ga-sugg" onclick="window.__gah.suggest(this)">An enclosure box with lid</button>
     </div>
 
-    <!-- Ready banner (shown while generating) -->
-    <div class="ready-banner" id="ready-banner">
-      <span>All dimensions confirmed — generating now…</span>
+    <!-- Progress panel (visible during generating) -->
+    <div id="ga-progress">
+      <div class="ga-prog-header">
+        <span>Generating…</span>
+        <span id="ga-prog-stage"></span>
+      </div>
+      <div id="ga-stage-row" class="ga-stage-row"></div>
+      <div id="ga-prog-msg"></div>
+    </div>
+
+    <!-- Done banner -->
+    <div id="ga-done">
+      <div class="ga-done-title">✅ Design complete!</div>
+      <div class="ga-done-sub">ForgeCAD is updating your viewport…</div>
+      <div class="ga-done-file" id="ga-done-file"></div>
     </div>
 
     <!-- Input row -->
-    <div class="chat-input-row">
+    <div id="ga-input-row">
       <textarea
-        id="chat-input"
-        placeholder="Describe your part…"
+        id="ga-input"
         rows="1"
-        oninput="window.__gah.autoResize(this)"
-        onkeydown="window.__gah.handleKey(event)"
+        placeholder="Describe your part or answer a question…"
+        oninput="window.__gah.resize(this)"
+        onkeydown="window.__gah.key(event)"
         aria-label="Message input"
       ></textarea>
-      <button class="send-btn" id="send-btn" onclick="window.__gah.sendChatMsg()" title="Send" aria-label="Send message">➤</button>
+      <button id="ga-send" onclick="window.__gah.send()" aria-label="Send">➤</button>
     </div>
 
-  </div><!-- .chat-panel -->
+  </div><!-- #ga-panel -->
 
   <script src="app.js"></script>
 </body>

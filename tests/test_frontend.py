@@ -17,7 +17,7 @@ def test_ui_serves_index_html(client):
     resp = client.get("/ui/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "chat-panel" in resp.text
+    assert "ga-panel" in resp.text
 
 
 def test_ui_serves_css(client):
@@ -41,12 +41,17 @@ def test_ui_html_references_style_and_script(client):
 
 def test_ui_html_has_fab(client):
     resp = client.get("/ui/")
-    assert 'class="fab"' in resp.text
+    assert 'id="ga-fab"' in resp.text
 
 
-def test_ui_html_has_chat_panel(client):
+def test_ui_html_has_panel(client):
     resp = client.get("/ui/")
-    assert 'id="chat-panel"' in resp.text
+    assert 'id="ga-panel"' in resp.text
+
+
+def test_ui_html_has_hero(client):
+    resp = client.get("/ui/")
+    assert 'id="ga-hero"' in resp.text
 
 
 def test_frontend_dir_exists():

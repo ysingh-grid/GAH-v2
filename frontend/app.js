@@ -1,411 +1,426 @@
 /**
- * GAH frontend — FAB overlay chat + ForgeCAD main view.
+ * GAH frontend — forge-assistant.js visual design + M8 WebSocket API.
  *
  * WS protocol (server → client):
- *   thinking   — planner running; show typing indicator
- *   ask_user   — planner question; show as assistant bubble
- *   generating — geometry loop started; show ready banner
- *   success    — {forge_js, plan, run_id}; show output in main area
- *   needs_user — loop escalated; show as assistant bubble
- *   failed     — {category, message}; show error bubble
+ *   thinking   — planner running; show typing dots
+ *   ask_user   — question + options; assistant bubble
+ *   generating — geometry loop started; show progress panel
+ *   success    — {forge_js, plan, run_id}; done banner + main view
+ *   needs_user — mid-generation question; assistant bubble
+ *   failed     — {category, message}; error stage chip
  *   error      — unexpected server exception
- *
- * All external API calls go to BACKEND_URL (default localhost:8001).
- * Set window.BACKEND_URL before this script loads to override.
- * Set window.FORGECAD_STUDIO_URL to embed the studio iframe instead of code view.
  */
 
-const _BACKEND = window.BACKEND_URL || 'http://localhost:8001';
+(function () {
+  'use strict';
 
-// ── Tiny HTML-safe formatter ──────────────────────────────────────────────────
-function _fmt(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br>');
-}
+  var BACKEND = window.BACKEND_URL || 'http://localhost:8001';
 
-// ── DesignChat ────────────────────────────────────────────────────────────────
-class DesignChat {
-  constructor() {
-    this._designId   = null;
-    this._ws         = null;
-    this._state      = 'idle'; // idle | connecting | ready | thinking | generating | done | failed
-    this._forgeJs    = null;
-    this._typingEl   = null;   // the current typing indicator DOM node
-    this._panelOpen  = false;
-    this._sessionStarted = false; // true after first POST /designs
+  // Pipeline stage labels (matches Capstone visual design)
+  var STAGES = ['PLANNING', 'GENERATING', 'VERIFYING', 'DONE'];
+  var STAGE_ICONS = { PLANNING: '🧠', GENERATING: '⌨️', VERIFYING: '🔍', DONE: '✅', FAILED: '❌' };
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  var S = {
+    designId:    null,
+    ws:          null,
+    panelOpen:   false,
+    booted:      false,    // first open triggered boot
+    sending:     false,
+    params:      {},       // accumulated params from plan steps
+    currentStage: null,
+  };
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function now() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
-  // ── Panel open/close ────────────────────────────────────────────────────────
-
-  toggleChat() {
-    this._panelOpen = !this._panelOpen;
-    const panel = document.getElementById('chat-panel');
-    const fab   = document.getElementById('fab');
-
-    panel.classList.toggle('open', this._panelOpen);
-    fab.classList.toggle('open', this._panelOpen);
-
-    if (this._panelOpen) {
-      // Lazy-init session on first open
-      if (!this._sessionStarted) {
-        this._sessionStarted = true;
-        this._boot();
-      }
-      // Focus input after slide-in animation
-      setTimeout(() => {
-        const inp = document.getElementById('chat-input');
-        if (inp && !inp.disabled) inp.focus();
-      }, 360);
-      // Hide suggestions if user already sent messages
-      const body = document.getElementById('chat-body');
-      if (body && body.childElementCount > 2) {
-        this._hideSuggestions();
-      }
-    }
+  function fmt(t) {
+    return String(t || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\n/g, '<br>');
   }
 
-  // ── Boot: create backend session + connect WS ────────────────────────────────
+  function el(id) { return document.getElementById(id); }
 
-  async _boot() {
-    this._setConnDot('connecting');
-    this._setInputEnabled(false);
-
-    try {
-      const resp = await fetch(`${_BACKEND}/designs`, { method: 'POST' });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const body = await resp.json();
-      this._designId = body.design_id;
-    } catch (err) {
-      this._showToast(`Cannot reach backend at ${_BACKEND} — is it running?`);
-      this._setConnDot('error');
-      return;
-    }
-
-    this._connectWs();
+  function setConn(state) {
+    var dot = el('ga-conn-dot');
+    if (!dot) return;
+    dot.className = 'ga-conn-dot ' + state;
+    dot.title = state.charAt(0).toUpperCase() + state.slice(1);
   }
 
-  _connectWs() {
-    const wsBase = _BACKEND.replace(/^http/, 'ws');
-    this._ws = new WebSocket(`${wsBase}/designs/${this._designId}/chat`);
-
-    this._ws.onopen = () => {
-      this._state = 'ready';
-      this._setConnDot('connected');
-      this._setInputEnabled(true);
-      this._hideToast();
-    };
-
-    this._ws.onmessage = (e) => {
-      try { this._handleEvent(JSON.parse(e.data)); }
-      catch (_) { /* ignore malformed frames */ }
-    };
-
-    this._ws.onerror = () => {
-      this._showToast('WebSocket error — check backend logs.');
-      this._setConnDot('error');
-    };
-
-    this._ws.onclose = (e) => {
-      if (e.code !== 1000 && e.code !== 1005 && this._state !== 'done') {
-        this._showToast('Connection closed. Refresh to reconnect.');
-        this._setConnDot('error');
-      }
-    };
-  }
-
-  // ── Send ────────────────────────────────────────────────────────────────────
-
-  sendChatMsg() {
-    const inp  = document.getElementById('chat-input');
-    const text = inp ? inp.value.trim() : '';
-    if (!text) return;
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
-    if (this._state === 'thinking' || this._state === 'generating') return;
-
-    this._ws.send(JSON.stringify({ type: 'message', text }));
-    this._appendMsg('user', text);
-    inp.value = '';
-    inp.style.height = 'auto';
-    this._setInputEnabled(false);
-    this._hideSuggestions();
-    this._showTyping();
-  }
-
-  // ── Incoming event handling ──────────────────────────────────────────────────
-
-  _handleEvent(event) {
-    switch (event.type) {
-
-      case 'thinking':
-        this._state = 'thinking';
-        this._showTyping();
-        break;
-
-      case 'ask_user':
-        this._state = 'ready';
-        this._removeTyping();
-        this._appendMsg('assistant', event.question, event.options || []);
-        this._setInputEnabled(true);
-        break;
-
-      case 'generating':
-        this._state = 'generating';
-        this._removeTyping();
-        this._showReadyBanner();
-        // Don't re-enable input — generation is in progress
-        break;
-
-      case 'success':
-        this._state = 'done';
-        this._hideReadyBanner();
-        this._removeTyping();
-        this._forgeJs = event.forge_js || '';
-        this._showOutput(event);
-        // Show green dot on FAB (panel may be closed)
-        document.getElementById('fab-dot').classList.add('visible');
-        break;
-
-      case 'needs_user':
-        this._state = 'ready';
-        this._hideReadyBanner();
-        this._removeTyping();
-        this._appendMsg('assistant', event.question || 'I need more information to continue.', event.options || []);
-        this._setInputEnabled(true);
-        break;
-
-      case 'failed':
-        this._state = 'failed';
-        this._hideReadyBanner();
-        this._removeTyping();
-        this._appendMsg('system', `Generation failed [${event.category || 'unknown'}]: ${event.message || ''}`);
-        this._setInputEnabled(true);
-        break;
-
-      case 'error':
-        this._state = 'failed';
-        this._hideReadyBanner();
-        this._removeTyping();
-        this._appendMsg('system', `Server error: ${event.message || 'unknown error'}`);
-        this._setInputEnabled(true);
-        break;
-    }
-  }
-
-  // ── Output in main area ──────────────────────────────────────────────────────
-
-  _showOutput(event) {
-    const studioUrl = window.FORGECAD_STUDIO_URL;
-
-    if (studioUrl && event.run_id) {
-      // Load ForgeCAD studio iframe
-      document.getElementById('hero-view').style.display = 'none';
-      const studioView = document.getElementById('studio-view');
-      studioView.style.display = 'block';
-      document.getElementById('forge-iframe').src = `${studioUrl}?run_id=${event.run_id}`;
-    } else {
-      // Show .forge.js code view
-      document.getElementById('hero-view').style.display = 'none';
-      const codeView = document.getElementById('code-view');
-      codeView.style.display = 'flex';
-      const pre = document.getElementById('forge-code');
-      pre.textContent = event.forge_js || '// (no forge script returned)';
-    }
-
-    // Append summary bubble in chat
-    const plan = event.plan;
-    if (plan && plan.steps && plan.steps.length) {
-      const rows = plan.steps.map(s =>
-        `<tr><td>${s.id}</td><td>${s.primitive}</td></tr>`
-      ).join('');
-      const table = `<table><tr><td colspan="2" style="color:var(--green);padding-bottom:6px">✓ Part generated (${plan.steps.length} step${plan.steps.length !== 1 ? 's' : ''})</td></tr>${rows}</table>`;
-      this._appendRaw('msg-summary', table);
-    } else {
-      this._appendMsg('assistant', `✓ Part generated! Open the code view to see .forge.js`);
-    }
-  }
-
-  // ── DOM helpers ──────────────────────────────────────────────────────────────
-
-  _appendMsg(role, text, options = []) {
-    const body = document.getElementById('chat-body');
-    if (!body) return;
-
-    const row = document.createElement('div');
-    row.className = `msg ${role}`;
-
-    const bubble = document.createElement('div');
-    bubble.className = 'msg-bubble';
-    bubble.innerHTML = _fmt(text);
-    row.appendChild(bubble);
-
-    if (options.length) {
-      const optRow = document.createElement('div');
-      optRow.className = 'msg-options';
-      options.forEach(opt => {
-        const btn = document.createElement('button');
-        btn.className = 'opt-btn';
-        btn.textContent = opt;
-        btn.addEventListener('click', () => {
-          const inp = document.getElementById('chat-input');
-          if (inp) inp.value = opt;
-          this.sendChatMsg();
-        });
-        optRow.appendChild(btn);
-      });
-      row.appendChild(optRow);
-    }
-
-    body.appendChild(row);
-    body.scrollTop = body.scrollHeight;
-  }
-
-  _appendRaw(extraClass, html) {
-    const body = document.getElementById('chat-body');
-    if (!body) return;
-    const row = document.createElement('div');
-    row.className = `msg assistant ${extraClass}`;
-    const bubble = document.createElement('div');
-    bubble.className = 'msg-bubble';
-    bubble.innerHTML = html;
-    row.appendChild(bubble);
-    body.appendChild(row);
-    body.scrollTop = body.scrollHeight;
-  }
-
-  _showTyping() {
-    if (this._typingEl) return; // already showing
-    const body = document.getElementById('chat-body');
-    if (!body) return;
-
-    const row = document.createElement('div');
-    row.className = 'msg assistant';
-    const ind = document.createElement('div');
-    ind.className = 'typing-indicator';
-    ind.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
-    row.appendChild(ind);
-    body.appendChild(row);
-    this._typingEl = row;
-    body.scrollTop = body.scrollHeight;
-  }
-
-  _removeTyping() {
-    if (this._typingEl) {
-      this._typingEl.remove();
-      this._typingEl = null;
-    }
-  }
-
-  _showReadyBanner() {
-    const banner = document.getElementById('ready-banner');
-    if (banner) banner.classList.add('visible');
-  }
-
-  _hideReadyBanner() {
-    const banner = document.getElementById('ready-banner');
-    if (banner) banner.classList.remove('visible');
-  }
-
-  _hideSuggestions() {
-    const s = document.getElementById('chat-suggestions');
-    if (s) s.style.display = 'none';
-  }
-
-  _setInputEnabled(enabled) {
-    const inp = document.getElementById('chat-input');
-    const btn = document.getElementById('send-btn');
+  function setInput(enabled) {
+    var inp = el('ga-input');
+    var btn = el('ga-send');
     if (inp) inp.disabled = !enabled;
     if (btn) btn.disabled = !enabled;
   }
 
-  _setConnDot(state) {
-    const dot = document.getElementById('conn-dot');
-    if (!dot) return;
-    dot.className = `header-dot ${state}`;
-    dot.title = state;
+  // ── Boot: POST /designs + WS connect ─────────────────────────────────────
+
+  function boot() {
+    setConn('connecting');
+    setInput(false);
+
+    fetch(BACKEND + '/designs', { method: 'POST' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        S.designId = data.design_id;
+        connectWs();
+      })
+      .catch(function (e) {
+        setConn('error');
+        appendMsg('system', '⚠️ Cannot reach backend at ' + BACKEND + ' — ' + e.message);
+      });
   }
 
-  _showToast(msg) {
-    const t = document.getElementById('conn-toast');
-    if (!t) return;
-    t.textContent = msg;
-    t.style.display = 'block';
-  }
+  function connectWs() {
+    var wsBase = BACKEND.replace(/^http/, 'ws');
+    S.ws = new WebSocket(wsBase + '/designs/' + S.designId + '/chat');
 
-  _hideToast() {
-    const t = document.getElementById('conn-toast');
-    if (t) t.style.display = 'none';
-  }
+    S.ws.onopen = function () {
+      setConn('connected');
+      setInput(true);
+    };
 
-  // ── Public helpers exposed on window.__gah ───────────────────────────────────
+    S.ws.onmessage = function (e) {
+      try { handleEvent(JSON.parse(e.data)); } catch (_) {}
+    };
 
-  copyCode() {
-    const pre = document.getElementById('forge-code');
-    if (!pre || !pre.textContent) return;
-    navigator.clipboard.writeText(pre.textContent).then(() => {
-      const btn = document.getElementById('copy-btn');
-      if (btn) {
-        const orig = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = orig; }, 1500);
+    S.ws.onerror = function () {
+      setConn('error');
+      appendMsg('system', '⚠️ WebSocket error — check backend logs.');
+    };
+
+    S.ws.onclose = function (ev) {
+      if (ev.code !== 1000 && ev.code !== 1005 && S.currentStage !== 'DONE') {
+        setConn('error');
+        appendMsg('system', '⚠️ Connection closed. Refresh to reconnect.');
       }
+    };
+  }
+
+  // ── Outgoing ──────────────────────────────────────────────────────────────
+
+  function sendMsg() {
+    var inp = el('ga-input');
+    var txt = inp ? inp.value.trim() : '';
+    if (!txt) return;
+    if (!S.ws || S.ws.readyState !== WebSocket.OPEN) return;
+    if (S.sending) return;
+
+    S.ws.send(JSON.stringify({ type: 'message', text: txt }));
+    appendMsg('user', txt);
+    inp.value = '';
+    inp.style.height = 'auto';
+    setInput(false);
+    hideSuggestions();
+    showTyping();
+  }
+
+  // ── Incoming events ───────────────────────────────────────────────────────
+
+  function handleEvent(evt) {
+    switch (evt.type) {
+
+      case 'thinking':
+        showTyping();
+        break;
+
+      case 'ask_user':
+        hideTyping();
+        appendMsg('assistant', evt.question || '');
+        if (evt.options && evt.options.length) appendOptions(evt.options);
+        setInput(true);
+        break;
+
+      case 'generating':
+        hideTyping();
+        showProgress('PLANNING');
+        // don't re-enable input — auto-generating
+        break;
+
+      case 'success':
+        hideTyping();
+        advanceProgress('DONE');
+        showOutput(evt);
+        el('ga-fab').classList.add('has-notif');
+        break;
+
+      case 'needs_user':
+        hideTyping();
+        hideProgress();
+        appendMsg('assistant', evt.question || 'I need more information to continue.');
+        if (evt.options && evt.options.length) appendOptions(evt.options);
+        setInput(true);
+        break;
+
+      case 'failed':
+        hideTyping();
+        failProgress(evt.category || 'unknown');
+        appendMsg('system', 'Generation failed [' + (evt.category || 'unknown') + ']: ' + (evt.message || ''));
+        setInput(true);
+        break;
+
+      case 'error':
+        hideTyping();
+        hideProgress();
+        appendMsg('system', '⚠️ Server error: ' + (evt.message || 'unknown'));
+        setInput(true);
+        break;
+    }
+  }
+
+  // ── DOM: messages ─────────────────────────────────────────────────────────
+
+  function appendMsg(role, text) {
+    var body = el('ga-body');
+    if (!body) return;
+    var row = document.createElement('div');
+    row.className = 'ga-msg ' + role;
+    row.innerHTML = '<div class="ga-bubble">' + fmt(text) + '</div>'
+      + '<div class="ga-time">' + now() + '</div>';
+    body.appendChild(row);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function appendOptions(options) {
+    var body = el('ga-body');
+    if (!body) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'ga-options';
+    options.forEach(function (opt) {
+      var btn = document.createElement('button');
+      btn.className = 'ga-opt';
+      btn.textContent = opt;
+      btn.addEventListener('click', function () {
+        var inp = el('ga-input');
+        if (inp) inp.value = opt;
+        sendMsg();
+      });
+      wrap.appendChild(btn);
     });
+    body.appendChild(wrap);
+    body.scrollTop = body.scrollHeight;
   }
 
-  autoResize(el) {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+  function showTyping() {
+    if (el('ga-typing')) return;
+    var body = el('ga-body');
+    if (!body) return;
+    var d = document.createElement('div');
+    d.id = 'ga-typing';
+    d.className = 'ga-msg assistant';
+    d.innerHTML = '<div class="ga-typing-bubble"><div class="ga-dots"><span></span><span></span><span></span></div></div>';
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
   }
 
-  handleKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      this.sendChatMsg();
+  function hideTyping() {
+    var t = el('ga-typing');
+    if (t) t.remove();
+  }
+
+  // ── DOM: suggestions ──────────────────────────────────────────────────────
+
+  function hideSuggestions() {
+    var s = el('ga-suggestions');
+    if (s) s.style.display = 'none';
+  }
+
+  // ── DOM: params strip ─────────────────────────────────────────────────────
+
+  function updateParams(params) {
+    if (!params || !Object.keys(params).length) return;
+    Object.assign(S.params, params);
+    var strip = el('ga-params');
+    var chips = el('ga-chips');
+    if (!strip || !chips) return;
+    strip.classList.add('visible');
+    chips.innerHTML = Object.entries(S.params).map(function (kv) {
+      return '<span class="ga-chip">' + kv[0].replace(/_/g, ' ') + ': <strong>' + kv[1] + '</strong></span>';
+    }).join('');
+  }
+
+  // ── DOM: progress panel ───────────────────────────────────────────────────
+
+  function renderStages(currentStage) {
+    var row = el('ga-stage-row');
+    if (!row) return;
+    var curIdx = STAGES.indexOf(currentStage);
+    row.innerHTML = STAGES.map(function (s, i) {
+      var cls = 'ga-stage-chip';
+      if (currentStage === 'FAILED' && s === 'DONE') {
+        cls += ' error';
+      } else if (i < curIdx) {
+        cls += ' done';
+      } else if (s === currentStage) {
+        cls += ' active';
+      }
+      return '<span class="' + cls + '">' + (STAGE_ICONS[s] || '') + ' ' + s + '</span>';
+    }).join('');
+    var stageEl = el('ga-prog-stage');
+    if (stageEl) stageEl.textContent = currentStage;
+  }
+
+  function showProgress(stage) {
+    S.currentStage = stage;
+    el('ga-progress').classList.add('visible');
+    el('ga-done').classList.remove('visible');
+    renderStages(stage);
+    var msg = el('ga-prog-msg');
+    if (msg) msg.textContent = '';
+  }
+
+  function advanceProgress(stage) {
+    S.currentStage = stage;
+    renderStages(stage);
+    var msg = el('ga-prog-msg');
+    if (msg) msg.textContent = stage === 'DONE' ? 'Design ready.' : '';
+  }
+
+  function failProgress(category) {
+    S.currentStage = 'FAILED';
+    var row = el('ga-stage-row');
+    if (row) {
+      // mark all chips as muted except last as error
+      Array.from(row.querySelectorAll('.ga-stage-chip')).forEach(function (c) {
+        c.className = 'ga-stage-chip';
+      });
+      var last = row.querySelector('.ga-stage-chip:last-child');
+      if (last) last.className = 'ga-stage-chip error';
     }
+    var msg = el('ga-prog-msg');
+    if (msg) msg.textContent = '✗ ' + category;
   }
 
-  useSuggestion(btn) {
-    const inp = document.getElementById('chat-input');
-    if (!inp) return;
-    inp.value = btn.textContent.trim();
-    // If panel not open yet, open it first (will trigger boot)
-    if (!this._panelOpen) {
-      this.toggleChat();
-      // Wait for boot then send
-      const check = setInterval(() => {
-        if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-          clearInterval(check);
-          this.sendChatMsg();
-        }
-      }, 100);
+  function hideProgress() {
+    el('ga-progress').classList.remove('visible');
+  }
+
+  // ── DOM: output in main area ──────────────────────────────────────────────
+
+  function showOutput(evt) {
+    var studioUrl = window.FORGECAD_STUDIO_URL;
+
+    if (studioUrl && evt.run_id) {
+      el('ga-hero').style.display = 'none';
+      el('ga-studio').style.display = 'block';
+      el('ga-iframe').src = studioUrl + '?run_id=' + evt.run_id;
     } else {
-      this.sendChatMsg();
+      el('ga-hero').style.display = 'none';
+      el('ga-code').style.display = 'flex';
+      el('ga-code-pre').textContent = evt.forge_js || '// (no forge script returned)';
+    }
+
+    // Extract params from plan steps
+    var plan = evt.plan;
+    if (plan && plan.steps && plan.steps.length) {
+      var extracted = {};
+      plan.steps.forEach(function (step) {
+        Object.assign(extracted, step.parameters || {});
+      });
+      updateParams(extracted);
+    }
+
+    // Done banner
+    var done = el('ga-done');
+    done.classList.add('visible');
+    var doneFile = el('ga-done-file');
+    if (doneFile) doneFile.textContent = 'run_id: ' + (evt.run_id || '—');
+
+    // Hide progress, show done
+    el('ga-progress').classList.remove('visible');
+
+    // Assistant message
+    appendMsg('assistant', '✅ Design ready! Check the viewport — or copy the .forge.js code.');
+  }
+
+  // ── Toggle panel ──────────────────────────────────────────────────────────
+
+  function toggle() {
+    S.panelOpen = !S.panelOpen;
+    el('ga-panel').classList.toggle('open', S.panelOpen);
+    el('ga-fab').classList.toggle('open', S.panelOpen);
+
+    if (S.panelOpen) {
+      if (!S.booted) {
+        S.booted = true;
+        boot();
+      }
+      // Check if suggestions should be hidden (messages exist beyond greeting)
+      var body = el('ga-body');
+      if (body && body.childElementCount > 1) hideSuggestions();
+
+      setTimeout(function () {
+        var inp = el('ga-input');
+        if (inp && !inp.disabled) inp.focus();
+      }, 370);
     }
   }
-}
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  const chat = new DesignChat();
+  // ── Public API (window.__gah) ─────────────────────────────────────────────
 
-  // Add connection error toast element if not in HTML already
-  if (!document.getElementById('conn-toast')) {
-    const toast = document.createElement('div');
-    toast.id = 'conn-toast';
-    document.body.appendChild(toast);
-  }
-
-  // Expose public interface
   window.__gah = {
-    toggleChat:    () => chat.toggleChat(),
-    sendChatMsg:   () => chat.sendChatMsg(),
-    useSuggestion: (btn) => chat.useSuggestion(btn),
-    autoResize:    (el)  => chat.autoResize(el),
-    handleKey:     (e)   => chat.handleKey(e),
-    copyCode:      () => chat.copyCode(),
+    toggle: toggle,
+
+    send: sendMsg,
+
+    suggest: function (btn) {
+      var inp = el('ga-input');
+      if (!inp) return;
+      inp.value = btn.textContent.trim();
+      hideSuggestions();
+
+      if (!S.panelOpen) {
+        toggle();
+        // Wait for boot + WS connect then send
+        var tries = 0;
+        var check = setInterval(function () {
+          tries++;
+          if (S.ws && S.ws.readyState === WebSocket.OPEN) {
+            clearInterval(check);
+            sendMsg();
+          } else if (tries > 50) {
+            clearInterval(check);
+          }
+        }, 100);
+      } else {
+        sendMsg();
+      }
+    },
+
+    resize: function (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 96) + 'px';
+    },
+
+    key: function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMsg();
+      }
+    },
+
+    copyCode: function () {
+      var pre = el('ga-code-pre');
+      if (!pre || !pre.textContent) return;
+      navigator.clipboard.writeText(pre.textContent).then(function () {
+        var btn = el('ga-copy-btn');
+        if (!btn) return;
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = orig; }, 1500);
+      });
+    },
   };
-});
+
+})();
