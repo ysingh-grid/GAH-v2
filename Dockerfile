@@ -4,7 +4,7 @@
 # Build:  docker build -t gah-backend .
 # Run:    docker run -p 8001:8001 --env-file .env gah-backend
 
-FROM python:3.12-slim-bookworm
+FROM --platform=linux/amd64 python:3.12-slim-bookworm
 
 # System libs needed by CadQuery (OCC), MeshLib, and VTK
 RUN apt-get update && apt-get install -y --no-install-recommends \

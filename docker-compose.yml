@@ -18,6 +18,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: gah-backend:latest
+    platform: linux/amd64
     container_name: gah-backend
     ports:
       - "8001:8001"
