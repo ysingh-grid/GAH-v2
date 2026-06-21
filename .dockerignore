@@ -1,0 +1,43 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Dev / test
+tests/
+*_test.py
+Task_test.py
+tools_chain_test.py
+*.coverage
+htmlcov/
+
+# Secrets
+.env
+.env.*
+
+# Artifacts (mounted at runtime)
+artifacts/
+
+# Docs and reference
+docs/
+fast-rlm-reference/
+*.md
+*.sh
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore

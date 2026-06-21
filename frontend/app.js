@@ -67,7 +67,17 @@
     setConn('connecting');
     setInput(false);
 
-    fetch(BACKEND + '/designs', { method: 'POST' })
+    // Fetch runtime config first (sets window.FORGECAD_STUDIO_URL from docker-compose env).
+    // Failure is non-fatal — continue to session creation regardless.
+    fetch(BACKEND + '/config')
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .catch(function () { return {}; })
+      .then(function (cfg) {
+        if (cfg && cfg.forgecad_studio_url) {
+          window.FORGECAD_STUDIO_URL = cfg.forgecad_studio_url;
+        }
+        return fetch(BACKEND + '/designs', { method: 'POST' });
+      })
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();

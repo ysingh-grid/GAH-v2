@@ -1,0 +1,70 @@
+# GAH v2 — docker-compose
+#
+# Default (backend only):
+#   docker compose up
+#
+# With ForgeCAD Studio embedded in the browser:
+#   docker compose --profile studio up
+#
+# The frontend is served by the backend at http://localhost:8001/ui/
+# When the studio profile is active, FORGECAD_STUDIO_URL is passed to the
+# backend's /config endpoint and the frontend embeds the studio in an iframe.
+
+services:
+
+  # ── GAH backend (FastAPI + WebSocket + frontend static files) ─────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gah-backend:latest
+    container_name: gah-backend
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env                          # GEMINI_API_KEY (required)
+    environment:
+      PYTHONUNBUFFERED: "1"
+      BACKEND_URL: "http://localhost:8001"
+      # Populated automatically when studio profile is active:
+      FORGECAD_STUDIO_URL: "${FORGECAD_STUDIO_URL:-}"
+    volumes:
+      # Persist generated artifacts (traces, STL, forge.js outputs)
+      - ./artifacts:/app/artifacts
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  # ── ForgeCAD Studio (opt-in via --profile studio) ─────────────────────────
+  #
+  # Serves the ForgeCAD 3D viewport at http://localhost:4000
+  # The backend reads FORGECAD_STUDIO_URL and returns it from /config so the
+  # frontend can embed the studio in its main iframe.
+  #
+  # Usage:
+  #   FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile studio up
+  forgecad-studio:
+    image: node:20-slim
+    container_name: gah-forgecad
+    profiles:
+      - studio
+    working_dir: /workspace
+    command: >
+      sh -c "npm install -g forgecad --prefer-offline --no-audit &&
+             forgecad studio /workspace --port 4000 --host 0.0.0.0"
+    ports:
+      - "4000:4000"
+    volumes:
+      # ForgeCAD workspace — generated .forge.js files land here
+      - ./artifacts/forgecad:/workspace
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 5

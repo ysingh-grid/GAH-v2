@@ -4,6 +4,7 @@ This is the ONE place services get wired together. Adding a new service =
 add one include_router line here. Keeps routing out of server.py.
 """
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -34,6 +35,18 @@ def create_app() -> FastAPI:
     def health() -> dict:
         """Liveness check: is the backend up?"""
         return {"status": "ok", "version": "0.1.0"}
+
+    @app.get("/config")
+    def config() -> dict:
+        """Runtime config for the frontend.
+
+        Reads env vars set by docker-compose so the frontend can embed the
+        ForgeCAD studio iframe without hardcoding URLs at build time.
+        """
+        return {
+            "forgecad_studio_url": os.environ.get("FORGECAD_STUDIO_URL", ""),
+            "backend_url": os.environ.get("BACKEND_URL", ""),
+        }
 
     app.include_router(primitives_router)
     app.include_router(skills_router)
