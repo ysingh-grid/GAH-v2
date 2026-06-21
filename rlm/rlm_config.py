@@ -16,5 +16,9 @@ config = RLMConfig.default()
 # Tell fast-rlm to use Gemini models instead of the default z-ai/minimax models
 config.primary_agent = "gemini-3.1-pro-preview"
 config.sub_agent = "gemini-3.1-pro-preview"
+# PRD gate: <5m per single-part workflow. Cap tool calls to force tight paths.
+# Default is 20; 10 is enough for: playbook + list_primitives + 2× lookup +
+# 1-2 ask_user turns + plan_ready. web_search counts against the same budget.
+config.max_calls_per_subagent = 10
 
 print("✅ RLM Config created with Gemini adapter")
