@@ -121,6 +121,8 @@ services:
       temporal:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      disable: true
 
   # ── ForgeCAD Studio (opt-in via --profile studio) ─────────────────────────
   forgecad-studio:

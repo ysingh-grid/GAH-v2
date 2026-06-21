@@ -75,6 +75,10 @@
       .then(function (cfg) {
         if (cfg && cfg.forgecad_studio_url) {
           window.FORGECAD_STUDIO_URL = cfg.forgecad_studio_url;
+          // Show studio as background immediately — don't wait for a design
+          el('ga-hero').style.display = 'none';
+          el('ga-studio').style.display = 'block';
+          el('ga-iframe').src = cfg.forgecad_studio_url;
         }
         return fetch(BACKEND + '/designs', { method: 'POST' });
       })
