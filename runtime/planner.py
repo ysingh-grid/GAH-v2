@@ -46,9 +46,13 @@ Step 3 — lookup_primitive(name) for any candidate primitive to read its parame
 Step 4 — If ALL needed dimensions are present in the prompt or chat_history,
           return action="plan_ready" immediately using library primitives.
 Step 5 — If a dimension is genuinely missing AND not findable from the primitive
-          spec, THEN ask the user (action="ask_user") with concrete suggested_options.
-          ONLY use web_search if the user explicitly asks for standard/industry
-          dimensions, or if the primitive requires a dimension with no obvious default.
+          spec, ask the user FIRST with action="ask_user".
+          In your question, include two options:
+            - "Search the web for standard {part_name} dimensions"
+            - Concrete dimension options you already know (e.g. "M6 (10mm hex, 5mm tall)")
+          ONLY call web_search if the user's reply in chat_history explicitly says
+          they want you to search (e.g. they chose "Search the web...").
+          NEVER call web_search on the first turn — always ask permission first.
 
 ## Rules
 - web_search is SLOW — avoid it unless step 5 applies.
