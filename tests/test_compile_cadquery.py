@@ -1,9 +1,8 @@
-"""Tests for runtime/compile_cadquery.py.
+"""Real-world tests for PrimitivePlan -> CadQuery compilation.
 
-Two layers:
-* pure: the generated code string has the right shape (no CadQuery needed);
-* integration: compile a plan and actually run it through execute_cadquery to
-  prove plan -> STL with sane geometry (needs CadQuery in the env).
+The cheap assertions still inspect source text, but the main cases compile
+believable product parts and execute them through CadQuery to verify dimensions
+and material removal.
 """
 
 import shutil
@@ -13,6 +12,11 @@ import pytest
 from runtime import schema
 from runtime.compile_cadquery import CompileError, compile_plan_to_cadquery
 from runtime.schema import plan_from_dict
+from tests.real_world_scenarios import (
+    bbox_size,
+    mounting_plate_with_four_holes,
+    open_electronics_enclosure,
+)
 
 LIBRARY = schema.load_library()
 
@@ -33,30 +37,6 @@ def _cube_plan(size: float = 60.0):
     )
 
 
-def _bolt_circle_plan():
-    return plan_from_dict(
-        {
-            "part_name": "bolt_plate",
-            "steps": [
-                {
-                    "id": "plate",
-                    "primitive": "box",
-                    "operation": "base",
-                    "parameters": {"length": 60.0, "width": 60.0, "height": 10.0},
-                },
-                {
-                    "id": "holes",
-                    "primitive": "cylinder",
-                    "operation": "cut",
-                    "parameters": {"radius": 2.0, "height": 20.0},
-                    "position": [20.0, 0.0, 0.0],
-                    "pattern": {"type": "polar", "count": 6},
-                },
-            ],
-        }
-    )
-
-
 # ── pure compile-output tests ────────────────────────────────────────────────
 
 
@@ -72,10 +52,21 @@ def test_compile_places_with_rotate_and_translate():
     assert "_place(s0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))" in code
 
 
-def test_compile_polar_pattern_emits_polar_call_and_cut():
-    code = compile_plan_to_cadquery(_bolt_circle_plan(), LIBRARY)
-    assert "_polar(s1, 6, (0.0, 0.0, 1.0), 360.0)" in code
-    assert "result = result.cut(s1)" in code
+def test_compile_mounting_plate_emits_corner_hole_cuts():
+    scenario = mounting_plate_with_four_holes()
+    code = compile_plan_to_cadquery(scenario.plan, LIBRARY)
+    assert "# part: electronics_mounting_plate" in code
+    assert "_linear(s1, 2, (0.0, 36.0, 0.0))" in code
+    assert "_linear(s2, 2, (0.0, 36.0, 0.0))" in code
+    assert code.count("result = result.cut") == 2
+
+
+def test_compile_open_enclosure_uses_shell_bosses_and_boss_holes():
+    scenario = open_electronics_enclosure()
+    code = compile_plan_to_cadquery(scenario.plan, LIBRARY)
+    assert ".faces(\">Z\").shell(-2.0)" in code
+    assert code.count("result = result.union") == 4
+    assert code.count("result = result.cut") == 2
 
 
 def test_compile_defaults_fill_missing_params():
@@ -137,10 +128,12 @@ def test_compiled_cube_executes_to_correct_volume(_cadquery_available):
     assert result["faces_count"] == 6
 
 
-def test_compiled_bolt_circle_executes_and_removes_material(_cadquery_available):
-    solid_volume = 60.0 * 60.0 * 10.0
-    result = _run(_bolt_circle_plan())
+def test_compiled_mounting_plate_executes_with_real_dimensions(_cadquery_available):
+    scenario = mounting_plate_with_four_holes()
+    result = _run(scenario.plan)
     assert result["success"], result.get("error")
-    # six holes drilled -> strictly less material than the solid plate
-    assert result["volume"] < solid_volume
-    assert result["volume"] > solid_volume * 0.9
+    assert bbox_size(result["bbox"], "x") == pytest.approx(scenario.expected_bbox["x"], abs=0.01)
+    assert bbox_size(result["bbox"], "y") == pytest.approx(scenario.expected_bbox["y"], abs=0.01)
+    assert bbox_size(result["bbox"], "z") == pytest.approx(scenario.expected_bbox["z"], abs=0.01)
+    assert result["volume"] < scenario.solid_reference_volume
+    assert result["volume"] > scenario.solid_reference_volume * 0.99

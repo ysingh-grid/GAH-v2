@@ -18,8 +18,15 @@ config = RLMConfig.default()
 # 90s queue spikes that blew the 30s timeout. Flash has 15 RPM + 2-8s latency.
 config.primary_agent = "gemini-3.5-flash"
 config.sub_agent = "gemini-3.5-flash"
-# PRD gate: <5m per single-part workflow. Cap tool calls to force tight paths.
-config.max_calls_per_subagent = 20
+# Hard safety-net cap on REPL steps per agent (the soft target lives in the prompt:
+# root ~5-6 steps, leaf child ~3). Too low STARVES the root orchestrator — it needs
+# probe + read-task + list_primitives + decompose + batch-fork + process + assemble
+# + FINAL (~7-8 steps); hitting the cap before FINAL throws "Did not finish the
+# function stack before subagent died". 8 was too tight. 12 gives the root margin.
+# NOTE: this is NOT the token-balloon guard — max_depth=1 is (it stops the recursive
+# grandchild fan-out). With depth capped, only ~6 agents exist, so a higher step cap
+# does not re-balloon the cumulative token budget.
+config.max_calls_per_subagent = 12
 # max_prompt_tokens is a CUMULATIVE budget across all LLM calls in one run
 # (not a per-call context limit). The fast-rlm default (200k) was calibrated
 # for GPT-4 class models. Gemini Flash has a 1M token context window; our
@@ -36,12 +43,14 @@ config.max_prompt_tokens = 400_000
 # already fetched. At 8000 chars, the longest skill fits in a single REPL output
 # so the agent never needs to paginate, saving 3-4 steps and ~40-60k tokens per run.
 config.truncate_len = 8000
-# max_depth controls how many levels of llm_query() recursion are allowed.
-# Tree: root planner (depth 0) → batch_llm_query lookup subagents (depth 1).
-# Subagents call lookup_primitive() directly and emit FINAL immediately — they
-# never need to go deeper. Setting 2 (not the default 3) makes that explicit
-# and prevents accidental deeper recursion burning extra tokens.
-config.max_depth = 2
+# max_depth caps llm_query() recursion. The engine makes an agent at depth ==
+# max_depth a LEAF: its llm_query is removed and any fork attempt throws. So
+# max_depth=1 means root planner (depth 0) forks ONE level of sub-part agents
+# (depth 1), and those children are LEAVES — they cannot fork grandchildren.
+# This is the hard, engine-level enforcement of strict 1-to-1 fork-and-return;
+# without it (default 3, or even 2) children recursively fork and the cumulative
+# prompt-token budget explodes (observed 459k tokens from a depth-2 fan-out).
+config.max_depth = 1
 # Flash calls complete in 2-8s. 30s is ample headroom; keep default.
 # 3 retries kept in case of transient 429s at burst time.
 

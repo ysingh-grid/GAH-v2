@@ -1,4 +1,4 @@
-"""Tests for runtime/compile_forge.py — plan → .forge.js compilation."""
+"""Real-world tests for runtime/compile_forge.py — plan -> editable .forge.js."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from runtime.schema import (
     PrimitiveStep,
     load_library,
 )
+from tests.real_world_scenarios import mounting_plate_with_four_holes, open_electronics_enclosure
 
 
 @pytest.fixture(scope="module")
@@ -139,6 +140,23 @@ def test_cut_emits_subtract(library: dict) -> None:
     )
     js = compile_plan_to_forge(plan, library)
     assert "result.subtract(s1)" in js
+
+
+def test_mounting_plate_handoff_preserves_corner_hole_operations(library: dict) -> None:
+    scenario = mounting_plate_with_four_holes()
+    js = compile_plan_to_forge(scenario.plan, library)
+    assert "electronics_mounting_plate" in js
+    assert "_linear(s1, 2," in js
+    assert "_linear(s2, 2," in js
+    assert js.count("result = result.subtract") == 2
+
+
+def test_open_enclosure_handoff_preserves_bosses_and_holes(library: dict) -> None:
+    scenario = open_electronics_enclosure()
+    js = compile_plan_to_forge(scenario.plan, library)
+    assert "open_electronics_enclosure" in js
+    assert js.count("result = result.add") == 4
+    assert js.count("result = result.subtract") == 2
 
 
 # ── Placement ─────────────────────────────────────────────────────────────────

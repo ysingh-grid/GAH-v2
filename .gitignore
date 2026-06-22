@@ -9,10 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
-# Env / secrets (.example template is tracked)
+# Env / secrets
 .env
 .env.*
-!.env.example
 
 # Logs
 logs/
@@ -40,5 +39,9 @@ artifacts/
 .benchmarks/
 .mypy_cache/
 .ruff_cache/
+.AGENTS.md/
 
 
+
+
+graphify-out/

@@ -107,4 +107,29 @@ def collect_feedback_detail(stage: str, payload: dict[str, Any]) -> str:
     """Extract a human-readable failure detail from a stage's result payload."""
     if stage == "visual_mismatch":
         return str(payload.get("feedback", "verifier rejected the geometry"))
+    if stage == "mesh_repair":
+        # repair_mesh returns {success, after, actions, ...} with NO error/feedback
+        # key when it ran but the mesh still didn't pass. Surface the actual mesh
+        # stats so the replanner can act instead of seeing "unknown failure".
+        after = payload.get("after") or {}
+        if after:
+            actions = ", ".join(payload.get("actions") or []) or "none"
+            base = (
+                f"mesh still invalid after repair: "
+                f"watertight={after.get('is_watertight')}, "
+                f"open_holes={after.get('open_holes')}, "
+                f"self_intersections={after.get('self_intersections')}, "
+                f"components={after.get('num_components')}. Repairs tried: {actions}."
+            )
+            # >1 component means features didn't fuse — almost always tangent (touching)
+            # instead of overlapping. This is the single most common complex-part defect.
+            if (after.get("num_components") or 1) > 1:
+                base += (
+                    " CAUSE: disconnected components — unioned features only TOUCH "
+                    "instead of overlapping. Extend each union feature ~0.5-1mm INTO "
+                    "the body it joins (e.g. lengthen spokes so they overlap hub and "
+                    "rim) so the boolean fuses one watertight solid."
+                )
+            return base
+        return str(payload.get("error") or payload.get("feedback") or "mesh repair failed")
     return str(payload.get("error") or payload.get("feedback") or "unknown failure")

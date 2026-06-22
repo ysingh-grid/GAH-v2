@@ -542,47 +542,31 @@ WS/ws/v1/designs/:id/streamStream stage changes, previews, verifier updates, app
 
 ## Decision Metrics
 
-These metrics should be treated as review gates, not marketing claims. The first milestone is to prove a reliable single-part loop before optimizing speed or moving into multi-part orchestration.
-
->80%
+These metrics should be treated as review gates, not marketing claims. The first milestone is to prove a reliable single-part loop before optimizing speed or moving into multi-part orchestration. : >80%
 
 Valid Single-Part
-First Pass
-
-<2
+First Pass : <2
 
 Average Repair
-Iterations
-
-100%
+Iterations :100%
 
 Outputs with Trace
-Artifacts
-
-0
+Artifacts: 0
 
 Silent Geometry
-Failures
-
-<5m
+Failures: <5 mins
 
 MVP Single-Part
-Workflow Time
-
-<40k
+Workflow Time : <40k
 
 Temporal Events
-Before Continue
-
-100%
+Before Continue : 100%
 
 Human Gates for
-Risky Exports
-
-A/B
+Risky Exports 
 
 Model and Runtime
-Eval Harness
+Eval Harness: A/B
 
 ---
 
@@ -685,24 +669,16 @@ Pass/fail reason, first-pass status, number of repairs, human approval decision,
 
 Once the evaluation harness is stable, model routing can become cost-aware. Smaller or specialized models can handle routine primitive planning and repair suggestions, while frontier multimodal models remain reserved for ambiguous intent, novel geometry, and high-risk verification. Temporal task queues make that routing operational, but the routing policy should be driven by measured quality rather than assumption.
 
-The trace flywheel is therefore practical: traces improve evals, evals reveal where the runtime or model fails, and only trusted labels graduate into fine-tuning or distillation. This protects the platform from training on noisy geometry mistakes.
-
-1
+The trace flywheel is therefore practical: traces improve evals, evals reveal where the runtime or model fails, and only trusted labels graduate into fine-tuning or distillation. This protects the platform from training on noisy geometry mistakes. : 1
 
 Trace Schema
-per Attempt
-
-6
+per Attempt :6
 
 Core Failure
-Categories
-
-A/B
+Categories : A/B
 
 Model and Runtime
-Comparisons
-
-Later
+Comparisons : Later
 
 Fine-Tune After
 Label Trust

@@ -77,9 +77,13 @@ def search_measurements(
 
         config = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
         response = client.models.generate_content(model=model, contents=query, config=config)
+        raw_answer = getattr(response, "text", "") or ""
+        # Cap at 2 000 chars (~500 tokens) so a verbose grounding response doesn't
+        # exhaust the RLM's cumulative prompt-token budget in a single tool call.
+        answer = raw_answer[:2000] + ("…" if len(raw_answer) > 2000 else "")
         return {
             "query": query,
-            "answer": getattr(response, "text", "") or "",
+            "answer": answer,
             "sources": _extract_sources(response),
         }
     except Exception as exc:  # noqa: BLE001 — never crash the tool; report and move on

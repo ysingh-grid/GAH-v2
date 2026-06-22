@@ -77,30 +77,7 @@ uv run uvicorn backend.server:app --host 0.0.0.0 --port 8001
 ### 3. With Temporal durability (crash-safe geometry)
 
 ```bash
-# Terminal 1: Temporal server + worker + backend
 docker compose --profile temporal up
-
-# OR: Start individually
-# Terminal 1
-docker run -d --name gah-temporal \
-  -p 7233:7233 -p 8088:8088 \
-  -e DB=sqlite \
-  temporalio/auto-setup:1.25
-
-# Terminal 2
-docker run -d --name gah-worker \
-  -e TEMPORAL_HOST=gah-temporal:7233 \
-  -v $PWD/artifacts:/app/artifacts \
-  gah-backend:latest \
-  uv run python -m temporal.worker
-
-# Terminal 3
-docker run -d --name gah-backend \
-  -p 8001:8001 \
-  -e TEMPORAL_HOST=gah-temporal:7233 \
-  -v $PWD/artifacts:/app/artifacts \
-  --env-file .env \
-  gah-backend:latest
 ```
 
 Check Temporal Web UI: http://localhost:8088
@@ -108,24 +85,11 @@ Check Temporal Web UI: http://localhost:8088
 ### 4. With ForgeCAD Studio live preview
 
 ```bash
-# Build backend Docker image first
-docker build -t gah-backend:latest .
-
 # Start all services with profiles
-docker compose --profile temporal --profile studio up
-
-# OR: Manual
-# Terminal 1: Studio on :4000
-docker run -d --name gah-studio \
-  -p 4000:4000 \
-  -v $PWD/artifacts/forgecad:/workspace \
-  node:20-slim \
-  sh -c "npm install -g forgecad && forgecad studio /workspace --port 4000 --host 0.0.0.0"
-
-# Terminal 2: Backend (with FORGECAD_STUDIO_URL set)
-export FORGECAD_STUDIO_URL=http://localhost:4000
-uv run uvicorn backend.server:app --host 0.0.0.0 --port 8001
+FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile temporal --profile studio up
 ```
+
+> **Tip:** You can also use the included `./restart.sh` script to stop, build, and restart all Docker services for this project in the background automatically.
 
 Frontend auto-discovers Studio URL via `/config` endpoint.
 

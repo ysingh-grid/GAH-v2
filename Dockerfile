@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxi6 \
     libxrender1 \
     libxext6 \
+    xvfb \
+    xauth \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -34,7 +36,9 @@ COPY rlm/       rlm/
 COPY tools/     tools/
 COPY primitives/ primitives/
 COPY skills/    skills/
+COPY KB/        KB/
 COPY frontend/  frontend/
+COPY temporal/  temporal/
 
 EXPOSE 8001
 

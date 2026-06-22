@@ -89,7 +89,7 @@ def _step_lines(step: PrimitiveStep, spec: dict[str, Any], index: int) -> list[s
     var = f"s{index}"
     lines = [
         f"# step '{step.id}' — {step.operation.value} {step.primitive}",
-        f"{var} = cq.{_fill_template(spec, step.parameters)}",
+        f"{var} = {_fill_template(spec, step.parameters)}",
         f"{var} = _place({var}, {tuple(step.position)}, {tuple(step.orientation)})",
     ]
     if step.pattern is not None:

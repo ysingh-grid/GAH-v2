@@ -1,0 +1,76 @@
+{
+  "_doc": "Standards-aware dimensions + adaptable CSG recipe templates for the planner. The planner RETRIEVES these (lookup_design_reference) and INLINES adapted steps into its PrimitivePlan. Recipes use ONLY real library primitives + operations (base/union/cut/finish-NONE) + pattern, so the emitted plan needs no compile/schema change. Source for fastener dims: CadQuery KB (rag_kb1) / ISO metric clearance + counterbore.",
+
+  "_origin_convention": "CRITICAL: box/cylinder/sphere/capsule/ellipsoid/*_box/rounded_cylinder are CENTERED at `position` in every axis. A cut/union cylinder of height H placed at position.z = Z spans Z-H/2 .. Z+H/2. To pierce a body that spans z=0..T, place a cut cylinder at position.z = T/2 with height = T+1 (spans -0.5..T+0.5). ring/profile_extrude/revolve instead extrude UP from position.z (base at position). All recipe placeholders below already follow this.",
+
+  "fastener_dims": {
+    "_doc": "Millimetres. clearance = through-hole diameter for a bolt; tap = pilot for threading; cbore_d/cbore_h = counterbore diameter/depth for a socket-head cap screw.",
+    "clearance": {"M3": 3.4, "M4": 4.5, "M5": 5.5, "M6": 6.4, "M8": 9.0, "M10": 11.0, "M12": 14.0},
+    "tap": {"M3": 2.5, "M4": 3.3, "M5": 4.2, "M6": 5.0, "M8": 6.8, "M10": 8.5, "M12": 10.2},
+    "cbore_d": {"M3": 5.5, "M4": 7.0, "M5": 8.5, "M6": 10.5, "M8": 13.5, "M10": 17.5, "M12": 20.0},
+    "cbore_h": {"M3": 3.0, "M4": 4.0, "M5": 5.0, "M6": 6.0, "M8": 8.0, "M10": 10.0, "M12": 12.0}
+  },
+
+  "recipes": {
+    "through_hole": {
+      "description": "A bolt clearance hole cut straight through a body spanning z=0..T at (x,y). radius = clearance[size]/2. Cut cylinder is CENTERED, so position.z = T/2, height = T+1 (pierces fully).",
+      "keywords": ["hole", "bolt hole", "clearance", "through", "drill", "fastener"],
+      "steps": [
+        {"id": "hole", "primitive": "cylinder", "operation": "cut",
+         "parameters": {"radius": "<clearance[size]/2>", "height": "<T + 1>"},
+         "position": ["<x>", "<y>", "<T/2>"]}
+      ]
+    },
+    "counterbored_hole": {
+      "description": "Socket-head cap-screw pocket in a body spanning z=0..T: a clearance hole all the way through, plus a wider counterbore recessed from the TOP face. Both cuts CENTERED.",
+      "keywords": ["counterbore", "cbore", "socket head", "recessed", "pocket", "screw"],
+      "steps": [
+        {"id": "clear", "primitive": "cylinder", "operation": "cut",
+         "parameters": {"radius": "<clearance[size]/2>", "height": "<T + 1>"},
+         "position": ["<x>", "<y>", "<T/2>"]},
+        {"id": "cbore", "primitive": "cylinder", "operation": "cut",
+         "parameters": {"radius": "<cbore_d[size]/2>", "height": "<cbore_h[size] + 0.1>"},
+         "position": ["<x>", "<y>", "<T - cbore_h[size]/2 + 0.05>"]}
+      ]
+    },
+    "bolt_circle": {
+      "description": "N clearance holes evenly spaced on a circle of radius R about Z, through a body z=0..T. ONE patterned cut step — do NOT emit N separate steps. Cut cylinder CENTERED → position.z = T/2.",
+      "keywords": ["bolt circle", "bolt pattern", "flange holes", "polar", "evenly spaced", "PCD"],
+      "steps": [
+        {"id": "bolts", "primitive": "cylinder", "operation": "cut",
+         "parameters": {"radius": "<clearance[size]/2>", "height": "<T + 1>"},
+         "position": ["<R>", "0", "<T/2>"],
+         "pattern": {"type": "polar", "count": "<N>", "axis": [0, 0, 1], "angle_deg": 360}}
+      ]
+    },
+    "corner_holes": {
+      "description": "Clearance holes inset `m` from the corners of a W×D plate spanning z=0..T. Emit one cut per corner (unique ids) at (±(W/2-m), ±(D/2-m)). Cut cylinder CENTERED → position.z = T/2.",
+      "keywords": ["corner holes", "mounting holes", "four holes", "plate holes"],
+      "steps": [
+        {"id": "corner_nw", "primitive": "cylinder", "operation": "cut",
+         "parameters": {"radius": "<clearance[size]/2>", "height": "<T + 1>"},
+         "position": ["<-(W/2 - m)>", "<(D/2 - m)>", "<T/2>"]}
+      ],
+      "note": "Repeat at the other three corners (swap signs of x and y), unique ids: corner_ne, corner_sw, corner_se."
+    },
+    "rib": {
+      "description": "A stiffening rib = a thin tall box unioned onto the body along a span. Box is CENTERED, so to sit a rib of height h_rib on a body z=0..T set position.z = h_rib/2 (rib base on the plane) and OVERLAP the bodies it joins by ~1mm at each end.",
+      "keywords": ["rib", "gusset", "stiffener", "web", "fin"],
+      "steps": [
+        {"id": "rib", "primitive": "box", "operation": "union",
+         "parameters": {"length": "<span + 2>", "width": "<t_rib>", "height": "<h_rib>"},
+         "position": ["<span_center_x>", "<span_center_y>", "<h_rib/2>"]}
+      ]
+    },
+    "mounting_plate": {
+      "description": "A flat base plate with four corner mounting holes. Compose: base box (CENTERED → position.z = T/2 to rest on plane), then the corner_holes recipe.",
+      "keywords": ["mounting plate", "base plate", "bracket base", "flange plate"],
+      "steps": [
+        {"id": "plate", "primitive": "box", "operation": "base",
+         "parameters": {"length": "<W>", "width": "<D>", "height": "<T>"},
+         "position": ["0", "0", "<T/2>"]}
+      ],
+      "note": "Then inline the corner_holes recipe (size, m) for the fastening holes."
+    }
+  }
+}

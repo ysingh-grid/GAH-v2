@@ -39,6 +39,7 @@ services:
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
     volumes:
       - ./artifacts:/app/artifacts
+      - ./outputs:/app/outputs    # run artifacts (STL/STEP/renders/trace.json) persisted to host
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log
     restart: unless-stopped
     healthcheck:
@@ -138,6 +139,7 @@ services:
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
     volumes:
       - ./artifacts:/app/artifacts
+      - ./outputs:/app/outputs    # run artifacts (STL/STEP/renders/trace.json) persisted to host
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log
     depends_on:
       temporal:

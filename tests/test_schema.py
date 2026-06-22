@@ -1,4 +1,4 @@
-"""Unit tests for runtime/schema.py — PrimitivePlan structural + semantic validation."""
+"""Real-world schema tests for PrimitivePlan structural + semantic validation."""
 
 import pytest
 from pydantic import ValidationError
@@ -12,6 +12,7 @@ from runtime.schema import (
     plan_from_dict,
     validate_plan_against_library,
 )
+from tests.real_world_scenarios import mounting_plate_with_four_holes, open_electronics_enclosure
 
 
 def _box_base(step_id: str = "body", **params: float) -> dict:
@@ -136,10 +137,16 @@ def test_pattern_count_below_two_raises():
 # ── semantic validation against the library ──────────────────────────────────
 
 
-def test_valid_plan_against_real_library_has_no_errors():
+def test_mounting_plate_plan_against_real_library_has_no_errors():
     library = schema.load_library()
-    plan = plan_from_dict({"part_name": "cube", "steps": [_box_base()]})
-    assert validate_plan_against_library(plan, library) == []
+    scenario = mounting_plate_with_four_holes()
+    assert validate_plan_against_library(scenario.plan, library) == []
+
+
+def test_open_enclosure_plan_against_real_library_has_no_errors():
+    library = schema.load_library()
+    scenario = open_electronics_enclosure()
+    assert validate_plan_against_library(scenario.plan, library) == []
 
 
 def test_unknown_primitive_reports_primitive_gap():

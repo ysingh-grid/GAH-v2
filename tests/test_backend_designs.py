@@ -1,7 +1,8 @@
 """Tests for backend/designs/ — session store, HTTP routes, and WebSocket chat.
 
-Blocking calls (run_planner_turn, run_geometry_loop, compile_plan_to_forge) are
-mocked everywhere so no Gemini / CadQuery / MeshLib is needed.
+Most WebSocket branch tests patch expensive boundaries. The real-world
+simulation test patches only the RLM/VLM model decisions and lets the backend
+run the actual geometry loop so artifact evidence is produced.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from starlette.testclient import TestClient
 from backend.app import create_app
 from backend.designs import store as design_store
 from backend.designs.models import new_session
+from tests.real_world_scenarios import mounting_plate_with_four_holes
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -199,6 +201,77 @@ def test_ws_plan_ready_success_flow(mock_planner, mock_loop, _mock_forge, client
     assert session.forge_js == "// forge js"
 
 
+@patch("backend.designs.runner.run_planner_turn")
+def test_ws_plan_ready_runs_real_geometry_pipeline_with_mocked_models(mock_planner, client):
+    """plan_ready -> real geometry loop -> trace/render artifacts -> success event."""
+    pytest.importorskip("cadquery")
+    pytest.importorskip("meshlib.mrmeshpy")
+    pytest.importorskip("vtk")
+
+    import json
+    import shutil
+    from pathlib import Path
+
+    scenario = mounting_plate_with_four_holes()
+    mock_planner.return_value = _plan_ready_output(scenario.plan)
+
+    def fake_render(_stl_path: str, run_id: str) -> dict:
+        from tools.artifacts import run_dir
+
+        png_path = run_dir(run_id) / "threeview.png"
+        png_path.write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+            b"\x00\x00\x0cIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe"
+            b"\x02\xfeA\xe2!\xbc\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        return {
+            "success": True,
+            "png_path": str(png_path),
+            "width": 1,
+            "height": 1,
+            "views": ["stub"],
+            "renders": {"composite": str(png_path)},
+        }
+
+    with (
+        patch("tools.render_views.render_views", side_effect=fake_render),
+        patch("tools.verify_geometry.verify_geometry") as judge,
+    ):
+        judge.return_value = {
+            "passed": True,
+            "feedback": "All constraints met.",
+            "render_png": "",
+        }
+
+        design_id = client.post("/designs").json()["design_id"]
+        with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
+            ws.send_json({"type": "message", "text": scenario.prompt})
+            events = _collect_ws_events(ws)
+
+    success_evt = next(e for e in events if e["type"] == "success")
+    run_id = success_evt["run_id"]
+    trace_path = Path("outputs") / run_id / "trace.json"
+
+    try:
+        assert success_evt["forge_js"] is not None
+        assert success_evt["plan"]["part_name"] == "electronics_mounting_plate"
+        assert trace_path.exists()
+
+        trace = json.loads(trace_path.read_text(encoding="utf-8"))
+        assert trace["outcome"]["status"] == "success"
+        assert trace["verdict"]["passed"] is True
+        assert Path(trace["execution_result"]["step_path"]).exists()
+        assert Path(trace["execution_result"]["stl_path"]).exists()
+        assert Path(trace["renders"]["png_path"]).exists()
+
+        session = design_store.get_session(design_id)
+        assert session.status == "done"
+        assert session.run_id == run_id
+    finally:
+        shutil.rmtree(Path("outputs") / run_id, ignore_errors=True)
+
+
 @patch("backend.designs.runner.run_geometry_loop")
 @patch("backend.designs.runner.run_planner_turn")
 def test_ws_plan_ready_failed_flow(mock_planner, mock_loop, client):
@@ -265,10 +338,10 @@ def _ask_user_output(question: str, options: list[str] | None = None):
     )
 
 
-def _plan_ready_output():
+def _plan_ready_output(plan=None):
     from runtime.planner import PlannerOutput
     from runtime.schema import Operation, PrimitivePlan, PrimitiveStep
-    plan = PrimitivePlan(
+    plan = plan or PrimitivePlan(
         part_name="box_test",
         steps=[
             PrimitiveStep(

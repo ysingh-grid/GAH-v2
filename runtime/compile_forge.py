@@ -26,16 +26,17 @@ _PREAMBLE = """\
 // Helpers ─────────────────────────────────────────────────────────────────────
 function _place(shape, px, py, pz, rx, ry, rz) {
   let s = shape;
-  if (rx !== 0) s = s.rotate(rx, [1, 0, 0]);
-  if (ry !== 0) s = s.rotate(ry, [0, 1, 0]);
-  if (rz !== 0) s = s.rotate(rz, [0, 0, 1]);
+  // ForgeCAD Shape.rotate signature is rotate(axis, angleDeg) — axis FIRST.
+  if (rx !== 0) s = s.rotate([1, 0, 0], rx);
+  if (ry !== 0) s = s.rotate([0, 1, 0], ry);
+  if (rz !== 0) s = s.rotate([0, 0, 1], rz);
   if (px !== 0 || py !== 0 || pz !== 0) s = s.translate(px, py, pz);
   return s;
 }
 function _polar(shape, count, ax, ay, az, angle_deg) {
   const step = angle_deg / count;
   const copies = Array.from({ length: count }, (_, k) =>
-    shape.rotate(k * step, [ax, ay, az])
+    shape.rotate([ax, ay, az], k * step)
   );
   return union(...copies);
 }
@@ -66,10 +67,15 @@ function _ellipsoid(xr, zr) {
   return polygon(pts).revolve();
 }
 function _wedge(dx, dy, dz, xmin, ymin, xmax, ymax) {
-  // Approximate CadQuery wedge with a loft between bottom (dx x dy) and top rect.
-  const bottom = rect(dx, dy);
-  const top = rect(Math.max(0.001, xmax - xmin), Math.max(0.001, ymax - ymin));
-  return loft([bottom, top], [0, dz]);
+  // Exact CadQuery/OCC makeWedge: box dx×dy×dz whose top face (y=dy) is shrunk
+  // to the rect [xmin,xmax]×[ymin,ymax] (OCC's z-range). Built as a loft from the
+  // full bottom rect to the offset top rect along Z, then rotated so the loft axis
+  // becomes +Y (CadQuery's frame) and centered. Vertices match CadQuery exactly.
+  const bottom = rect(dx, dz);
+  const tw = Math.max(0.001, xmax - xmin), th = Math.max(0.001, ymax - ymin);
+  const cx = (xmin + xmax) / 2 - dx / 2, cy = dz / 2 - (ymin + ymax) / 2;
+  const top = rect(tw, th).translate(cx, cy);
+  return loft([bottom, top], [0, dy]).rotate([1, 0, 0], -90).translate(0, -dy / 2, 0);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 """

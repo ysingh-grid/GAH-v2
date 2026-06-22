@@ -9,7 +9,7 @@
     },
     "verification": ["measure_length", "measure_width", "measure_height"],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height})",
-    "forge_template": "box({length}, {width}, {height})"
+    "forge_template": "box({length}, {width}, {height}).translate(0, 0, -{height}/2)"
   },
   "cylinder": {
     "name": "cylinder",
@@ -20,7 +20,7 @@
     },
     "verification": ["measure_radius", "measure_height"],
     "template": "cq.Workplane(\"XY\").cylinder({height}, {radius})",
-    "forge_template": "cylinder({height}, {radius})"
+    "forge_template": "cylinder({height}, {radius}).translate(0, 0, -{height}/2)"
   },
   "cone": {
     "name": "cone",
@@ -73,15 +73,15 @@
   },
   "pyramid": {
     "name": "pyramid",
-    "description": "A pyramid built by extruding a rectangular base with a taper angle.",
+    "description": "A pyramid: rectangular base lofted to an apex point at the given height.",
     "parameters": {
       "length": {"type": "float", "description": "Base length along X", "default": 10.0},
       "width": {"type": "float", "description": "Base width along Y", "default": 10.0},
       "height": {"type": "float", "description": "Height along Z", "default": 10.0},
-      "taper_angle": {"type": "float", "description": "Taper angle in degrees", "default": 30.0}
+      "taper_angle": {"type": "float", "description": "Unused (kept for schema compat); apex is a point", "default": 30.0}
     },
     "verification": ["measure_length", "measure_width", "measure_height"],
-    "template": "cq.Workplane(\"XY\").rect({length}, {width}).extrude({height}, taper={taper_angle})",
+    "template": "cq.Workplane(\"XY\").rect({length}, {width}).workplane(offset={height}).rect(0.001, 0.001).loft(combine=True)",
     "forge_template": "rect({length}, {width}).extrude({height}, {{scaleTop: 0.0, divisions: 2}})"
   },
   "prism": {
@@ -94,7 +94,7 @@
     },
     "verification": ["measure_sides", "measure_radius", "measure_height"],
     "template": "cq.Workplane(\"XY\").polygon({sides}, {radius}*2.0).extrude({height})",
-    "forge_template": "ngon({sides}, {radius}).extrude({height})"
+    "forge_template": "ngon({sides}, {radius}).rotate(90 % (360 / {sides}), [0, 0, 1]).extrude({height})"
   },
   "hexagon_prism": {
     "name": "hexagon_prism",
@@ -116,7 +116,7 @@
     },
     "verification": ["measure_flat_to_flat", "measure_height"],
     "template": "cq.Workplane(\"XY\").polygon(8, {flat_to_flat}, circumscribed=True).extrude({height})",
-    "forge_template": "ngon(8, {flat_to_flat} / (2 * Math.cos(Math.PI / 8))).extrude({height})"
+    "forge_template": "ngon(8, {flat_to_flat} / (2 * Math.cos(Math.PI / 8))).rotate(22.5, [0, 0, 1]).extrude({height})"
   },
   "hollow_cylinder": {
     "name": "hollow_cylinder",
@@ -141,17 +141,17 @@
     },
     "verification": ["measure_length", "measure_width", "measure_height", "measure_wall_thickness"],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).faces(\">Z\").shell(-{wall_thickness})",
-    "forge_template": "box({length}, {width}, {height}).subtract(box({length} - {wall_thickness}*2, {width} - {wall_thickness}*2, {height}).translate(0, 0, {wall_thickness}))"
+    "forge_template": "box({length}, {width}, {height}).subtract(box({length} - {wall_thickness}*2, {width} - {wall_thickness}*2, {height}).translate(0, 0, {wall_thickness})).translate(0, 0, -{height}/2)"
   },
   "ellipsoid": {
     "name": "ellipsoid",
-    "description": "An ellipsoid defined by revolving a half ellipse profile around the active Y-axis.",
+    "description": "A true ellipsoid: unit sphere scaled to x_radius (X,Y) and z_radius (Z).",
     "parameters": {
-      "x_radius": {"type": "float", "description": "Radius along X axis", "default": 5.0},
+      "x_radius": {"type": "float", "description": "Radius along X and Y axes", "default": 5.0},
       "z_radius": {"type": "float", "description": "Radius along Z axis", "default": 3.0}
     },
     "verification": ["measure_x_radius", "measure_z_radius"],
-    "template": "cq.Workplane(\"XY\").ellipseArc({x_radius}, {z_radius}, 0, 180).close().revolve()",
+    "template": "cq.Workplane(\"XY\").add(cq.Workplane(\"XY\").sphere(1.0).val().transformGeometry(cq.Matrix([[{x_radius}, 0, 0, 0], [0, {x_radius}, 0, 0], [0, 0, {z_radius}, 0]])))",
     "forge_template": "_ellipsoid({x_radius}, {z_radius})"
   },
   "capsule": {
@@ -163,7 +163,7 @@
     },
     "verification": ["measure_radius", "measure_length"],
     "template": "cq.Workplane(\"XY\").cylinder({length}, {radius}).union(cq.Workplane(\"XY\").workplane(offset={length}/2.0).sphere({radius})).union(cq.Workplane(\"XY\").workplane(offset=-{length}/2.0).sphere({radius}))",
-    "forge_template": "union(cylinder({length}, {radius}), sphere({radius}).translate(0, 0, {length}/2), sphere({radius}).translate(0, 0, -{length}/2))"
+    "forge_template": "union(cylinder({length}, {radius}).translate(0, 0, -{length}/2), sphere({radius}).translate(0, 0, {length}/2), sphere({radius}).translate(0, 0, -{length}/2))"
   },
   "chamfered_box": {
     "name": "chamfered_box",
@@ -176,7 +176,7 @@
     },
     "verification": ["measure_length", "measure_width", "measure_height", "measure_chamfer"],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).chamfer({chamfer_val})",
-    "forge_template": "chamfer(box({length}, {width}, {height}), {chamfer_val})"
+    "forge_template": "(() => {{ const b = box({length}, {width}, {height}); return chamfer(b, {chamfer_val}, selectEdges(b)).translate(0, 0, -{height}/2); }})()"
   },
   "filleted_box": {
     "name": "filleted_box",
@@ -189,9 +189,9 @@
     },
     "verification": ["measure_length", "measure_width", "measure_height", "measure_fillet"],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).fillet({fillet_val})",
-    "forge_template": "fillet(box({length}, {width}, {height}), {fillet_val})"
+    "forge_template": "(() => {{ const b = box({length}, {width}, {height}); return fillet(b, {fillet_val}, selectEdges(b)).translate(0, 0, -{height}/2); }})()"
   },
-  "rounded_cylinder": {
+    "rounded_cylinder": {
     "name": "rounded_cylinder",
     "description": "A cylinder with filleted end edges.",
     "parameters": {
@@ -201,7 +201,7 @@
     },
     "verification": ["measure_radius", "measure_height", "measure_fillet"],
     "template": "cq.Workplane(\"XY\").cylinder({height}, {radius}).edges().fillet({fillet_val})",
-    "forge_template": "fillet(cylinder({height}, {radius}), {fillet_val})"
+    "forge_template": "(() => {{ const t = cylinder({height}, {radius}).faces({{ cap: ['top', 'bottom'], barrel: 'side' }}); return fillet(t, {fillet_val}, t.edgesBetween('cap', 'barrel')).translate(0, 0, -{height}/2); }})()"
   },
   "ring": {
     "name": "ring",
@@ -235,6 +235,6 @@
     },
     "verification": ["measure_angle"],
     "template": "cq.Workplane(\"XY\").polyline({profile}).close().revolve({angle}, (0, 0, 0), (0, 1, 0))",
-    "forge_template": "polygon({profile}).revolve({angle})"
+    "forge_template": "polygon({profile}).revolve({angle}).rotate([1, 0, 0], -90)"
   }
 }
