@@ -152,28 +152,17 @@ def backend_execute_tool(tool_name, payload_json="{}", run_id="rlm_full_demo"):
     return response.json()
 
 
-def backend_list_primitives(run_id="rlm_full_demo"):
-    """List available primitive names through the backend allowlisted tool registry."""
+def backend_get_primitives(run_id="rlm_full_demo"):
+    """Get all available primitives through the backend allowlisted tool registry."""
     import json
     import os
     import requests
 
     url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
-    payload = {"tool_name": "list_primitives", "payload": {}, "run_id": run_id}
+    payload = {"tool_name": "get_primitives", "payload": {}, "run_id": run_id}
     response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=30)
     return response.json()
 
-
-def backend_lookup_primitive(name, run_id="rlm_full_demo"):
-    """Look up one primitive schema through the backend allowlisted tool registry."""
-    import json
-    import os
-    import requests
-
-    url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
-    payload = {"tool_name": "lookup_primitive", "payload": {"name": name}, "run_id": run_id}
-    response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=30)
-    return response.json()
 
 
 def backend_list_project_tools(run_id="rlm_full_demo"):
@@ -417,39 +406,35 @@ def backend_build_skill_tool_report(run_id="rlm_full_demo"):
     primitives_response = requests.post(
         f"{url}/internal/execute-tool",
         headers=headers,
-        data=json.dumps({"tool_name": "list_primitives", "payload": {}, "run_id": run_id}),
+        data=json.dumps({"tool_name": "get_primitives", "payload": {}, "run_id": run_id}),
         timeout=30,
     ).json()
-    primitive_names = primitives_response.get("data", {}).get("result", {}).get("primitives", [])
+    primitives = primitives_response.get("data", {}).get("result", {})
+    primitive_names = sorted(list(primitives.keys()))
     record_state(
         10,
         "backend_build_skill_tool_report",
         "POST /internal/execute-tool",
-        {"tool_name": "list_primitives", "payload": {}, "run_id": run_id},
+        {"tool_name": "get_primitives", "payload": {}, "run_id": run_id},
         primitives_response,
         {"primitive_count": len(primitive_names), "primitive_names": primitive_names},
     )
 
     selected_primitives = {}
     for index, primitive_name in enumerate(["box", "cylinder"], start=11):
-        primitive_response = requests.post(
-            f"{url}/internal/execute-tool",
-            headers=headers,
-            data=json.dumps({"tool_name": "lookup_primitive", "payload": {"name": primitive_name}, "run_id": run_id}),
-            timeout=30,
-        ).json()
-        selected_primitives[primitive_name] = primitive_response.get("data", {}).get("result", {})
+        selected_primitives[primitive_name] = primitives.get(primitive_name, {})
         record_state(
             index,
             "backend_build_skill_tool_report",
-            "POST /internal/execute-tool",
+            "POST /internal/execute-tool (cached lookup)",
             {"tool_name": "lookup_primitive", "payload": {"name": primitive_name}, "run_id": run_id},
-            primitive_response,
+            {"ok": True, "tool": "execute_tool", "data": {"result": selected_primitives[primitive_name]}},
             {
                 "selected_primitive": primitive_name,
                 "schema_keys": sorted(selected_primitives[primitive_name].keys()) if isinstance(selected_primitives[primitive_name], dict) else [],
             },
         )
+
 
     repo_response = requests.post(
         f"{url}/internal/scan-repo",
@@ -682,8 +667,7 @@ BACKEND_BRIDGE_TOOLS = [
     backend_list_dir,
     backend_run_pipeline,
     backend_execute_tool,
-    backend_list_primitives,
-    backend_lookup_primitive,
+    backend_get_primitives,
     backend_list_project_tools,
     backend_execute_cadquery,
     backend_inspect_mesh,

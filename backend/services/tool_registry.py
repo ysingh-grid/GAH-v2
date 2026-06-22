@@ -69,19 +69,11 @@ def list_skills(payload: dict) -> dict:
     return {"skills": existing_list()}
 
 
-def lookup_primitive(payload: dict) -> dict:
-    name = payload.get("name")
-    if not isinstance(name, str):
-        raise BridgeError("INVALID_REQUEST", "lookup_primitive requires string payload.name")
-    from tools.primitive_lookup import lookup_primitive as existing_lookup
+def get_primitives(payload: dict) -> dict:
+    from tools.primitive_lookup import get_primitives as existing_get
 
-    return existing_lookup(name)
+    return existing_get()
 
-
-def list_primitives(payload: dict) -> dict:
-    from tools.primitive_lookup import list_primitives as existing_list
-
-    return {"primitives": existing_list()}
 
 
 def execute_cadquery(payload: dict) -> dict:
@@ -159,8 +151,7 @@ TOOLS = {
     "read_json_summary": read_json_summary,
     "read_skill": read_skill,
     "list_skills": list_skills,
-    "lookup_primitive": lookup_primitive,
-    "list_primitives": list_primitives,
+    "get_primitives": get_primitives,
     "execute_cadquery": execute_cadquery,
     "inspect_mesh": inspect_mesh,
     "render_views": render_views,

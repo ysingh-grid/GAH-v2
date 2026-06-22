@@ -5,7 +5,7 @@ Load and manage RLM tools (functions)
 from tools.execute_cadquery import execute_cadquery
 from tools.inspect_mesh import inspect_mesh
 from tools.load_trace import list_traces, load_trace
-from tools.primitive_lookup import list_primitives, lookup_primitive
+from tools.primitive_lookup import get_primitives
 from tools.read_skill import list_skills, read_skill
 from tools.render_views import render_views
 from tools.verify_geometry import verify_geometry
@@ -19,8 +19,7 @@ class ToolsRegistry:
         self.tools = {
             "read_skill": read_skill,
             "list_skills": list_skills,
-            "lookup_primitive": lookup_primitive,
-            "list_primitives": list_primitives,
+            "get_primitives": get_primitives,
             "execute_cadquery": execute_cadquery,
             "inspect_mesh": inspect_mesh,
             "render_views": render_views,
@@ -29,6 +28,7 @@ class ToolsRegistry:
             "load_trace": load_trace,
             "list_traces": list_traces,
         }
+
 
     def get_all(self) -> list:
         """Return all tools as a list for fast_rlm.run()"""

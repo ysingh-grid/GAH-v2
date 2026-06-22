@@ -8,9 +8,8 @@ import logging
 import fast_rlm
 
 from rlm.pull_tools import (
-    list_primitives,
+    get_primitives,
     list_skills,
-    lookup_primitive,
     read_skill,
 )
 from rlm.rlm_config import config as default_config
@@ -58,20 +57,26 @@ def plan_geometry(
         if error_msg:
             prompt += (
                 f"\n\n⚠️ YOUR PREVIOUS PLAN FAILED VALIDATION:\n{error_msg}\n\n"
-                f"Please review the primitive parameter types, check the library schema via lookup_primitive, "
+                f"Please review the primitive parameter types, check the library schema via get_primitives, "
                 f"and correct all errors."
             )
 
         try:
             # Run fast-rlm agent
+            import os
             result = fast_rlm.run(
                 prompt,
                 config=active_config,
                 prefix=f"{run_prefix}_att_{attempt}",
-                tools=[list_primitives, lookup_primitive, list_skills, read_skill],
-                env_variables={"DTCM_BACKEND_URL": backend_url},
+                tools=[get_primitives, list_skills, read_skill],
+                env_variables={
+                    "DTCM_BACKEND_URL": backend_url,
+                    "RLM_MODEL_API_KEY": os.environ.get("RLM_MODEL_API_KEY", "")
+                },
                 output_schema=PrimitivePlan,
             )
+
+
 
             raw_results = result.get("results")
             if not raw_results:

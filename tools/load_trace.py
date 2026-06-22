@@ -1,4 +1,7 @@
-def load_trace(run_id: str) -> dict:
+from typing import Any
+from .artifacts import run_dir, _REPO_ROOT
+
+def load_trace(run_id: str) -> dict[str, Any]:
     """
     Reads a stored trace artifact from disk for the given run_id.
 
@@ -9,18 +12,16 @@ def load_trace(run_id: str) -> dict:
         run_id: The unique identifier of the run whose trace should be loaded.
 
     Returns:
-        A dictionary containing:
+        dict[str, Any]: A dictionary containing:
         - success: bool
         - trace: dict (the full trace payload, if success=True)
         - error: str (optional, if success=False)
     """
     import json
-    import os
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    trace_path = os.path.join(base_dir, "outputs", run_id, "trace.json")
+    trace_path = run_dir(run_id) / "trace.json"
 
-    if not os.path.exists(trace_path):
+    if not trace_path.exists():
         return {
             "success": False,
             "error": f"No trace found for run_id '{run_id}' at path: {trace_path}",
@@ -45,22 +46,22 @@ def list_traces() -> list[str]:
     Lists all available run_ids that have a saved trace artifact.
 
     Returns:
-        A list of run_id strings.
+        list[str]: A list of run_id strings.
     """
     import os
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    outputs_dir = os.path.join(base_dir, "outputs")
+    artifacts_dir = _REPO_ROOT / "artifacts"
 
-    if not os.path.exists(outputs_dir):
+    if not artifacts_dir.exists():
         return []
 
-    # A run = any outputs/{run_id}/ folder that contains a trace.json
+    # A run = any artifacts/{run_id}/ folder that contains a trace.json
     return sorted(
         [
             d
-            for d in os.listdir(outputs_dir)
-            if os.path.isdir(os.path.join(outputs_dir, d))
-            and os.path.exists(os.path.join(outputs_dir, d, "trace.json"))
+            for d in os.listdir(artifacts_dir)
+            if (artifacts_dir / d).is_dir()
+            and (artifacts_dir / d / "trace.json").exists()
         ]
     )
+

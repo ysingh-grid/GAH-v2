@@ -1,75 +1,83 @@
 ---
 name: refinement_guidance
-version: "1.0"
+version: "2.0"
 purpose: >
   Help the Refinement Sub-Agent adjust primitive parameters and positioning
-  coordinates based on visual/geometric feedback from the verifier, without
-  rewriting the whole design.
+  coordinates in the PrimitivePlan JSON representation based on visual/geometric
+  feedback from the verifier, without rewriting the whole design.
 used_by:
   - refine_sub_agent (W·05 outer refinement loop, max 5 attempts)
 inputs:
-  - current_code: "The CadQuery Python code that passed compilation"
-  - verdict: "Verifier output dict with passed/score/issues/feedback"
-  - primitive_plan: "PrimitivePlan dict with resolved parameters"
+  - current_plan: "The PrimitivePlan JSON representation that passed compilation/execution but has verification errors"
+  - verdict: "Verifier output dict with passed, score, issues, feedback, and failure_category"
   - attempt: "Current refinement attempt number (1–5)"
 outputs:
-  - refined_code: "Updated Python code string assigning final solid to `result`"
-tags: [refinement, feedback, geometry, W05, outer-loop]
+  - refined_plan: "Updated PrimitivePlan JSON representation with corrected parameters/positioning"
+tags: [refinement, feedback, geometry, W05, outer-loop, json]
 token_budget: low   # ~500 tokens — load only when refinement is triggered
 sub_agent_contract: >
-  Return ONLY the corrected Python code string.
+  Return ONLY the corrected PrimitivePlan JSON representation.
   No markdown fences, no explanations.
-  Final solid MUST be assigned to `result`.
+  Must conform exactly to the PrimitivePlan schema (a dictionary with a "plan" key containing list of steps, or a list of steps).
 ---
 
 # Skill: Refinement Guidance (Outer Loop)
 
-Adjust geometry based on verifier feedback. Used by the **Refinement Sub-Agent**
-in the **W·05 outer refinement loop** (max 5 attempts).
+Adjust geometry parameters and positions based on verifier feedback. Used by the **Refinement Sub-Agent** in the **W·05 outer refinement loop** (max 5 attempts).
 
-> **Contract**: Return ONLY the corrected Python code. No markdown, no prose.
-> Final solid MUST be assigned to `result`.
+> **Contract**: Return ONLY the corrected PrimitivePlan JSON. No markdown, no prose.
+> The output MUST be a valid JSON representation matching the `PrimitivePlan` schema.
 
 ---
 
-## Feedback → Fix Mapping
+## Feedback → PrimitivePlan Fix Mapping
 
-### 1. Size Mismatch
+### 1. Dimension Mismatch (e.g., Size / Radius / Diameter)
 **Example feedback**: *"The cone base is 15mm instead of 30mm."*
 
-- Check: Did you pass **radius** where **diameter** was required (or vice versa)?
-  - CadQuery's `makeCone(r1, r2, h)` takes **radius**, not diameter.
-  - If the prompt says "base diameter 30mm" → pass `r1 = 30.0 / 2.0 = 15.0`.
-- Scale the affected parameter accordingly.
+* **Adjustment Rule**:
+  - Check the primitive's parameter schema. Many primitives require **radius** instead of **diameter**.
+  - If the prompt specifies "base diameter 30mm" and you put `"radius": 30.0` or `"radius": 15.0`, cross-reference with how it translates in CAD.
+  - Scale/adjust the dimension parameters directly in the `"parameters"` dictionary of the relevant step.
+  - Example change:
+    ```json
+    // Before
+    "parameters": { "radius": 30.0 }
+    // After
+    "parameters": { "radius": 15.0 }
+    ```
 
-### 2. Position Offset / Misalignment
+### 2. Positioning Offsets & Alignment (X, Y, Z Coordinate Adjustments)
 **Example feedback**: *"The cylinder top cap sits 5mm too low and intersects the base."*
 
-- Re-verify Z coordinate using the **half-height rule**:
-  ```
-  shaft_center_z = base_height/2 + shaft_height/2
-  ```
-  - If `base_height=10`, `shaft_height=30` → `shaft_center_z = 5 + 15 = 20`
-  - If you used `z=15`, it intersects by `5mm`. Fix: set to `20`.
+* **Adjustment Rule**:
+  - Examine the `position` array `[x, y, z]` of the misplaced primitive.
+  - To shift a shape up or down along the Z-axis, modify `position[2]`.
+  - Re-calculate Z coordinate using the **half-height rule**:
+    $$\text{center}_Z = \text{base\_center}_Z + \frac{\text{base\_height}}{2} + \frac{\text{feature\_height}}{2}$$
+  - For example, if a base cylinder has `height: 10` (centered at `[0, 0, 5]`, so base top is at `Z=10`), and a feature cylinder has `height: 30`, its center Z should be $10 + 15 = 25$. If it was set to `20`, shift it to `25` by editing the `position` array: `[0.0, 0.0, 25.0]`.
 
 ### 3. Missing Features
 **Example feedback**: *"There are no mount holes."*
 
-- Check: Did you define the hole cutter but forget the `.cut()` call?
-- Check: Is the cutter cylinder tall enough to fully penetrate the body?
-  - Remember: cutter must be `H + 2mm` tall, offset by `1mm` outward.
+* **Adjustment Rule**:
+  - Verify if a primitive step with `"operation": "cut"` exists in the plan.
+  - Ensure the cutter's dimensions actually overlap with the main body.
+  - Increase the cutter's `height` or adjust its `position` so it fully passes through the parts it's supposed to cut.
 
-### 4. Orientation Errors
+### 4. Orientation Issues
 **Example feedback**: *"The cylinder is lying flat along X instead of standing vertically."*
 
-- CadQuery cylinders default to standing along **Z axis**.
-- To rotate: `.rotate((0,0,0), (1,0,0), 90)` lays it along X.
-- To stand along Y: `.rotate((0,0,0), (1,0,0), 90).rotate((0,0,0), (0,0,1), 90)`
+* **Adjustment Rule**:
+  - Modify the `orientation` array `[rx, ry, rz]` for the specific primitive.
+  - Primitives usually align along the Z axis by default. To orient along X or Y, specify the correct rotation in degrees (e.g., `[90.0, 0.0, 0.0]`).
 
-### 5. Score < 60 — General Checklist
+---
 
-1. Re-read the original prompt for missed constraints.
-2. Check all dimensions against the `primitive_plan.parameters` — did any
-   get dropped or scaled incorrectly?
-3. Verify CSG operations are in the correct order (base → union → cut → finish).
-4. Check edge finishing (fillets/chamfers) aren't too large for the geometry.
+## Refinement Checklist
+
+1. Review the verifier's `verdict` (especially `feedback` and `failure_category`).
+2. Identify the incorrect step `id` in the `current_plan`.
+3. Make localized edits to `parameters`, `position`, or `orientation` in the JSON. Do not reconstruct the plan from scratch unless the structure is fundamentally wrong.
+4. Ensure the modified structure remains valid under the `PrimitivePlan` schema.
+5. Return ONLY the final JSON object. Do not wrap in markdown code blocks.

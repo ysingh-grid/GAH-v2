@@ -11,11 +11,11 @@
 | `execute_cadquery.py` | `execute_cadquery(code, run_id)` | ✅ |
 | `inspect_mesh.py` | `inspect_mesh(stl_path)` | ✅ |
 | `render_views.py` | `render_views(stl_path, run_id)` | ✅ |
-| `verify_geometry.py` | `verify_geometry(prompt, code, metrics, render_png, prior_feedback)` | ✅ |
+| `verify_geometry.py` | `verify_geometry(prompt, metrics, render_png, prior_feedback)` | ✅ |
 | `write_trace.py` | `write_trace(run_id, prompt, plan, code, exec_result, mesh_report, renders, verdict)` | ✅ |
 | `load_trace.py` | `load_trace(run_id)`, `list_traces()` | ✅ |
 | `read_skill.py` | `read_skill(name)`, `list_skills()` | ✅ |
-| `primitive_lookup.py` | `lookup_primitive(key)`, `list_primitives()` | ✅ |
+| `primitive_lookup.py` | `get_primitives()` | ✅ |
 
 ---
 
@@ -139,7 +139,6 @@ Renders 3 VTK views of the mesh into a single 4800×1600 composite PNG (offscree
 ```python
 verify_geometry(
     prompt: str,
-    code: str,
     metrics: dict,
     render_png: str,
     prior_feedback: list | None = None
@@ -238,7 +237,7 @@ prompt (str)  +  code (str)  +  run_id (str)
          MERGE → metrics dict
                   │
                   ▼
-  verify_geometry(prompt, code, metrics, png_path, prior_feedback?)
+  verify_geometry(prompt, metrics, png_path, prior_feedback?)
                   │
                   ▼
          {passed, feedback}
@@ -285,7 +284,7 @@ r1 = execute_cadquery(code, run_id)
 r2 = inspect_mesh(r1["stl_path"])
 r3 = render_views(r1["stl_path"], run_id)
 metrics = merge(r1, r2)   # see merge section above
-r4 = verify_geometry(prompt, code, metrics, r3["png_path"])
+r4 = verify_geometry(prompt, metrics, r3["png_path"])
 write_trace(run_id, prompt, {}, code, r1, r2, r3, r4)
 ```
 
@@ -313,7 +312,7 @@ No changes needed to any existing tool to connect them.
 ```python
 prior_feedback = []
 for attempt in range(MAX_ATTEMPTS):
-    r4 = verify_geometry(prompt, code, metrics, png_path, prior_feedback)
+    r4 = verify_geometry(prompt, metrics, png_path, prior_feedback)
     if r4["passed"]:
         break
     prior_feedback.append(r4["feedback"])  # Gemini escalates on repeat failures

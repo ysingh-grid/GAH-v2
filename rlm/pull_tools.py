@@ -1,42 +1,16 @@
-def list_primitives() -> list[str]:
-    """Return the keys of every primitive in the catalog.
+def get_primitives() -> dict:
+    """Return all available primitives with their descriptions and parameters.
 
-    Tool the RLM calls to discover what shapes it's allowed to plan with.
-    """
-    """
-    INFO !!!!! :os.environ["DTCM_BACKEND_URL"] — the backend's address is injected via
- fast-rlm's env_variables, not hardcoded. Sandbox can't guess 127.0.0.1:8001;
-  we hand it in. Bracket access (not .get) so a missing var fails loud.
+    Tool the RLM calls to discover what shapes it's allowed to plan with and their specifications.
     """
     import os
-
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(f"{base}/internal/list-primitives", timeout=10)
-
-    resp.raise_for_status()
-    return list(resp.json().keys())
-
-
-def lookup_primitive(key: str) -> dict:
-    """Return the full spec of one primitive: params, verification, template.
-
-    The RLM calls this once it has picked a shape and needs its real
-    parameter names and constraints to fill the plan correctly.
-    """
-    import os
-
-    import requests
-
-    base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(
-        f"{base}/internal/lookup-primitive",
-        params={"key": key},
-        timeout=10,
-    )
+    resp = requests.get(f"{base}/internal/get-primitives", timeout=10)
     resp.raise_for_status()
     return resp.json()
+
 
 
 def list_skills() -> list[str]:

@@ -99,7 +99,7 @@ metrics = {
 
 # --- 4. verify_geometry: Gemini multimodal judge ------------------------
 banner(4, "verify_geometry (Gemini render+metrics judge)")
-verdict = verify_geometry(prompt, code, metrics, png)
+verdict = verify_geometry(prompt, metrics, png)
 print("  passed     :", verdict["passed"])
 print("  feedback   :", verdict["feedback"])
 
