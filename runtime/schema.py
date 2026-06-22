@@ -43,6 +43,17 @@ class Operation(StrEnum):
     finish = "finish"  # modifier on the current body (fillet / chamfer / shell)
 
 
+class FinishOp(StrEnum):
+    """Post-body finish operations the deterministic compilers can apply."""
+
+    fillet = "fillet"    # round selected edges:  value = radius (mm)
+    chamfer = "chamfer"  # bevel selected edges:  value = chamfer length (mm)
+    shell = "shell"      # hollow the body:       value = wall thickness (mm, positive=inward)
+    hole = "hole"        # drill a through-hole:  value = diameter (mm), positions = [[x,y],...]
+    cbore = "cbore"      # counterbored hole:     value = [clr_dia, bore_dia, bore_depth] (mm)
+    csk = "csk"          # countersunk hole:      value = [clr_dia, csk_dia, csk_angle_deg]
+
+
 class PatternType(StrEnum):
     """How a patterned step replicates its primitive."""
 
@@ -64,6 +75,41 @@ class Pattern(BaseModel):
     axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
     angle_deg: float = 360.0
     spacing: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+class FinishStep(BaseModel):
+    """A post-body modifier: fillet/chamfer edges, shell, or drill holes.
+
+    FinishSteps are NOT primitives. They act on the accumulated `result` solid
+    produced by all preceding PrimitiveSteps. They are compiled deterministically
+    by both compile_cadquery and compile_forge.
+
+    Fields:
+        id:        Unique step identifier.
+        op:        Which finish operation to apply.
+        selector:  CadQuery-style selector string for the target edges/faces.
+                   e.g. "|Z" (all vertical edges), ">Z" (top face), "%Circle" (circular edges).
+                   Ignored for 'hole'/'cbore'/'csk' (positions-based).
+        value:     Numeric parameter(s) for the operation:
+                   fillet/chamfer  → float radius or length
+                   shell           → float wall thickness (positive = inward)
+                   hole            → float diameter
+                   cbore           → [clr_dia, bore_dia, bore_depth]
+                   csk             → [clr_dia, csk_dia, csk_angle_deg]
+        positions: For hole/cbore/csk: list of (x, y) points on the face where
+                   holes are drilled. If empty and op is hole/cbore/csk, the hole
+                   is placed at the origin of the selected face.
+        face:      Face selector for where holes are drilled (default ">Z" = top face).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(min_length=1)
+    op: FinishOp
+    selector: str = ""          # edge/face selector (CadQuery string)
+    value: ParamValue = 1.0     # operation parameter(s)
+    positions: list[tuple[float, float]] = Field(default_factory=list)
+    face: str = ">Z"            # face for hole ops
 
 
 class PrimitiveStep(BaseModel):
@@ -89,6 +135,10 @@ class PrimitiveStep(BaseModel):
         return self
 
 
+# A plan step is either a primitive CSG step or a post-body finish modifier.
+AnyStep = PrimitiveStep | FinishStep
+
+
 class PrimitivePlan(BaseModel):
     """An ordered CSG recipe that produces one part."""
 
@@ -96,7 +146,7 @@ class PrimitivePlan(BaseModel):
 
     part_name: str = Field(min_length=1)
     units: str = "mm"
-    steps: list[PrimitiveStep] = Field(min_length=1)
+    steps: list[AnyStep] = Field(min_length=1)
 
     @field_validator("units")
     @classmethod
@@ -111,11 +161,13 @@ class PrimitivePlan(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("step ids must be unique")
 
-        base_indexes = [i for i, s in enumerate(self.steps) if s.operation is Operation.base]
+        # Only PrimitiveSteps contribute to the base-step rule.
+        primitive_steps = [s for s in self.steps if isinstance(s, PrimitiveStep)]
+        base_indexes = [i for i, s in enumerate(primitive_steps) if s.operation is Operation.base]
         if len(base_indexes) != 1:
-            raise ValueError(f"plan must have exactly one 'base' step, found {len(base_indexes)}")
+            raise ValueError(f"plan must have exactly one 'base' PrimitiveStep, found {len(base_indexes)}")
         if base_indexes[0] != 0:
-            raise ValueError("the 'base' step must be the first step in the plan")
+            raise ValueError("the 'base' PrimitiveStep must be the first primitive step in the plan")
         return self
 
 
@@ -141,8 +193,14 @@ def load_library(library_path: Path | None = None) -> dict[str, Any]:
     return library
 
 
-def _check_step_against_library(step: PrimitiveStep, library: dict[str, Any]) -> list[str]:
+def _check_step_against_library(
+    step: AnyStep, library: dict[str, Any]
+) -> list[str]:
     """Return semantic errors for one step against the library (empty == ok)."""
+    # FinishSteps have no primitive — nothing to check against the library.
+    if isinstance(step, FinishStep):
+        return []
+
     errors: list[str] = []
     spec = library.get(step.primitive)
     if spec is None:

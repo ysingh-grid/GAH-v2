@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.schema import Operation, Pattern, PatternType, PrimitivePlan, PrimitiveStep
+from runtime.schema import FinishOp, FinishStep, Operation, Pattern, PatternType, PrimitivePlan, PrimitiveStep
 
 # Helpers injected once at the top of every generated script. Keeping them in
 # the generated code (rather than emitting inline copies per step) keeps the
@@ -112,6 +112,88 @@ def _accumulate_line(step: PrimitiveStep, index: int) -> str:
         f"are a planned additive extension; basic fillet/chamfer shapes exist as primitives)"
     )
 
+def _compile_finish_step_cq(step: FinishStep) -> list[str]:
+    """Emit CadQuery code lines that apply a FinishStep to `result`.
+
+    Each op modifies the already-accumulated `result` solid in place.
+    Fillet and chamfer are wrapped in try/except because OCCT raises
+    StdFail_NotDone when the radius is too large for the geometry — we
+    skip rather than crash the whole part.
+    """
+    lines = [f"# finish '{step.id}' — {step.op.value}"]
+
+    if step.op is FinishOp.fillet:
+        sel = step.selector or "|Z"
+        lines += [
+            "try:",
+            f"    result = result.edges({sel!r}).fillet({float(step.value)})",
+            "except Exception:",
+            f"    pass  # fillet r={step.value} failed on this geometry; skipped",
+        ]
+
+    elif step.op is FinishOp.chamfer:
+        sel = step.selector or "|Z"
+        lines += [
+            "try:",
+            f"    result = result.edges({sel!r}).chamfer({float(step.value)})",
+            "except Exception:",
+            f"    pass  # chamfer c={step.value} failed on this geometry; skipped",
+        ]
+
+    elif step.op is FinishOp.shell:
+        face_sel = step.selector or ">Z"
+        thickness = -abs(float(step.value))  # negative = inward (preserve outer dims)
+        lines.append(f"result = result.faces({face_sel!r}).shell({thickness})")
+
+    elif step.op is FinishOp.hole:
+        face_sel = step.face or ">Z"
+        diameter = float(step.value)
+        if step.positions:
+            pts = list(step.positions)  # [(x, y), ...]
+            lines.append(
+                f"result = result.faces({face_sel!r}).workplane()"
+                f".pushPoints({pts}).hole({diameter})"
+            )
+        else:
+            lines.append(
+                f"result = result.faces({face_sel!r}).workplane().hole({diameter})"
+            )
+
+    elif step.op is FinishOp.cbore:
+        # value = [clr_dia, bore_dia, bore_depth]
+        v = list(step.value) if isinstance(step.value, list) else [step.value, step.value * 1.5, 3.0]
+        clr_d, bore_d, bore_dep = float(v[0]), float(v[1]), float(v[2])
+        face_sel = step.face or ">Z"
+        if step.positions:
+            pts = list(step.positions)
+            lines.append(
+                f"result = result.faces({face_sel!r}).workplane()"
+                f".pushPoints({pts}).cboreHole({clr_d}, {bore_d}, {bore_dep})"
+            )
+        else:
+            lines.append(
+                f"result = result.faces({face_sel!r}).workplane()"
+                f".cboreHole({clr_d}, {bore_d}, {bore_dep})"
+            )
+
+    elif step.op is FinishOp.csk:
+        # value = [clr_dia, csk_dia, csk_angle_deg]
+        v = list(step.value) if isinstance(step.value, list) else [step.value, step.value * 1.8, 82.0]
+        clr_d, csk_d, angle = float(v[0]), float(v[1]), float(v[2])
+        face_sel = step.face or ">Z"
+        if step.positions:
+            pts = list(step.positions)
+            lines.append(
+                f"result = result.faces({face_sel!r}).workplane()"
+                f".pushPoints({pts}).cskHole({clr_d}, {csk_d}, {angle})"
+            )
+        else:
+            lines.append(
+                f"result = result.faces({face_sel!r}).workplane()"
+                f".cskHole({clr_d}, {csk_d}, {angle})"
+            )
+    return lines
+
 
 def compile_plan_to_cadquery(plan: PrimitivePlan, library: dict[str, Any]) -> str:
     """Compile a PrimitivePlan into a CadQuery script that assigns `result`.
@@ -130,6 +212,11 @@ def compile_plan_to_cadquery(plan: PrimitivePlan, library: dict[str, Any]) -> st
     """
     body: list[str] = [_PREAMBLE, f"# part: {plan.part_name} (units: {plan.units})"]
     for index, step in enumerate(plan.steps):
+        if isinstance(step, FinishStep):
+            body.extend(_compile_finish_step_cq(step))
+            body.append("")  # blank line for readability
+            continue
+        # PrimitiveStep
         spec = library.get(step.primitive)
         if spec is None:
             raise CompileError(

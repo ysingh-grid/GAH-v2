@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.schema import Operation, Pattern, PatternType, PrimitivePlan, PrimitiveStep
+from runtime.schema import FinishOp, FinishStep, Operation, Pattern, PatternType, PrimitivePlan, PrimitiveStep
 
 _PREAMBLE = """\
 // GAH-v2 generated .forge.js — do not edit; regenerate from plan
@@ -150,6 +150,63 @@ def _accumulate_forge(step: PrimitiveStep, index: int) -> str:
     )
 
 
+def _compile_finish_step_forge(step: FinishStep) -> list[str]:
+    """Emit ForgeCAD JS lines that apply a FinishStep to `result`.
+
+    ForgeCAD exposes .fillet(r), .chamfer(r), .shell(t) as chainable methods.
+    Holes/counterbores are emitted as cylinder subtractions (no native hole API).
+    Fillet/chamfer are wrapped in try/catch — ForgeCAD throws on geometry that
+    is too tight for the requested radius.
+    """
+    lines = [f"// finish '{step.id}' — {step.op.value}"]
+
+    if step.op is FinishOp.fillet:
+        r = float(step.value)
+        lines += [
+            "try {",
+            f"  result = result.fillet({r});",
+            "} catch(e) {",
+            f"  // fillet r={r} skipped: " + "${e}",
+            "}",
+        ]
+
+    elif step.op is FinishOp.chamfer:
+        c = float(step.value)
+        lines += [
+            "try {",
+            f"  result = result.chamfer({c});",
+            "} catch(e) {",
+            f"  // chamfer c={c} skipped: " + "${e}",
+            "}",
+        ]
+
+    elif step.op is FinishOp.shell:
+        t = abs(float(step.value))  # ForgeCAD shell takes positive wall thickness
+        lines.append(f"result = result.shell({t});")
+
+    elif step.op in (FinishOp.hole, FinishOp.cbore, FinishOp.csk):
+        # ForgeCAD has no native hole API — emit cylinder subtractions.
+        # Use a tall cylinder (height=1000) centred on the face so it punches through.
+        if step.op is FinishOp.hole:
+            dia = float(step.value)
+            r_cyl = dia / 2.0
+            positions = step.positions or [(0.0, 0.0)]
+        elif step.op is FinishOp.cbore:
+            v = list(step.value) if isinstance(step.value, list) else [step.value, step.value * 1.5, 3.0]
+            r_cyl = float(v[0]) / 2.0
+            positions = step.positions or [(0.0, 0.0)]
+        else:  # csk
+            v = list(step.value) if isinstance(step.value, list) else [step.value, step.value * 1.8, 82.0]
+            r_cyl = float(v[0]) / 2.0
+            positions = step.positions or [(0.0, 0.0)]
+        for i, (hx, hy) in enumerate(positions):
+            lines.append(
+                f"const _h{step.id}_{i} = cylinder({r_cyl}, 1000).translate({hx}, {hy}, 0);"
+            )
+            lines.append(f"result = result.subtract(_h{step.id}_{i});")
+    return lines
+
+
 def compile_plan_to_forge(plan: PrimitivePlan, library: dict[str, Any]) -> str:
     """Compile a PrimitivePlan into a .forge.js script that returns the result shape.
 
@@ -169,6 +226,11 @@ def compile_plan_to_forge(plan: PrimitivePlan, library: dict[str, Any]) -> str:
         f"// part: {plan.part_name} (units: {plan.units})",
     ]
     for index, step in enumerate(plan.steps):
+        if isinstance(step, FinishStep):
+            lines.extend(_compile_finish_step_forge(step))
+            lines.append("")
+            continue
+        # PrimitiveStep
         spec = library.get(step.primitive)
         if spec is None:
             raise CompileForgeError(
