@@ -18,6 +18,8 @@ logs/
 
 # Outputs
 outputs/
+generated/
+traces/
 
 # OS
 .DS_Store
