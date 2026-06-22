@@ -22,9 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # can extract their source; they must stay self-contained (see rlm/pull_tools).
 from rlm.pull_tools import (
     list_primitives,
-    list_skills,
     lookup_primitive,
-    read_skill,
     web_search,
 )
 from runtime.schema import PrimitivePlan
@@ -32,37 +30,58 @@ from runtime.schema import PrimitivePlan
 if TYPE_CHECKING:
     from fast_rlm import RLMConfig
 
-_PLANNER_TOOLS = [list_primitives, lookup_primitive, list_skills, read_skill, web_search]
+_PLANNER_TOOLS = [list_primitives, lookup_primitive, web_search]
 
 PLANNER_TASK = """\
-You are the PLANNER in a text-to-CAD system. You talk to the user through a chat
-bubble to pin down a single mechanical part, then emit a typed PrimitivePlan.
+You are the PLANNER ORCHESTRATOR in a text-to-CAD system. You do NOT design parts
+yourself. You DECOMPOSE the request into independent sub-parts and FORK one
+sub-agent per sub-part. Each sub-agent designs exactly ONE sub-part and returns its
+steps to YOU — sub-agents never see each other, they speak only to you. You assemble
+their returns into one PrimitivePlan. This is a strict 1-to-1 fork-and-return.
 
-## Mandatory order of operations (do NOT skip steps)
+## HARD BUDGET: 5 REPL steps, then you MUST emit FINAL. (A step = one block.)
 
-Step 1 — read_skill("playbook") once at the start. Do NOT call list_skills().
-Step 2 — list_primitives() to see what the library has.
-Step 3 — lookup_primitive(name) for any candidate primitive to read its parameters.
-Step 4 — If ALL needed dimensions are present in the prompt or chat_history,
-          return action="plan_ready" immediately using library primitives.
-Step 5 — If a dimension is genuinely missing AND not findable from the primitive
-          spec, ask the user FIRST with action="ask_user".
-          In your question, include two options:
-            - "Search the web for standard {part_name} dimensions"
-            - Concrete dimension options you already know (e.g. "M6 (10mm hex, 5mm tall)")
-          ONLY call web_search if the user's reply in chat_history explicitly says
-          they want you to search (e.g. they chose "Search the web...").
-          NEVER call web_search on the first turn — always ask permission first.
+## ⛔ Prohibitions:
+- NEVER call web_search unless the user EXPLICITLY asked you to search in chat_history.
+- NEVER fork a sub-agent for a trivial call (list_primitives) or for a user question.
+  Fork ONLY to design a sub-part — that is the one fork-worthy task.
 
-## Rules
-- web_search is SLOW — avoid it unless step 5 applies.
-- list_skills() is NEVER needed — use read_skill("playbook") from step 1 only.
-- Do NOT re-read a skill you already read in this turn.
-- Do NOT call list_primitives() more than once.
-- Aim to return plan_ready in ≤6 tool calls total.
-- Do NOT write CadQuery code — that is the geometry loop's job.
-- If the part needs geometry no library primitive can express, ask the user to
-  simplify via action="ask_user".
+## Procedure — follow in order:
+
+Step 1 — primitives = list_primitives()   [direct call — do NOT fork for this]
+
+Step 2 — Decompose context["original_prompt"] into a list of independent sub-parts:
+  • A simple object = ONE sub-part            ("a 20mm cube"      -> ["cube"])
+  • A compound object = one sub-part per solid ("cricket bat"      -> ["blade", "handle"])
+  If a REQUIRED dimension is missing and you cannot pick a sensible default, call
+  FINAL with action="ask_user" NOW (do NOT fork). Offer two options:
+    a) "Search the web for standard {name} dimensions"
+    b) a concrete default you suggest (e.g. "M6 hex: 10mm across flats, 5mm tall").
+
+Step 3 — FORK one sub-agent PER sub-part, IN PARALLEL, with batch_llm_query.
+  Pass each child tools=[lookup_primitive] (children do NOT inherit your tools).
+  Use batch_llm_query, NEVER asyncio.gather (the engine blocks gather).
+
+    STEP_SCHEMA = {"type": "array", "items": {"type": "object"}}
+
+    def design(part):
+        return llm_query({
+            "task": ("Design ONE sub-part of a CAD model. Pick the best primitive "
+                     "from the catalog, call lookup_primitive(key) to get its exact "
+                     "parameter names, fill them with real millimetre dimensions, and "
+                     "return a JSON list of step objects: {id, primitive, operation, "
+                     "parameters, position:[x,y,z], orientation:[rx,ry,rz]}."),
+            "sub_part": part,
+            "request": context["original_prompt"],
+            "catalog": primitives,
+        }, STEP_SCHEMA, tools=[lookup_primitive])
+
+    sub_results = await batch_llm_query(*[design(p) for p in sub_parts])
+
+Step 4 — Concatenate every child's step list into one steps array (flatten), set the
+  FIRST step's operation to "base", and FINAL with:
+    {"action": "plan_ready",
+     "plan": {"part_name": <short_name>, "units": "mm", "steps": <all steps>}}
 
 Return EXACTLY one of the two shapes defined by the output schema.
 """
@@ -140,5 +159,58 @@ def run_planner_turn(
         tools=_PLANNER_TOOLS,
         output_schema=PlannerOutput,
         env_variables={"DTCM_BACKEND_URL": backend_url},
+    )
+    return parse_planner_result(result["results"])
+
+
+REPLANNER_TASK = """\
+You are a single-purpose FORK-AND-RETURN agent: spawned by the geometry workflow to
+fix ONE failed PrimitivePlan and return the corrected plan to your parent. You are
+isolated (no tools, fresh context) and you speak only to the parent that spawned you.
+
+The failure details and the prior plan are in chat_history (the last system message).
+Your job:
+
+1. Read the failure message in chat_history[-1]["content"].
+2. Identify which parameter(s) caused the failure.
+3. Call FINAL immediately with the corrected plan_ready — change only what is broken.
+   OR call FINAL with ask_user if fixing requires information only the user can provide.
+
+Rules:
+- Do NOT call any tools (no list_primitives, no lookup_primitive, no web_search).
+- Do NOT re-derive the plan from scratch — keep all correct steps unchanged.
+- Change the minimum needed to fix the reported failure.
+- Emit FINAL in your very first REPL block. No intermediate steps.
+"""
+
+
+def run_replanner_turn(
+    original_prompt: str,
+    chat_history: list[dict[str, str]],
+    *,
+    config: RLMConfig | None = None,
+) -> PlannerOutput:
+    """Run one replan turn — no tools, immediate FINAL, used after geometry failure.
+
+    Unlike run_planner_turn this gives the model NO tools. It just sees the
+    failure message in chat_history and must emit a corrected plan or ask_user
+    in a single REPL step.  No tool calls = no timeouts = fast replan.
+    """
+    import fast_rlm
+
+    if config is None:
+        from rlm.rlm_config import config as default_config
+        config = default_config
+
+    query = {
+        "task": REPLANNER_TASK,
+        "original_prompt": original_prompt,
+        "chat_history": chat_history,
+    }
+    result = fast_rlm.run(
+        query,
+        config=config,
+        tools=[],  # no tools — fix the plan directly from the failure message
+        output_schema=PlannerOutput,
     )
     return parse_planner_result(result["results"])

@@ -15,7 +15,12 @@ import os
 
 from temporalio.worker import Worker
 
-from temporal.activities import compile_forge_activity, run_geometry_activity
+from temporal.activities import (
+    generate_activity,
+    record_trace_activity,
+    replan_activity,
+    verify_activity,
+)
 from temporal.client import get_client
 from temporal.workflow import DesignWorkflow
 
@@ -25,16 +30,25 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 
+import concurrent.futures
+
 async def main() -> None:
     client = await get_client()
-    async with Worker(
-        client,
-        task_queue=_TASK_QUEUE,
-        workflows=[DesignWorkflow],
-        activities=[run_geometry_activity, compile_forge_activity],
-    ):
-        log.info("Worker running on task queue '%s'. Ctrl-C to stop.", _TASK_QUEUE)
-        await asyncio.Future()  # run forever until cancelled
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as activity_executor:
+        async with Worker(
+            client,
+            task_queue=_TASK_QUEUE,
+            workflows=[DesignWorkflow],
+            activities=[
+                generate_activity,
+                verify_activity,
+                replan_activity,
+                record_trace_activity,
+            ],
+            activity_executor=activity_executor,
+        ):
+            log.info("Worker running on task queue '%s'. Ctrl-C to stop.", _TASK_QUEUE)
+            await asyncio.Future()  # run forever until cancelled
 
 
 if __name__ == "__main__":

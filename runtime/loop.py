@@ -12,10 +12,12 @@ with real geometry tools but no live RLM.
 
 from __future__ import annotations
 
+import concurrent.futures
 from dataclasses import dataclass, field
 from typing import Any
 
 from runtime.compile_cadquery import CompileError, compile_plan_to_cadquery
+from runtime.compile_forge import CompileForgeError, compile_plan_to_forge
 from runtime.replan import (
     PlannerFn,
     collect_feedback_detail,
@@ -38,6 +40,7 @@ class LoopResult:
     failure_category: str | None = None
     message: str = ""
     question: str | None = None  # set when status == "needs_user"
+    forge_js: str = ""  # emit artifact, compiled in parallel during generate
 
 
 @dataclass
@@ -51,6 +54,7 @@ class _Artifacts:
     """Mutable bag of per-attempt artifacts collected for the trace."""
 
     code: str | None = None
+    forge_js: str | None = None  # .forge.js compiled in parallel with `code`
     execution_result: dict[str, Any] | None = None
     mesh_report: dict[str, Any] | None = None
     renders: dict[str, Any] | None = None
@@ -72,6 +76,39 @@ def _merge_metrics(execution_result: dict[str, Any], mesh_report: dict[str, Any]
     }
 
 
+def _compile_parallel(
+    plan: PrimitivePlan, library: dict[str, Any], art: _Artifacts
+) -> _StageFailure | None:
+    """Compile CadQuery + .forge.js concurrently; either failure routes to replan.
+
+    Both compilers are pure, deterministic, and mutually independent, so they run
+    in parallel threads. We collect BOTH outcomes before deciding:
+      - CadQuery failure -> primitive_gap (library can't express it) or
+        cadquery_compile.
+      - .forge.js failure -> forge_compile (-> FailureCategory.translation_drift).
+    The CadQuery failure is reported first because it is the geometry authority —
+    the replanner should fix the structural problem before the editable handoff.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        cq_future = pool.submit(compile_plan_to_cadquery, plan, library)
+        forge_future = pool.submit(compile_plan_to_forge, plan, library)
+
+        cq_failure: _StageFailure | None = None
+        try:
+            art.code = cq_future.result()
+        except CompileError as exc:
+            stage = "primitive_gap" if "primitive_gap" in str(exc) else "cadquery_compile"
+            cq_failure = _StageFailure(stage, str(exc))
+
+        forge_failure: _StageFailure | None = None
+        try:
+            art.forge_js = forge_future.result()
+        except CompileForgeError as exc:
+            forge_failure = _StageFailure("forge_compile", str(exc))
+
+    return cq_failure or forge_failure
+
+
 def _run_geometry(
     plan: PrimitivePlan, library: dict[str, Any], run_id: str, art: _Artifacts
 ) -> _StageFailure | None:
@@ -81,11 +118,9 @@ def _run_geometry(
     from tools.render_views import render_views
     from tools.repair_mesh import repair_mesh
 
-    try:
-        art.code = compile_plan_to_cadquery(plan, library)
-    except CompileError as exc:
-        stage = "primitive_gap" if "primitive_gap" in str(exc) else "cadquery_compile"
-        return _StageFailure(stage, str(exc))
+    compile_failure = _compile_parallel(plan, library, art)
+    if compile_failure is not None:
+        return compile_failure
 
     art.execution_result = execute_cadquery(art.code, run_id)
     if not art.execution_result.get("success"):
@@ -164,6 +199,7 @@ def _finalize(
         failure_category=failure_category.value if failure_category else None,
         message=message,
         question=question,
+        forge_js=art.forge_js or "",
     )
 
 

@@ -17,22 +17,51 @@ Event protocol (Server → Client, JSON):
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from backend.designs.models import DesignSession
 from runtime.compile_forge import compile_plan_to_forge
 from runtime.loop import LoopResult, run_geometry_loop
-from runtime.planner import PlannerOutput, run_planner_turn
+from runtime.planner import PlannerOutput, run_planner_turn, run_replanner_turn
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from tools.artifacts import new_run_id
+
+log = logging.getLogger(__name__)
+
+# Absolute path to the ForgeCAD Studio workspace (mounted at /workspace in the
+# forgecad-studio container, bound to ./artifacts/forgecad on the host).
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_FORGECAD_WORKSPACE = _REPO_ROOT / "artifacts" / "forgecad"
 
 _BACKEND_URL_DEFAULT = os.environ.get("BACKEND_URL", "http://localhost:8001")
 _USE_TEMPORAL = bool(os.environ.get("TEMPORAL_HOST"))
 
 # Callable the routes layer passes so we can swap WebSocket.send_json for tests.
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+def write_forge_js_to_studio(forge_js: str) -> bool:
+    """Persist forge_js to the ForgeCAD Studio workspace so the live-reload picks it up.
+
+    Writes to artifacts/forgecad/main.forge.js — the file the forgecad-studio
+    container is watching via its Docker volume mount. The Studio automatically
+    re-renders on file change (no iframe reload needed on the client side).
+
+    Returns True on success, False if the write failed (non-fatal; logged only).
+    """
+    try:
+        _FORGECAD_WORKSPACE.mkdir(parents=True, exist_ok=True)
+        target = _FORGECAD_WORKSPACE / "main.forge.js"
+        target.write_text(forge_js, encoding="utf-8")
+        log.info("forge_js written to studio workspace: %s", target)
+        return True
+    except OSError as exc:
+        log.warning("Could not write forge_js to studio workspace: %s", exc)
+        return False
 
 
 async def run_chat_turn(
@@ -136,22 +165,30 @@ async def _run_via_temporal(
     *,
     backend_url: str,
 ) -> None:
-    """Temporal path: start a DesignWorkflow and await its result."""
+    """Temporal path: start the workflow, stream its coarse-stage progress, await result.
+
+    We do NOT block on execute_workflow. We START the workflow, then poll its
+    `current_stage` query on a short timer and emit a "stage" event whenever the
+    stage changes — that is what advances the chat-UI progress chips live, in lock-
+    step with the Temporal UI timeline. When the workflow finishes we map its
+    DesignResult to the terminal WS event.
+    """
+    import asyncio
+
     from temporal.client import get_client
     from temporal.shared import DesignInput
     from temporal.workflow import DesignWorkflow
 
-    plan_dict = plan_to_dict(plan)
     inp = DesignInput(
         original_prompt=session.original_prompt,
-        plan_dict=plan_dict,
+        plan_dict=plan_to_dict(plan),
         run_id=run_id,
         backend_url=backend_url,
     )
 
     try:
         client = await get_client()
-        result_dc = await client.execute_workflow(
+        handle = await client.start_workflow(
             DesignWorkflow.run,
             inp,
             id=run_id,
@@ -162,10 +199,34 @@ async def _run_via_temporal(
         await send({"type": "error", "message": f"Temporal error: {exc}"})
         return
 
-    # Map DesignResult dataclass → WS events
+    # ── Stream coarse-stage progress while the workflow runs ──────────────────
+    result_fut = asyncio.ensure_future(handle.result())
+    last_stage: str | None = None
+    while not result_fut.done():
+        try:
+            stage = await handle.query(DesignWorkflow.current_stage)
+        except Exception:
+            stage = None  # query can briefly fail at task boundaries; just re-poll
+        if stage and stage != last_stage:
+            last_stage = stage
+            await send({"type": "stage", "stage": stage})
+        # Wait up to 0.5s for completion, then loop to re-poll the stage.
+        await asyncio.wait({result_fut}, timeout=0.5)
+
+    try:
+        result_dc = await result_fut
+    except Exception as exc:
+        session.status = "failed"
+        await send({"type": "error", "message": f"Temporal error: {exc}"})
+        return
+
+    # Map DesignResult dataclass → terminal WS event
     if result_dc.status == "success":
         session.forge_js = result_dc.forge_js or None
         session.status = "done"
+        # Write to Studio workspace so ForgeCAD live-reloads the new part.
+        if result_dc.forge_js:
+            write_forge_js_to_studio(result_dc.forge_js)
         await send(
             {
                 "type": "success",
@@ -210,6 +271,9 @@ async def _emit_loop_result(
             forge_js = None
         session.forge_js = forge_js
         session.status = "done"
+        # Write to Studio workspace so ForgeCAD live-reloads the new part.
+        if forge_js:
+            write_forge_js_to_studio(forge_js)
         await send(
             {
                 "type": "success",
@@ -235,9 +299,13 @@ async def _emit_loop_result(
 
 
 def _make_planner_fn(backend_url: str) -> Callable[..., PlannerOutput]:
-    """Return a PlannerFn closure for the geometry loop's replan path."""
+    """Return a PlannerFn closure for the geometry loop's replan path.
+
+    Uses run_replanner_turn (no tools, single REPL step) so replans never
+    hit the tool-cascade timeout that affects run_planner_turn.
+    """
 
     def _fn(original_prompt: str, history: list[dict[str, str]]) -> PlannerOutput:
-        return run_planner_turn(original_prompt, history, backend_url=backend_url)
+        return run_replanner_turn(original_prompt, history)
 
     return _fn

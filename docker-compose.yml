@@ -36,7 +36,7 @@ services:
       FORGECAD_STUDIO_URL: "${FORGECAD_STUDIO_URL:-}"
       # Set by temporal profile; empty = in-process fallback
       TEMPORAL_HOST: "${TEMPORAL_HOST:-}"
-      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-design}"
+      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
     volumes:
       - ./artifacts:/app/artifacts
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log
@@ -135,7 +135,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       TEMPORAL_HOST: "temporal:7233"
-      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-design}"
+      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
     volumes:
       - ./artifacts:/app/artifacts
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log

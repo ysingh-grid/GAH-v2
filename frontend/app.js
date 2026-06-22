@@ -5,6 +5,8 @@
  *   thinking   — planner running; show typing dots
  *   ask_user   — question + options; assistant bubble
  *   generating — geometry loop started; show progress panel
+ *   stage      — {stage}; live coarse-stage progress from the Temporal workflow
+ *                (DesignStage.*: planning|generating|inspecting|repairing|verifying|done)
  *   success    — {forge_js, plan, run_id}; done banner + main view
  *   needs_user — mid-generation question; assistant bubble
  *   failed     — {category, message}; error stage chip
@@ -19,6 +21,18 @@
   // Pipeline stage labels (matches Capstone visual design)
   var STAGES = ['PLANNING', 'GENERATING', 'VERIFYING', 'DONE'];
   var STAGE_ICONS = { PLANNING: '🧠', GENERATING: '⌨️', VERIFYING: '🔍', DONE: '✅', FAILED: '❌' };
+
+  // Backend DesignStage (Temporal workflow) → the 4 UI chips above.
+  // The fine geometry sub-stages (inspecting/repairing) live inside the GENERATING
+  // coarse activity, so they collapse onto the GENERATING chip.
+  var STAGE_MAP = {
+    planning:   'PLANNING',
+    generating: 'GENERATING',
+    inspecting: 'GENERATING',
+    repairing:  'GENERATING',
+    verifying:  'VERIFYING',
+    done:       'DONE',
+  };
 
   // ── State ─────────────────────────────────────────────────────────────────
   var S = {
@@ -161,6 +175,19 @@
         showProgress('PLANNING');
         // don't re-enable input — auto-generating
         break;
+
+      case 'stage': {
+        // Live coarse-stage progress from the Temporal workflow.
+        var chip = STAGE_MAP[evt.stage];
+        if (chip) {
+          if (el('ga-progress').classList.contains('visible')) {
+            advanceProgress(chip);
+          } else {
+            showProgress(chip);
+          }
+        }
+        break;
+      }
 
       case 'success':
         hideTyping();
@@ -325,10 +352,17 @@
   function showOutput(evt) {
     var studioUrl = window.FORGECAD_STUDIO_URL;
 
-    if (studioUrl && evt.run_id) {
+    if (studioUrl) {
       el('ga-hero').style.display = 'none';
       el('ga-studio').style.display = 'block';
-      el('ga-iframe').src = studioUrl + '?run_id=' + evt.run_id;
+      // ForgeCAD Studio runs its own internal file-watcher (chokidar) on the
+      // /workspace directory. Once the backend writes main.forge.js to disk,
+      // the Studio live-reloads the 3D viewport automatically — no iframe
+      // navigation needed. Just make sure the iframe is pointed at the Studio.
+      var iframe = el('ga-iframe');
+      if (!iframe.src || iframe.src === 'about:blank') {
+        iframe.src = studioUrl;
+      }
     } else {
       el('ga-hero').style.display = 'none';
       el('ga-code').style.display = 'flex';
