@@ -67,7 +67,7 @@ inspect_mesh(stl_path: str) -> dict
 - `stl_path` — from `execute_cadquery["stl_path"]`
 
 **What it does:**
-Loads STL with `trimesh`, checks mesh quality: is it closed (watertight)? Are there holes (open edges)? Is it manifold (every edge shared by exactly 2 faces)?
+Loads STL with `MeshLib`, checks mesh quality: is it closed (watertight)? Are there holes (open edges)? Is it manifold (every edge shared by exactly 2 faces)?
 
 **Returns (success):**
 ```python
@@ -77,7 +77,7 @@ Loads STL with `trimesh`, checks mesh quality: is it closed (watertight)? Are th
     "open_edges": 0,            # boundary edges (bad if > 0)
     "singular_edges": 0,        # zero-length edges (cone apex is OK = 1)
     "volume_mm3": 24457.6,
-    "is_manifold": True,        # every edge shared by exactly 2 faces
+    "is_manifold": True,        # passes checkValidity()
     "face_count": 31,
     "vertex_count": 48,
     "passes": True              # True if open_edges==0 AND volume>0
@@ -89,8 +89,8 @@ Loads STL with `trimesh`, checks mesh quality: is it closed (watertight)? Are th
 {"success": False, "error": "...", "traceback": "..."}
 ```
 
-**Deps:** `trimesh`, `numpy`
-> Note: PRD says MeshLib. Current impl uses trimesh (MVP simplification). Functionally equivalent for watertight/manifold checks.
+**Deps:** `meshlib`
+> Note: Standard MeshLib implementation is active.
 
 ---
 
@@ -259,7 +259,7 @@ prompt (str)  +  code (str)  +  run_id (str)
 |---|---|---|
 | `solid_generate` | `execute_cadquery` | ✅ Done |
 | `measure_geometry` | `execute_cadquery` | ✅ Done (partial — OCCT metrics) |
-| `mesh_inspect` | `inspect_mesh` | ✅ Done (trimesh, not MeshLib) |
+| `mesh_inspect` | `inspect_mesh` | ✅ Done (MeshLib) |
 | `render_views` | `render_views` | ✅ Done (VTK 3-view) |
 | `visual_verify` | `verify_geometry` | ✅ Done (Gemini multimodal) |
 | `trace_capture` | `write_trace` | ✅ Done |
@@ -327,8 +327,8 @@ for attempt in range(MAX_ATTEMPTS):
 
 ```toml
 "cadquery>=2.7.0",        # execute_cadquery (subprocess)
-"trimesh>=4.12.2",        # inspect_mesh
-"numpy>=1.26",            # render_views + inspect_mesh
+"meshlib>=3.1.2.192",      # inspect_mesh
+"numpy>=1.26",            # render_views
 "vtk>=9.3",               # render_views
 "google-genai>=2.9.0",    # verify_geometry (Gemini SDK)
 "fast-rlm>=0.1.18",       # RLM planner (runtime/planner.py — not built yet)

@@ -2,12 +2,12 @@ def execute_cadquery(code: str, run_id: str) -> dict:
     """
     Executes CadQuery code in a separate sandboxed Python process.
     Saves the output to STEP and STL files and retrieves geometry metrics.
-    
+
     Args:
-        code: Python script containing CadQuery commands. It must define a 
+        code: Python script containing CadQuery commands. It must define a
               top-level Workplane or Shape object named 'result'.
         run_id: A unique identifier for the run.
-        
+
     Returns:
         A dictionary containing:
         - success: bool
@@ -18,19 +18,20 @@ def execute_cadquery(code: str, run_id: str) -> dict:
         - step_path: str (optional)
         - stl_path: str (optional)
     """
-    import os
-    import sys
     import json
+    import os
     import subprocess
+    import sys
     import tempfile
-    
+
     # Path setup — run-scoped folder owns all artifacts for this run
     from .artifacts import run_dir
+
     outputs_dir = str(run_dir(run_id))
 
     step_path = os.path.join(outputs_dir, "solid.step")
     stl_path = os.path.join(outputs_dir, "solid.stl")
-    
+
     # Python script wrapper to execute user code and extract measurements
     wrapper_script = f"""
 import sys
@@ -100,22 +101,21 @@ except Exception as e:
     print(json.dumps({{"success": False, "error": f"Error during export/measurement: " + tb}}))
     sys.exit(0)
 """
-    
+
     # Run the script in a subprocess using a python interpreter that has cadquery installed
     import shutil
-    
+
     def find_cadquery_python():
         # Check if the current interpreter already has cadquery
         try:
             check = subprocess.run(
-                [sys.executable, "-c", "import cadquery"],
-                capture_output=True, timeout=5
+                [sys.executable, "-c", "import cadquery"], capture_output=True, timeout=5
             )
             if check.returncode == 0:
                 return sys.executable
         except Exception:
             pass
-            
+
         # Check common locations where conda might install cadquery
         candidates = [
             "/opt/anaconda3/bin/python3",
@@ -131,59 +131,57 @@ except Exception as e:
             if candidate and os.path.isfile(candidate) and candidate != sys.executable:
                 try:
                     check = subprocess.run(
-                        [candidate, "-c", "import cadquery"],
-                        capture_output=True, timeout=5
+                        [candidate, "-c", "import cadquery"], capture_output=True, timeout=5
                     )
                     if check.returncode == 0:
                         return candidate
                 except Exception:
                     continue
         return sys.executable  # fallback
-        
+
     python_exe = find_cadquery_python()
 
     try:
         # Use tempfile to write the wrapper script securely
-        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as temp_f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w", encoding="utf-8"
+        ) as temp_f:
             temp_f.write(wrapper_script)
             temp_script_path = temp_f.name
-            
+
         process_result = subprocess.run(
             [python_exe, temp_script_path],
             capture_output=True,
             text=True,
-            timeout=30 # Prevent infinite loops
+            timeout=30,  # Prevent infinite loops
         )
-        
+
         # Clean up temp script
         if os.path.exists(temp_script_path):
             os.remove(temp_script_path)
-            
+
         if process_result.returncode != 0:
             return {
                 "success": False,
-                "error": f"Python interpreter crashed with return code {process_result.returncode}. Stderr: {process_result.stderr}"
+                "error": f"Python interpreter crashed with return code {process_result.returncode}. Stderr: {process_result.stderr}",
             }
-            
+
         # Parse output
         output_str = process_result.stdout.strip()
         if not output_str:
             return {
                 "success": False,
-                "error": f"No output returned from subprocess. Stderr: {process_result.stderr}"
+                "error": f"No output returned from subprocess. Stderr: {process_result.stderr}",
             }
-            
+
         try:
             metrics = json.loads(output_str)
             return metrics
         except json.JSONDecodeError:
             return {
                 "success": False,
-                "error": f"Failed to parse subprocess output as JSON. Raw output:\n{output_str}\nStderr:\n{process_result.stderr}"
+                "error": f"Failed to parse subprocess output as JSON. Raw output:\n{output_str}\nStderr:\n{process_result.stderr}",
             }
-            
+
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Failed to execute subprocess: {str(e)}"
-        }
+        return {"success": False, "error": f"Failed to execute subprocess: {str(e)}"}

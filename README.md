@@ -60,7 +60,7 @@ skills/
 tools/
   tools_registry.py       # Central registry of all 11 agent tools
   execute_cadquery.py     # Runs CadQuery in conda subprocess
-  inspect_mesh.py         # Mesh QA via trimesh
+  inspect_mesh.py         # Mesh QA via MeshLib
   render_views.py         # Front/top/iso PNG renders via matplotlib
   verify_geometry.py      # Gemini vision judge
   write_trace.py          # Saves full run trace to outputs/traces/

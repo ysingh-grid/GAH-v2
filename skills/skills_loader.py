@@ -2,9 +2,10 @@
 Load skills from SKILLS.md and inject into task context
 """
 
+
 def load_skills_md() -> str:
     """Read SKILLS.md and return as string"""
-    with open("skills/SKILLS.md", "r") as f:
+    with open("skills/SKILLS.md") as f:
         return f.read()
 
 

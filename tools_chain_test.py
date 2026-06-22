@@ -18,9 +18,9 @@ Run:
   uv run python tools_chain_test.py
 """
 
-import sys
 import pathlib
 import subprocess
+import sys
 
 from tools import (
     execute_cadquery,
@@ -31,12 +31,12 @@ from tools import (
 )
 from tools.artifacts import new_run_id
 
-RUN_ID = new_run_id("manual")   # e.g. manual_20260619-153012_a1b2 — fresh folder each run
+RUN_ID = new_run_id("manual")  # e.g. manual_20260619-153012_a1b2 — fresh folder each run
 FIX = pathlib.Path("tests/fixtures/case_01_enclosure")
 
 
 def banner(n, name):
-    print(f"\n{'='*60}\n[{n}] {name}\n{'='*60}")
+    print(f"\n{'=' * 60}\n[{n}] {name}\n{'=' * 60}")
 
 
 def die(stage, result):
@@ -63,7 +63,7 @@ print("  faces      :", ex["faces_count"])
 print("  stl        :", ex["stl_path"])
 stl_path = ex["stl_path"]
 
-# --- 2. inspect_mesh: trimesh quality gate ------------------------------
+# --- 2. inspect_mesh: MeshLib quality gate ------------------------------
 banner(2, "inspect_mesh (mesh validity)")
 mesh = inspect_mesh(stl_path)
 if not mesh.get("success"):
@@ -108,7 +108,9 @@ banner(5, "write_trace (JSON artifact)")
 tr = write_trace(
     run_id=RUN_ID,
     prompt=prompt,
-    plan={"note": "no PrimitivePlan yet; code.py is the direct input (runtime/schema.py not built)"},
+    plan={
+        "note": "no PrimitivePlan yet; code.py is the direct input (runtime/schema.py not built)"
+    },
     code=code,
     execution_result=ex,
     mesh_report=mesh,

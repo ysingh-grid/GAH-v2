@@ -3,6 +3,8 @@ Fast-RLM configuration with Gemini adapter
 """
 
 import os
+
+from dotenv import load_dotenv
 from pathlib import Path
 
 from fast_rlm import RLMConfig

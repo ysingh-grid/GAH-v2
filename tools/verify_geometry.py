@@ -24,24 +24,18 @@ def verify_geometry(
     judge/parse/transport failure -> {"passed": False, ...} so the outer loop
     routes to refinement instead of crashing.
     """
+    import json
     import os
     import re
-    import json
-    import base64
+
+    from dotenv import load_dotenv
 
     # ------------------------------------------------------------------ key
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env_path = os.path.join(base_dir, ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key and os.path.exists(env_path):
-        with open(env_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    if k.strip() == "GEMINI_API_KEY":
-                        api_key = v.strip().strip('"').strip("'")
-                        break
 
     # Mock fallback when no real key is configured (keyless dev / e2e).
     is_mock = not api_key or api_key == "your-key" or "YOUR" in api_key.upper()
@@ -160,14 +154,16 @@ Output ONLY valid JSON, no other text."""
         brace_start = text.find("{")
         brace_end = text.rfind("}")
         if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
-            candidate = text[brace_start:brace_end + 1]
+            candidate = text[brace_start : brace_end + 1]
             for attempt in (candidate, _repair_json_strings(candidate)):
                 try:
                     return json.loads(attempt)
                 except json.JSONDecodeError:
                     pass
             try:
-                cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", _repair_json_strings(candidate))
+                cleaned = re.sub(
+                    r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", _repair_json_strings(candidate)
+                )
                 return json.loads(cleaned)
             except json.JSONDecodeError:
                 pass
