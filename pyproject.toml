@@ -29,6 +29,19 @@ dev = [
     "ruff>=0.1.8",
 ]
 
+[tool.setuptools.packages.find]
+include = ["backend*", "rlm*", "runtime*", "skills*", "tools*"]
+exclude = [
+    "generated*",
+    "logs*",
+    "output*",
+    "outputs*",
+    "pipelines*",
+    "primitives*",
+    "traces*",
+    "tests*",
+]
+
 
 [tool.ruff]
 line-length = 100

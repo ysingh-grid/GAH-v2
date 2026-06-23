@@ -1,5 +1,10 @@
 """
-Backend bridge tools for fast_rlm.
+Legacy backend bridge tools for fast_rlm.
+
+The active CAD flow now uses RLM for planning only. CadQuery execution, mesh
+inspection, rendering, visual verification, and trace writing run directly on
+the host pipeline. Keep this bridge limited to context, repo, skill, primitive,
+pipeline, output-inspection, and trace-read utilities.
 
 fast_rlm serializes each tool function independently into a Pyodide sandbox.
 For that reason every function below is self-contained: no shared helpers,
@@ -174,103 +179,6 @@ def backend_list_project_tools(run_id="rlm_full_demo"):
     url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
     payload = {"tool_name": "list_project_tools", "payload": {}, "run_id": run_id}
     response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=30)
-    return response.json()
-
-
-def backend_execute_cadquery(code, run_id="rlm_cad_run"):
-    """Execute CadQuery code through the backend allowlisted project tool."""
-    import json
-    import os
-    import requests
-
-    url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
-    payload = {"tool_name": "execute_cadquery", "payload": {"code": code, "run_id": run_id}, "run_id": run_id}
-    response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=60)
-    return response.json()
-
-
-def backend_inspect_mesh(stl_path, run_id="rlm_cad_run"):
-    """Inspect an STL mesh through the backend allowlisted project tool."""
-    import json
-    import os
-    import requests
-
-    url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
-    payload = {"tool_name": "inspect_mesh", "payload": {"stl_path": stl_path}, "run_id": run_id}
-    response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=60)
-    return response.json()
-
-
-def backend_render_views(stl_path, run_id="rlm_cad_run"):
-    """Render STL front/top/isometric views through the backend allowlisted project tool."""
-    import json
-    import os
-    import requests
-
-    url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
-    payload = {"tool_name": "render_views", "payload": {"stl_path": stl_path, "run_id": run_id}, "run_id": run_id}
-    response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=60)
-    return response.json()
-
-
-def backend_verify_geometry(prompt, plan_json="{}", measurements_json="{}", mesh_json="{}", renders_json="{}", run_id="rlm_cad_run"):
-    """Verify geometry using the project verifier through the backend allowlisted tool."""
-    import json
-    import os
-    import requests
-
-    def parse_object(value):
-        try:
-            parsed = json.loads(value or "{}")
-            return parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            return {}
-
-    url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
-    payload = {
-        "tool_name": "verify_geometry",
-        "payload": {
-            "prompt": prompt,
-            "plan": parse_object(plan_json),
-            "measurements": parse_object(measurements_json),
-            "mesh": parse_object(mesh_json),
-            "renders": parse_object(renders_json),
-        },
-        "run_id": run_id,
-    }
-    response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=90)
-    return response.json()
-
-
-def backend_write_trace(run_id, prompt, plan_json="{}", code="", execution_result_json="{}", mesh_report_json="{}", renders_json="{}", verdict_json="{}"):
-    """Write a complete project trace through the backend allowlisted project tool."""
-    import json
-    import os
-    import requests
-
-    def parse_object(value):
-        try:
-            parsed = json.loads(value or "{}")
-            return parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            return {}
-
-    url = os.getenv("DTCM_BACKEND_URL", "http://localhost:8001").rstrip("/")
-    payload = {
-        "tool_name": "write_trace",
-        "payload": {
-            "run_id": run_id,
-            "prompt": prompt,
-            "plan": parse_object(plan_json),
-            "code": code,
-            "execution_result": parse_object(execution_result_json),
-            "mesh_report": parse_object(mesh_report_json),
-            "renders": parse_object(renders_json),
-            "verdict": parse_object(verdict_json),
-        },
-        "run_id": run_id,
-    }
-    response = requests.post(f"{url}/internal/execute-tool", headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=60)
     return response.json()
 
 
@@ -669,11 +577,6 @@ BACKEND_BRIDGE_TOOLS = [
     backend_execute_tool,
     backend_get_primitives,
     backend_list_project_tools,
-    backend_execute_cadquery,
-    backend_inspect_mesh,
-    backend_render_views,
-    backend_verify_geometry,
-    backend_write_trace,
     backend_load_trace,
     backend_list_traces,
     backend_build_skill_tool_report,

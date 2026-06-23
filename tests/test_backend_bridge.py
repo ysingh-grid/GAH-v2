@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from tools.backend_bridge import BACKEND_BRIDGE_TOOLS
 
 
 client = TestClient(app)
@@ -78,15 +79,38 @@ def test_all_project_tools_are_exposed():
         "read_skill",
         "list_skills",
         "get_primitives",
+        "load_trace",
+        "list_traces",
+    }
+    assert expected.issubset(exposed)
+
+
+def test_geometry_tools_are_not_exposed_through_backend_bridge():
+    geometry_tools = [
         "execute_cadquery",
         "inspect_mesh",
         "render_views",
         "verify_geometry",
         "write_trace",
-        "load_trace",
-        "list_traces",
+    ]
+    for tool_name in geometry_tools:
+        response = client.post("/internal/execute-tool", json={"tool_name": tool_name, "payload": {}})
+        payload = response.json()
+        assert_contract(payload, "execute_tool")
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "UNKNOWN_TOOL"
+
+
+def test_rlm_backend_bridge_tool_list_excludes_geometry_tools():
+    exposed_tool_names = {tool.__name__ for tool in BACKEND_BRIDGE_TOOLS}
+    blocked_tool_names = {
+        "backend_execute_cadquery",
+        "backend_inspect_mesh",
+        "backend_render_views",
+        "backend_verify_geometry",
+        "backend_write_trace",
     }
-    assert expected.issubset(exposed)
+    assert exposed_tool_names.isdisjoint(blocked_tool_names)
 
 
 
