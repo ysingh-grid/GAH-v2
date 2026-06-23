@@ -7,7 +7,7 @@ A multi-agent CAD generation framework built on `fast-rlm`. A root agent coordin
 - **Multi-phase CAD pipeline:** Intent extraction → primitive planning → code generation → execution → mesh QA → vision verification
 - **Tool registry:** 11 tools registered in `tools/tools_registry.py` — skill reader, primitive lookup, CadQuery executor, mesh inspector, view renderer, geometry verifier, trace writer/loader
 - **Skills system:** Reasoning guides in `skills/*.md` listed in `skills/SKILLS.md` and injected into task prompts. Agents load individual skills on demand via `read_skill(name)`
-- **Primitives library:** 18 solid primitives defined in `primitives/library.json` with parameters, verification steps, and CadQuery templates
+- **Primitives library:** 36 solid primitives defined in `primitives/library.json` with parameters, verification steps, and CadQuery templates
 - **Subagent delegation:** Root agent spawns repair/refinement subagents with explicit tool passing
 
 ## Setup
@@ -52,7 +52,7 @@ config.sub_agent = "gemini-3.1-pro-preview"
 ## Project Structure
 
 ```
-primitives/library.json   # 18 solid primitive schemas
+primitives/library.json   # 36 solid primitive schemas
 skills/
   SKILLS.md               # Skill index injected into every task prompt
   *.md                    # Individual reasoning guides (loaded on demand)
