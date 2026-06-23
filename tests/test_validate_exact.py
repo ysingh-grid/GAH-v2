@@ -1,0 +1,29 @@
+import json
+from orchestrator import load_pydantic_schema
+from pathlib import Path
+
+pd_class = load_pydantic_schema(Path("schemas/geometry_plan.py"))
+print("Schema class:", pd_class)
+
+json_str = """{"title":"Wall Hook","assembly_kind":"single_solid","overall_dimensions":{"width":50,"length":35,"height":75},"engineering_requirements":{"functional":["The hook must be strong enough to hold a coat or a bag.","The hook should be easily mountable on a wall."],"environmental_thermal":[],"structural":["The hook should be designed to be 3D printed in a strong material like PETG or ABS."],"manufacturing_cost":["The design should be simple to minimize 3D printing time and material usage."]},"assumptions":["The hook will be mounted with two screws.","The hook will be 3D printed."],"clarifications":[],"primitives_sequence":[{"sequence_id":1,"name":"hook_body","primitive_type":"custom","parameters":{"shape_description":"The main body of the hook, with a curved shape to hold items. The shape is defined by a spline that creates a hook-like curve, which is then extruded to a depth of 10mm.","cadquery_operations":["Workplane.spline","Workplane.close","Workplane.extrude"],"code_sketch":"A 2D sketch is created on the XY plane using a spline with the points (0, 0), (25, 25), (0, 50), (-25, 25), and (0,0) to form a closed loop. This closed sketch is then extruded by 10mm along the Z-axis.","declared_dimensions":{"hook_depth":10}},"operation":"new","rationale":"This custom shape creates the main curved body of the hook."},{"sequence_id":2,"name":"back_plate","primitive_type":"box","parameters":{"width":50,"length":10,"height":75},"operation":"join","position":[-25,-10,0],"rationale":"The back plate provides a flat surface for mounting the hook to a wall."},{"sequence_id":3,"name":"screw_hole_1","primitive_type":"cylinder","parameters":{"radius":3,"height":10},"operation":"cut","position":[0,-5,60],"rationale":"The first screw hole for mounting the hook."},{"sequence_id":4,"name":"screw_hole_2","primitive_type":"cylinder","parameters":{"radius":3,"height":10},"operation":"cut","position":[0,-5,15],"rationale":"The second screw hole for mounting the hook."}],"contains_freeform":true}"""
+pd = json.loads(json_str)
+
+def _validate_plan_dict(pd):
+    try:
+        pd_class(**pd)
+        return True, []
+    except Exception as ve:
+        errs = []
+        if hasattr(ve, "errors"):
+            for er in ve.errors():
+                errs.append({"location": ".".join(str(x) for x in er.get("loc", [])),
+                             "message": er.get("msg", "")})
+        else:
+            errs = [{"location": "", "message": str(ve)}]
+        return False, errs
+
+valid, errs = _validate_plan_dict(pd)
+print("Valid:", valid)
+if not valid:
+    print("Errs:", errs)
+

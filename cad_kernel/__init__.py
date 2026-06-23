@@ -1,0 +1,1 @@
+"""cad_kernel — build, verify, and render CadQuery solids from a GeometryPlan."""

@@ -1,0 +1,47 @@
+# ==============================================================================
+# fast-rlm Run Configuration (run.yaml)
+# ==============================================================================
+
+# --- (1) Model + Budget Settings (Mapped to RLMConfig) -----------------------
+primary_agent:          gemini-2.5-pro        # The model for the root agent
+sub_agent:              gemini-2.5-pro        # The model for child sub-agents
+# model_base_url:                             # Override the API base URL (e.g. for non-Gemini providers).
+#                                             # If unset, orchestrator auto-detects Gemini keys and sets the
+#                                             # Gemini endpoint. Set explicitly for OpenAI, Anthropic, etc.
+#                                             # e.g. model_base_url: https://api.openai.com/v1
+max_depth:              2                     # Max recursion depth for sub-agents
+max_calls_per_subagent: 10                    # Max LLM calls per sub-agent run
+truncate_len:           1500                  # Max REPL output characters per step (lower = less context bloat)
+max_money_spent:        0.50                  # Hard USD budget limit (OpenRouter only)
+max_completion_tokens:  100000                # Cumulative completion token cap
+max_prompt_tokens:      2000000               # Hard prompt token cap
+api_max_retries:                              # Blank = use fast-rlm default (3)
+api_timeout_ms:         120000                # Per-call API timeout limit in milliseconds
+
+# --- (2) Ablation & Optimization Flags (Mapped to RLMConfig) -----------------
+enable_tools:                                 # Blank = use fast-rlm default (true)
+enable_structured_io:                         # Blank = use fast-rlm default (true)
+enable_compression_guard: true                # Summarize old REPL steps once history grows large
+compression_min_chars:  3000                  # Trigger compression once accumulated REPL output exceeds 3k chars
+compression_ratio:      0.6                   # Compress to 60% of original size
+
+# --- (3) LLM Generation Parameters (Mapped to llm_kwargs) ---------------------
+temperature:            0.1                   # Generation temperature
+seed:                                        # RNG seed for reproducibility
+top_p:                                        # Blank = use model default
+top_k:                                        # Blank = use model default
+presence_penalty:                             # Blank = use model default
+frequency_penalty:                            # Blank = use model default
+
+# --- (4) Orchestrator Custom Flags (Consumed by orchestrator.py) -------------
+skill:                  skills/core.md      # Path to system skill file
+schema:                 schemas/geometry_plan.py  # Path to system schema file
+max_repair_attempts:    3                   # Max build-fix-retry loops before failing closed
+# prefix:                 block1              # Log filename prefix
+# verbose:                true                # Stream Raw Deno engine output to stdout
+# show_trace:             true                # Print execution tree on completion
+# tools:                  [string_length]     # Tools list (omit or blank to expose all)
+
+# Run a dedicated clarification pass before planning (asks the user about critical unknowns).
+clarify: true
+max_validation_repair_attempts: 3   # auto-repair tries if a FINAL plan fails schema validation
