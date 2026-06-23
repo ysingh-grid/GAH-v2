@@ -9,7 +9,7 @@ used_by:
   - planning_worker (Step 2+3 of W·01)
 inputs:
   - intent: "Output of intent_extraction skill"
-  - primitive_schema: "Schema dict from lookup_primitive()"
+  - primitive_schema: "Schema dict from get_primitives()"
   - dimension_reasoning_skill: "Loaded via read_skill('dimension_reasoning')"
 outputs:
   - primitive: "Chosen primitive name string"

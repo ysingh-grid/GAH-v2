@@ -12,7 +12,7 @@ from pathlib import Path
 
 # this file = <repo>/tools/artifacts.py  ->  parent.parent = repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_OUTPUTS = _REPO_ROOT / "outputs"
+_OUTPUTS = _REPO_ROOT / "artifacts"
 
 
 def new_run_id(label: str | None = None) -> str:

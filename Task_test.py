@@ -13,47 +13,47 @@ Run:
   uv run python Task_test.py
 """
 
+import os
 import fast_rlm
 from pydantic import BaseModel
 
+
 from rlm.pull_tools import (
-    list_primitives,
+    get_primitives,
     list_skills,
-    lookup_primitive,
     read_skill,
 )
 from rlm.rlm_config import config  # already Gemini-direct wired
 
 
 class PullProof(BaseModel):
-    primitive_count: int  # len(list_primitives())
-    box_param_names: list[str]  # keys of lookup_primitive("box")["parameters"]
+    primitive_names: list[str]  # keys of get_primitives()
+    box_param_names: list[str]  # keys of get_primitives()["box"]["parameters"]
     skill_names: list[str]  # list_skills()
     verification_planning_skill_content: str  # read_skill("verification_planning")
 
 
 task = """
-You are smoke-testing four HTTP tools pre-loaded in your REPL:
-  - list_primitives()      -> list[str]
-  - lookup_primitive(key)  -> dict
+You are smoke-testing three HTTP tools pre-loaded in your REPL:
+  - get_primitives()       -> dict
   - list_skills()          -> list[str]
   - read_skill(name)       -> str
 
 Do EXACTLY this, then FINAL the result:
-  1. list_primitives()             -> count them
-  2. lookup_primitive("box")       -> take the keys of its "parameters"
+  1. get_primitives()              -> get the keys of the dict
+  2. box parameters                -> take the keys of the "parameters" dict inside get_primitives()["box"]
   3. list_skills()
   4. read_skill("verification_planning")        -> get the returned text
 
 FINAL a dict matching:
-  {"primitive_count": int, "box_param_names": [str],
+  {"primitive_names": [str], "box_param_names": [str],
    "skill_names": [str], "verification_planning_skill_content": str}
 
-If ANY tool raises, FINAL with primitive_count = -1 and put the exception
+If ANY tool raises, FINAL with primitive_names = [] and put the exception
 text into box_param_names so we can debug.
 """
 
-# Flat run: 4 sequential calls need no subagent fan-out.
+# Flat run: 3 sequential calls need no subagent fan-out.
 config.max_depth = 1
 config.max_calls_per_subagent = 8
 
@@ -63,14 +63,17 @@ try:
     result = fast_rlm.run(
         task,
         config=config,
-        prefix="smoke_pull",
-        tools=[list_primitives, lookup_primitive, list_skills, read_skill],
-        env_variables={"DTCM_BACKEND_URL": "http://127.0.0.1:8001"},
+        tools=[get_primitives, list_skills, read_skill],
+        env_variables={
+            "DTCM_BACKEND_URL": "http://127.0.0.1:8001",
+            "RLM_MODEL_API_KEY": os.environ.get("RLM_MODEL_API_KEY", "")
+        },
         output_schema=PullProof,
+
     )
     r = result["results"]
     print("\n=== PULL SMOKE RESULT ===")
-    print("primitive_count     :", r["primitive_count"])
+    print("primitive_names     :", r["primitive_names"])
     print("box_param_names     :", r["box_param_names"])
     print("skill_names         :", r["skill_names"])
     print("verification_planning_skill_content:\n", r["verification_planning_skill_content"])
@@ -82,3 +85,4 @@ except Exception as e:
     import traceback
 
     traceback.print_exc()
+

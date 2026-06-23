@@ -7,16 +7,8 @@ from . import store
 router = APIRouter()
 
 
-@router.get("/internal/list-primitives")
-def list_primitives() -> dict:
-    """Return the full primitive catalog as JSON."""
-    return store.load_all_primitives()
+@router.get("/internal/get-primitives")
+def get_primitives() -> dict:
+    """Return all available primitives with templates and verification stripped."""
+    return store.get_primitives_for_agent()
 
-
-@router.get("/internal/lookup-primitive")
-def lookup_primitive(key: str) -> dict:
-    """Return one primitive spec by name. 404 if the primitive is unknown."""
-    try:
-        return store.get_primitive(key)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e

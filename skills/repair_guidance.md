@@ -1,81 +1,69 @@
 ---
 name: repair_guidance
-version: "1.0"
+version: "2.0"
 purpose: >
-  Help the Repair Sub-Agent identify the root cause of a CadQuery execution
-  traceback and apply the minimal targeted fix to produce valid, compilable code.
+  Help the Repair Sub-Agent identify the root cause of a compilation/execution failure
+  and apply the minimal targeted fix to the PrimitivePlan JSON representation.
 used_by:
   - repair_sub_agent (W·01 inner repair loop, max 3 attempts)
 inputs:
-  - broken_code: "The Python code string that failed"
-  - traceback: "Full Python traceback / error message from execute_cadquery"
-  - primitive_plan: "PrimitivePlan dict for parameter reference"
+  - broken_plan: "The PrimitivePlan JSON representation that failed compilation/execution"
+  - error_message: "The error message or traceback from the CAD execution"
 outputs:
-  - fixed_code: "Corrected Python code string assigning final solid to `result`"
-tags: [repair, debugging, cadquery, errors, W01, inner-loop]
+  - fixed_plan: "A revised/corrected PrimitivePlan JSON representation matching the schema"
+tags: [repair, debugging, primitive-plan, json, errors, W01, inner-loop]
 token_budget: medium  # ~600 tokens — load only when repair is triggered
 sub_agent_contract: >
-  Return ONLY the corrected Python code string.
+  Return ONLY the corrected PrimitivePlan JSON representation.
   No markdown fences, no explanations.
-  Final solid MUST be assigned to `result`.
+  Must conform exactly to the PrimitivePlan schema (a dictionary with a "plan" key containing list of steps, or a list of steps).
 ---
 
 # Skill: Repair Guidance (Inner Loop)
 
-Fix CadQuery execution errors. This is used by the **Repair Sub-Agent**
-inside the **W·01 inner repair loop** (max 3 attempts).
+Fix PrimitivePlan errors that cause compilation or execution failures. This is used by the **Repair Sub-Agent** inside the **W·01 inner repair loop** (max 3 attempts).
 
-> **Contract**: Return ONLY the corrected Python code. No markdown, no prose.
-> The fixed code MUST assign the final solid to `result`.
-
----
-
-## ⚠️ Critical API Reference
-
-CadQuery v2 does **NOT** have `.cone()` or `.torus()` as Workplane methods.
-
-| Shape | ✅ Correct API |
-|---|---|
-| Box | `cq.Workplane("XY").box(length, width, height)` |
-| Cylinder | `cq.Workplane("XY").cylinder(height, radius)` |
-| Sphere | `cq.Workplane("XY").sphere(radius)` |
-| Wedge | `cq.Workplane("XY").wedge(dx, dy, dz, xmin, ymin, xmax, ymax)` |
-| **Cone** | `cq.Workplane("XY").add(cq.Solid.makeCone(radius1, radius2, height))` |
-| **Torus** | `cq.Workplane("XY").add(cq.Solid.makeTorus(ring_radius, tube_radius))` |
-| Polygon extrusion | `cq.Workplane("XY").polygon(n_sides, diameter).extrude(height)` |
-| Tapered extrusion | `cq.Workplane("XY").rect(l, w).extrude(h, taper=angle_deg)` |
-| Revolve | `cq.Workplane("XY").ellipseArc(rx, rz, 0, 180).close().revolve()` |
+> **Contract**: Return ONLY the corrected PrimitivePlan JSON. No markdown, no prose.
+> The output MUST be a valid JSON representation matching the `PrimitivePlan` schema.
 
 ---
 
-## Common Errors & Targeted Fixes
+## Common PrimitivePlan Failures & Targeted Fixes
 
-### Error 1 — `AttributeError: 'Workplane' has no attribute 'cone'`
-`.cone()` and `.torus()` don't exist on Workplane.
-- **Fix**: `cq.Workplane("XY").add(cq.Solid.makeCone(r1, r2, h))`
+### 1. Schema Validation Failures (Invalid Keys or Types)
+If the compiler/schema validator raises errors like:
+* `"Unexpected parameter 'width' is not allowed for primitive type 'cylinder'"`
+* `"Parameter 'radius' for step 'mount_hole' must be of type float, got value 'ten'"`
+* `"Missing required parameter 'height' for primitive type 'box'"`
 
-### Error 2 — Non-Manifold (`BRep_API: command not done`, `Standard_ConstructionError`)
-Bodies whose faces are exactly co-planar or completely disjoint.
-- **Fix for cuts**: Make cutter `2mm` taller, offset `1mm` outward.
-- **Fix for unions**: Ensure overlap ≥ `0.1mm` before `.union()`.
+* **Fix**: 
+  - Cross-reference parameters with the allowed parameters for that primitive.
+  - Cylinder parameters: `radius`, `height`.
+  - Box parameters: `length`, `width`, `height`.
+  - Sphere parameters: `radius`.
+  - Ensure all numeric values are standard JSON numbers (e.g., `10.0` or `5`), not strings (e.g., `"10.0"`).
 
-### Error 3 — Empty Selector (`IndexError` from `.faces(">Z")`)
-The model was rotated/translated and the face is no longer axis-aligned.
-- **Fix**: Use `.faces("#Z")` (Z-normal regardless of sign) or `.faces().item(0)`.
+### 2. CSG Boolean Operation & Non-Manifold Failures
+If execution fails due to CAD kernel errors like:
+* `Standard_ConstructionError: BRep_API: command not done`
+* Non-manifold topology or disjoint shape errors.
 
-### Error 4 — Syntax / Import Errors
-- Always `import cadquery as cq` at the top.
-- Match all brackets and quotes consistently.
+* **Fix**:
+  - **Union Overlaps**: Ensure consecutive features to be unioned overlap by at least `0.1mm` to avoid co-planar alignment issues or tiny floating gaps. Adjust the `position` coordinate along the joining axis.
+  - **Cut Clearances**: Ensure cutters (cut operations) fully penetrate the target body. A cutting tool must be slightly larger than the material it cuts (e.g., height is `thickness + 2.0` mm, offset by `1.0` mm outward along the cutting direction).
+  - **First Step**: Ensure the very first step in the plan has `operation: "base"`. Subsequent steps must have `operation: "union"` or `operation: "cut"`.
 
-### Error 5 — `.union()` / `.cut()` Type Mismatch
-Only `Workplane` objects can be combined with other `Workplane` objects.
-- **Fix**: Wrap bare Solids: `cq.Workplane("XY").add(cq.Solid.makeCone(...))`.
+### 3. Invalid Orientation / Rotation Angles
+* **Fix**:
+  - The `orientation` field must contain exactly three float values `[rx, ry, rz]` representing rotation angles in degrees around the X, Y, and Z axes.
+  - Default orientation stands along the Z-axis.
 
 ---
 
 ## Repair Workflow
 
-1. Read traceback → identify error category above.
-2. Apply the **targeted** fix — do NOT rewrite the whole script.
-3. Ensure final solid is assigned to `result`.
-4. Return ONLY the corrected Python script.
+1. Read `error_message` / traceback and locate the failing step `id` or primitive.
+2. Cross-reference the `broken_plan` with the primitive definitions.
+3. Apply the **targeted** parameter or position fix directly to the JSON structure.
+4. Ensure the returned output is a clean JSON representation of the `PrimitivePlan` (containing the `"plan"` list).
+5. Return ONLY the JSON object. Do not wrap in markdown code blocks.

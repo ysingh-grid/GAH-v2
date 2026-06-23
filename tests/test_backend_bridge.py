@@ -58,21 +58,14 @@ def test_unknown_pipeline_rejected():
     assert payload["error"]["code"] == "UNKNOWN_PIPELINE"
 
 
-def test_execute_tool_list_and_lookup_primitives():
-    list_response = client.post("/internal/execute-tool", json={"tool_name": "list_primitives", "payload": {}})
-    list_payload = list_response.json()
-    assert_contract(list_payload, "execute_tool")
-    assert list_payload["ok"] is True
-    assert "box" in list_payload["data"]["result"]["primitives"]
-
-    lookup_response = client.post(
-        "/internal/execute-tool",
-        json={"tool_name": "lookup_primitive", "payload": {"name": "box"}},
-    )
-    lookup_payload = lookup_response.json()
-    assert_contract(lookup_payload, "execute_tool")
-    assert lookup_payload["ok"] is True
-    assert lookup_payload["data"]["result"]["name"] == "box"
+def test_execute_tool_get_primitives():
+    response = client.post("/internal/execute-tool", json={"tool_name": "get_primitives", "payload": {}})
+    payload = response.json()
+    assert_contract(payload, "execute_tool")
+    assert payload["ok"] is True
+    assert "box" in payload["data"]["result"]
+    assert "template" not in payload["data"]["result"]["box"]
+    assert "verification" not in payload["data"]["result"]["box"]
 
 
 def test_all_project_tools_are_exposed():
@@ -84,8 +77,7 @@ def test_all_project_tools_are_exposed():
     expected = {
         "read_skill",
         "list_skills",
-        "lookup_primitive",
-        "list_primitives",
+        "get_primitives",
         "execute_cadquery",
         "inspect_mesh",
         "render_views",
@@ -95,6 +87,7 @@ def test_all_project_tools_are_exposed():
         "list_traces",
     }
     assert expected.issubset(exposed)
+
 
 
 def test_trace_save_get():

@@ -8,7 +8,7 @@ used_by:
   - planning_worker (Step 1 of W·01)
 inputs:
   - user_prompt: "Raw natural-language design request string"
-  - primitives_list: "List of supported primitive names from list_primitives()"
+  - primitives_list: "List of supported primitive names from get_primitives()"
 outputs:
   - target_object: "Closest matching primitive name"
   - dimensions: "Dict of param → {value, unit, type}"

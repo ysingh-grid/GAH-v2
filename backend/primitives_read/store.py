@@ -7,6 +7,8 @@ they never read the file themselves. Each function does exactly one thing.
 import json
 from pathlib import Path
 
+from typing import Any
+
 # Repo root is three parents up: store.py -> primitives -> backend -> repo root.
 _LIBRARY_PATH = Path(__file__).resolve().parents[2] / "primitives" / "library.json"
 
@@ -41,3 +43,21 @@ def get_primitive(key: str) -> dict:
     if key not in catalog:
         raise KeyError(f"unknown primitive '{key}'; known: {sorted(catalog)}")
     return catalog[key]
+
+
+def get_primitives_for_agent() -> dict[str, Any]:
+    """Load all primitives and strip 'template' and 'verification' fields for the agent.
+
+    Returns:
+        dict[str, Any]: A catalog of primitive specs containing name, description, parameters.
+    """
+    catalog = load_all_primitives()
+    agent_catalog = {}
+    for key, spec in catalog.items():
+        agent_catalog[key] = {
+            "name": spec.get("name", key),
+            "description": spec.get("description", ""),
+            "parameters": spec.get("parameters", {})
+        }
+    return agent_catalog
+

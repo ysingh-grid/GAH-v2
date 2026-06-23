@@ -28,8 +28,7 @@ that is not your role and you physically cannot do it here.
 
 | Tool | Use it to |
 |---|---|
-| `list_primitives()` | see every primitive key in the catalog (your vocabulary) |
-| `lookup_primitive(key)` | get one primitive's params, constraints, and template |
+| `get_primitives()` | see every primitive key in the catalog (your vocabulary) and their parameters/specifications |
 | `list_skills()` | see which reasoning guides exist (live catalog) |
 | `read_skill(name)` | load one guide's full text |
 | `FINAL(plan)` | emit your finished PrimitivePlan (validated against the schema) |
@@ -64,7 +63,7 @@ Don't read all skills blindly — pull the one relevant to the decision in front
    read_skill("playbook") → intent_extraction → part_decomposition
                           → primitive_planning → dimension_reasoning
                           → verification_planning
-   pulls as needed: list_primitives() / lookup_primitive(key)
+   pulls as needed: get_primitives()
    FINAL(PrimitivePlan)              ← validated by the schema before anything runs
         │
         ▼   (the plan LEAVES your sandbox — everything below runs on the host/Temporal)
