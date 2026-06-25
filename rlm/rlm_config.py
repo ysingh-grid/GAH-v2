@@ -14,8 +14,9 @@ os.environ["RLM_MODEL_API_KEY"] = os.environ.get("GEMINI_API_KEY", "")
 
 config = RLMConfig.default()
 # Flash, not Pro. The planner is structured extraction (pick primitive, fill dims,
-# emit JSON) — not a reasoning task. Pro had 2 RPM free-tier rate limit, causing
-# 90s queue spikes that blew the 30s timeout. Flash has 15 RPM + 2-8s latency.
+# emit JSON) — not a reasoning task. Billing is pay-as-you-go (Tier 1+), so RPM is
+# NOT the constraint; flash is chosen for lower cost + 2-8s latency vs Pro's slower
+# turns. (Free-tier RPM throttling does not apply on this account.)
 config.primary_agent = "gemini-3.5-flash"
 config.sub_agent = "gemini-3.5-flash"
 # Hard safety-net cap on REPL steps per agent (the soft target lives in the prompt:
@@ -51,7 +52,19 @@ config.truncate_len = 8000
 # without it (default 3, or even 2) children recursively fork and the cumulative
 # prompt-token budget explodes (observed 459k tokens from a depth-2 fan-out).
 config.max_depth = 1
-# Flash calls complete in 2-8s. 30s is ample headroom; keep default.
-# 3 retries kept in case of transient 429s at burst time.
+# ── LLM call resilience ───────────────────────────────────────────────────────
+# api_timeout_ms + api_max_retries flow to the TS LLM client (call_llm.ts) via the
+# --config temp YAML that _runner.run() writes from this RLMConfig. The engine's
+# bundled rlm_config.yaml defaults to 30000ms / 3 retries; we set them explicitly
+# here so the values are owned in code, not silently inherited.
+#
+# Healthy gemini-3.5-flash calls finish in ~2-8s, so 30s/attempt is ALREADY
+# fail-fast — shortening it risks killing legit slow (large-context) calls for
+# marginal gain, so keep 30s. Retries use exponential backoff on retryable errors
+# (timeout / 429 / 5xx). Observed a ~2-minute transient Gemini OpenAI-compat stall
+# where 3 attempts (30s×3 + backoff ≈ 124s) all timed out → fatal run. 5 retries
+# span a longer backoff window, riding out that transient outage.
+config.api_timeout_ms = 30_000   # per-attempt timeout, milliseconds
+config.api_max_retries = 5
 
 print("✅ RLM Config created with Gemini adapter")

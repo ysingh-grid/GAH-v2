@@ -21,7 +21,7 @@ class FailureCategory(StrEnum):
     primitive_gap = "primitive_gap"  # library can't express the geometry
     geometry_invalidity = "geometry_invalidity"  # compile/exec/mesh produced invalid geometry
     visual_mismatch = "visual_mismatch"  # verifier says it doesn't match intent
-    translation_drift = "translation_drift"  # forge.js diverged from the canonical solid
+    translation_drift = "translation_drift"  # reserved (was forge.js drift; forge path removed — no stage maps to it now)
     verifier_miss = "verifier_miss"  # verifier itself failed/erred
     user_ambiguity = "user_ambiguity"  # intent underspecified; needs the human
 
@@ -31,7 +31,6 @@ STAGE_TO_CATEGORY: dict[str, FailureCategory] = {
     "cadquery_compile": FailureCategory.geometry_invalidity,
     "cadquery_execute": FailureCategory.geometry_invalidity,
     "mesh_repair": FailureCategory.geometry_invalidity,
-    "forge_compile": FailureCategory.translation_drift,
     "visual_mismatch": FailureCategory.visual_mismatch,
     "primitive_gap": FailureCategory.primitive_gap,
     "verifier_error": FailureCategory.verifier_miss,

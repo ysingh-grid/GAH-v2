@@ -86,18 +86,41 @@ def test_compile_missing_primitive_raises_compileerror():
         compile_plan_to_cadquery(plan, LIBRARY)
 
 
-def test_compile_finish_op_raises_until_m4():
+def test_invalid_operation_rejected_by_schema():
+    """A bogus PrimitiveStep operation fails at schema validation (not the compiler).
+
+    The legacy 'finish' enum value was removed — finish ops are now FinishSteps.
+    An unknown operation must be caught up-front by pydantic.
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        plan_from_dict(
+            {
+                "part_name": "x",
+                "steps": [
+                    {"id": "b", "primitive": "box", "operation": "base"},
+                    {"id": "f", "primitive": "box", "operation": "finish"},
+                ],
+            }
+        )
+
+
+def test_intersect_compiles_to_boolean_and():
+    """The intersect operation emits result.intersect(...) — boolean AND."""
     plan = plan_from_dict(
         {
-            "part_name": "x",
+            "part_name": "lens",
             "steps": [
-                {"id": "b", "primitive": "box", "operation": "base"},
-                {"id": "f", "primitive": "box", "operation": "finish"},
+                {"id": "b", "primitive": "box", "operation": "base",
+                 "parameters": {"length": 50, "width": 50, "height": 30}, "position": [0, 0, 15]},
+                {"id": "s", "primitive": "sphere", "operation": "intersect",
+                 "parameters": {"radius": 32}, "position": [0, 0, 15]},
             ],
         }
     )
-    with pytest.raises(CompileError, match="not supported"):
-        compile_plan_to_cadquery(plan, LIBRARY)
+    code = compile_plan_to_cadquery(plan, LIBRARY)
+    assert "result.intersect(" in code
 
 
 # ── integration: compile -> execute_cadquery -> real STL ─────────────────────

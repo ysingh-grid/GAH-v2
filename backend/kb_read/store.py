@@ -90,40 +90,28 @@ _FORGECAD_SECTION_DESCRIPTIONS: dict[str, str] = {
 
 
 def list_kb_index() -> dict[str, dict[str, str]]:
-    """Return a compact index of what exists in both KBs.
+    """Return a compact index of the CadQuery KB (KB1).
 
     The planner calls this once to see the menu, then calls fetch_kb_sections()
     with the keys it actually needs. This is the index, NOT the content.
 
-    Returns:
-        {
-          "cadquery": {slug: description, ...},    # KB1 categories
-          "forgecad": {slug: description, ...},    # ForgeCAD context sections (available only)
-        }
-    """
-    loaded = _load_forgecad_sections()
-    # Only expose sections that actually exist in the loaded file
-    available_forge: dict[str, str] = {}
-    for slug, desc in _FORGECAD_SECTION_DESCRIPTIONS.items():
-        # Match by substring — the actual slug may differ slightly
-        for actual_slug in loaded:
-            if any(part in actual_slug for part in slug.split("-")[:2]):
-                available_forge[slug] = desc
-                break
+    The ForgeCAD section was removed with the forge compiler (scope reduction):
+    serving it bloated the pre-injected planner context every step and pointed at a
+    code path that no longer exists. _load_forgecad_sections + the forgecad
+    descriptions remain on disk (unused) in case forge is ever revived.
 
-    return {
-        "cadquery": _CQ_CATEGORIES,
-        "forgecad": available_forge if available_forge else _FORGECAD_SECTION_DESCRIPTIONS,
-    }
+    Returns:
+        {"cadquery": {slug: description, ...}}    # KB1 categories only
+    """
+    return {"cadquery": _CQ_CATEGORIES}
 
 
 def fetch_kb_sections(keys: list[str]) -> dict[str, str]:
     """Fetch specific KB sections by their slug keys from list_kb_index().
 
     Args:
-        keys: List of slug keys from the index, e.g.
-              ["3d-operations", "revolve", "sweep"].
-              Mix of cadquery and forgecad keys is fine.
+        keys: List of slug keys from list_kb_index()'s "cadquery" menu, e.g.
+              ["3d-operations", "holes", "modification"].
 
     Returns:
         {key: content_snippet} for each found key. Missing keys are silently
@@ -131,37 +119,28 @@ def fetch_kb_sections(keys: list[str]) -> dict[str, str]:
         capped at 800 chars to stay within token budget.
     """
     result: dict[str, str] = {}
-    loaded_forge = _load_forgecad_sections()
 
     for key in keys:
-        # Try CadQuery KB1 first
-        if key in _CQ_CATEGORIES:
-            try:
-                from KB.rag_kb1 import WORKPLANE_DOCS
-            except ImportError:
-                result[key] = f"[KB1 unavailable: {key}]"
-                continue
-
-            # KB1 uses underscores in category field; index uses hyphens in slugs
-            category = key.replace("-", "_")
-            docs = [d for d in WORKPLANE_DOCS if d.category == category]
-            if docs:
-                lines = [f"## CadQuery: {key}\n"]
-                for doc in docs[:4]:  # cap at 4 methods per category
-                    lines.append(f"  {doc.signature}")
-                    lines.append(f"    {doc.description[:200]}")
-                    if doc.example:
-                        lines.append(f"    Example: {doc.example}")
-                    lines.append("")
-                snippet = "\n".join(lines)
-                result[key] = snippet[:800] + ("…" if len(snippet) > 800 else "")
+        if key not in _CQ_CATEGORIES:
+            continue  # forgecad keys no longer served (forge path removed)
+        try:
+            from KB.rag_kb1 import WORKPLANE_DOCS
+        except ImportError:
+            result[key] = f"[KB1 unavailable: {key}]"
             continue
 
-        # Try ForgeCAD KB
-        for slug, body in loaded_forge.items():
-            if key.split("-")[0] in slug or slug in key:
-                snippet = body[:800].rstrip() + ("…" if len(body) > 800 else "")
-                result[key] = snippet
-                break
+        # KB1 uses underscores in category field; index uses hyphens in slugs
+        category = key.replace("-", "_")
+        docs = [d for d in WORKPLANE_DOCS if d.category == category]
+        if docs:
+            lines = [f"## CadQuery: {key}\n"]
+            for doc in docs[:4]:  # cap at 4 methods per category
+                lines.append(f"  {doc.signature}")
+                lines.append(f"    {doc.description[:200]}")
+                if doc.example:
+                    lines.append(f"    Example: {doc.example}")
+                lines.append("")
+            snippet = "\n".join(lines)
+            result[key] = snippet[:800] + ("…" if len(snippet) > 800 else "")
 
     return result

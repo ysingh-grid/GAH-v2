@@ -26,7 +26,8 @@ def test_six_failure_categories_exist():
 
 def test_category_for_stage_maps_known_stages():
     assert category_for_stage("cadquery_compile") is FailureCategory.geometry_invalidity
-    assert category_for_stage("forge_compile") is FailureCategory.translation_drift
+    assert category_for_stage("cadquery_execute") is FailureCategory.geometry_invalidity
+    assert category_for_stage("mesh_repair") is FailureCategory.geometry_invalidity
     assert category_for_stage("visual_mismatch") is FailureCategory.visual_mismatch
     assert category_for_stage("primitive_gap") is FailureCategory.primitive_gap
 

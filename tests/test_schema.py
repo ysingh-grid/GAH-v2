@@ -62,7 +62,7 @@ def test_base_step_not_first_raises():
             _box_base("body"),
         ],
     }
-    with pytest.raises(ValidationError, match="must be the first step"):
+    with pytest.raises(ValidationError, match="must be the first primitive step"):
         plan_from_dict(bad)
 
 

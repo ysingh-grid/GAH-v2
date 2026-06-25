@@ -28,7 +28,6 @@ class DesignSession:
     original_prompt: str
     history: list[dict[str, str]]  # [{"role": "user"|"planner", "content": str}]
     last_plan: dict[str, Any] | None = None
-    forge_js: str | None = None
     run_id: str | None = None
     created_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat()
@@ -41,7 +40,6 @@ class DesignSession:
             "original_prompt": self.original_prompt,
             "history": self.history,
             "last_plan": self.last_plan,
-            "forge_js": self.forge_js,
             "run_id": self.run_id,
             "created_at": self.created_at,
         }

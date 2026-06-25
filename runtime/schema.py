@@ -1,9 +1,10 @@
 """PrimitivePlan — the typed contract the whole runtime speaks.
 
 A PrimitivePlan describes ONE part as an ordered list of CSG steps. Each step
-names a library primitive, an operation (base / union / cut / finish), its
+names a library primitive, an operation (base / union / cut / intersect), its
 parameters, and a placement. A step may optionally carry a `pattern` that
-replicates it (polar or linear array) before the boolean is applied.
+replicates it (polar or linear array) before the boolean is applied. Post-body
+modifiers (fillet / chamfer / shell / holes / mirror) are separate FinishSteps.
 
 This module is intentionally split into two layers:
 
@@ -35,12 +36,17 @@ _LIBRARY_PATH = Path(__file__).resolve().parent.parent / "primitives" / "library
 
 
 class Operation(StrEnum):
-    """Role a step plays in the CSG construction of the single part."""
+    """Role a step plays in the CSG construction of the single part.
+
+    base/union/cut/intersect are the four CSG folds. Post-body modifiers
+    (fillet/chamfer/shell/holes/mirror) are NOT operations here — they are
+    separate FinishStep entries with their own FinishOp.
+    """
 
     base = "base"  # the starting solid; exactly one, must be first
     union = "union"  # fuse this primitive onto the accumulating body
     cut = "cut"  # subtract this primitive from the accumulating body
-    finish = "finish"  # modifier on the current body (fillet / chamfer / shell)
+    intersect = "intersect"  # keep only the overlap of this primitive and the body
 
 
 class FinishOp(StrEnum):
@@ -52,6 +58,7 @@ class FinishOp(StrEnum):
     hole = "hole"        # drill a through-hole:  value = diameter (mm), positions = [[x,y],...]
     cbore = "cbore"      # counterbored hole:     value = [clr_dia, bore_dia, bore_depth] (mm)
     csk = "csk"          # countersunk hole:      value = [clr_dia, csk_dia, csk_angle_deg]
+    mirror = "mirror"    # mirror body across a plane & union w/ original; selector = plane ("XZ")
 
 
 class PatternType(StrEnum):
@@ -127,9 +134,13 @@ class PrimitiveStep(BaseModel):
 
     @model_validator(mode="after")
     def _pattern_only_on_booleans(self) -> PrimitiveStep:
-        if self.pattern is not None and self.operation not in (Operation.union, Operation.cut):
+        if self.pattern is not None and self.operation not in (
+            Operation.union,
+            Operation.cut,
+            Operation.intersect,
+        ):
             raise ValueError(
-                f"step '{self.id}': pattern is only valid on union/cut steps, "
+                f"step '{self.id}': pattern is only valid on union/cut/intersect steps, "
                 f"not '{self.operation.value}'"
             )
         return self

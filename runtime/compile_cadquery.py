@@ -106,10 +106,12 @@ def _accumulate_line(step: PrimitiveStep, index: int) -> str:
         return f"result = result.union({var})"
     if step.operation is Operation.cut:
         return f"result = result.cut({var})"
+    if step.operation is Operation.intersect:
+        return f"result = result.intersect({var})"
     raise CompileError(
-        f"operation '{step.operation.value}' (step '{step.id}') is not supported by the "
-        f"CadQuery compiler yet (finish/modifier ops — fillet/chamfer/shell on the body — "
-        f"are a planned additive extension; basic fillet/chamfer shapes exist as primitives)"
+        f"operation '{step.operation.value}' (step '{step.id}') is not a CSG fold "
+        f"(base/union/cut/intersect). Post-body modifiers (fillet/chamfer/shell/holes/"
+        f"mirror) must be FinishStep entries, not PrimitiveStep operations."
     )
 
 def _compile_finish_step_cq(step: FinishStep) -> list[str]:
@@ -192,6 +194,13 @@ def _compile_finish_step_cq(step: FinishStep) -> list[str]:
                 f"result = result.faces({face_sel!r}).workplane()"
                 f".cskHole({clr_d}, {csk_d}, {angle})"
             )
+
+    elif step.op is FinishOp.mirror:
+        # selector holds the mirror plane ("XY"/"XZ"/"YZ"); union the reflection
+        # back onto the body to build a symmetric part from one designed half.
+        plane = step.selector or "XZ"
+        lines.append(f"result = result.union(result.mirror({plane!r}))")
+
     return lines
 
 

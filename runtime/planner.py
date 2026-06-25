@@ -1,11 +1,10 @@
 """Per-turn RLM planner: one user message in, one typed decision out.
 
 The backend re-invokes `run_planner_turn` on every user message with the full
-chat history. The RLM either asks one more clarifying question (gathering
-measurements, optionally via web_search) or, once it has enough, emits a
-validated PrimitivePlan. That two-way decision is the `PlannerOutput` model
-below, used as the fast-rlm `output_schema` so the model's FINAL value is
-schema-checked before we ever see it.
+chat history. The RLM either asks one more clarifying question or, once it has
+enough, emits a validated PrimitivePlan. That two-way decision is the
+`PlannerOutput` model below, used as the fast-rlm `output_schema` so the
+model's FINAL value is schema-checked before we ever see it.
 
 This module owns the *pure* pieces (the output contract, the task prompt, the
 result parser). The single impure call — `fast_rlm.run` — is isolated in
@@ -26,7 +25,6 @@ from rlm.pull_tools import (
     list_primitives,
     lookup_design_reference,
     lookup_primitive,
-    web_search,
 )
 from runtime.schema import PrimitivePlan
 
@@ -39,13 +37,17 @@ _PLANNER_TOOLS = [
     fetch_kb_sections,
     lookup_primitive,
     lookup_design_reference,
-    web_search,
 ]
 
 PLANNER_TASK = """\
 You are the PLANNER ORCHESTRATOR in a text-to-CAD system. You turn a request into ONE
-validated PrimitivePlan: an ordered list of CSG steps, each a placed library primitive
-with an operation (base / union / cut / finish), parameters, position, and orientation.
+validated PrimitivePlan: an ordered list of steps. Two kinds of step exist:
+  • PRIMITIVE STEP — a placed library primitive folded into the body with a CSG
+    operation (base / union / cut / intersect), plus parameters, position, orientation,
+    and an optional pattern (polar/linear array).
+  • FINISH STEP — a deterministic post-body modifier applied to the accumulated solid:
+    fillet, chamfer, shell, hole, cbore, csk, mirror. These act on the WHOLE body so
+    far, not a primitive. (Detailed shape near the end of this prompt.)
 
 ## HARD BUDGET: 6 REPL steps, then you MUST emit FINAL. (A step = one block.)
 
@@ -67,48 +69,74 @@ with an operation (base / union / cut / finish), parameters, position, and orien
   so to pierce a body spanning z=0..T set the cut's position.z = T/2 and height = T+1
   (spans -0.5..T+0.5). Never leave a paper-thin film.
 - ONE connected solid. After all unions the part must be a single connected body —
-  every feature must overlap something already attached.
-- NO `finish` operation. The compiler supports ONLY base / union / cut. For rounded
-  or chamfered edges use the filleted_box / chamfered_box / rounded_cylinder PRIMITIVES
-  (operation union/base/cut) — never emit operation="finish".
+  every feature must overlap something already attached. (intersect/mirror excepted —
+  see below — but the FINAL result must still be one connected body.)
+- INTERSECT keeps only the overlap of the primitive and the body (boolean AND). Use it
+  to carve a body down to a shared region — e.g. box ∩ sphere = a box with a domed/
+  rounded bulge, cylinder ∩ box = a D-profile. The intersecting primitive must actually
+  overlap the body or you get an empty solid (mesh fails).
+- FINISH STEPS are available and deterministic — use them for edge treatments and holes
+  instead of approximating with primitives:
+    • fillet/chamfer to round or bevel real edges of the assembled body
+    • shell to hollow it (mug, enclosure)
+    • hole/cbore/csk to drill fasteners at exact (x,y) points on a face
+    • mirror to build a symmetric part from one designed half
+  You may STILL use filleted_box / chamfered_box / rounded_cylinder PRIMITIVES when the
+  rounding is intrinsic to a sub-shape; prefer a FINISH STEP when rounding the final body.
 
 ## ⛔ Prohibitions:
-- NEVER call web_search unless the user EXPLICITLY asked you to search in chat_history.
 - Do NOT invent fastener/standard dimensions — look them up (see Step 2).
 - Keep REPL output small: never print the whole catalog or whole reference back.
 
-## When to FORK vs design in ONE context — READ THIS, it decides quality:
-A FORK (sub-agent) is ONLY for a GENUINELY SEPARATE SOLID — a distinct physical body
-that could be manufactured on its own and only meets others at an interface.
-  • cricket bat -> ["blade", "handle"]   (two separate solids)  -> FORK each
-  • bolt + nut  -> ["bolt", "nut"]                              -> FORK each
-A SINGLE complex part with interdependent FEATURES (holes, ribs, bosses, pockets,
-fillets on ONE body) is NOT multiple sub-parts. Its features share one coordinate
-frame and must be positioned relative to each other. Fragmenting them across blind
-sub-agents (who never see each other) produces features that don't line up.
-  • flanged manifold, bracket with bolt pattern, housing with ribs -> ONE context.
-RULE: if sub-parts share a body / must align to each other -> DESIGN IN ONE CONTEXT
-(do it yourself across your REPL steps, no fork). Fork ONLY truly independent solids.
+## When to FORK vs design in ONE context — READ THIS, it decides quality + speed:
+A FORK spawns a sub-agent with a FRESH context. That keeps any single API call SMALL,
+so a big part never fills one call to the brim (which stalls/times out). Two valid
+fork cases:
+
+  (A) INDEPENDENT SOLIDS — distinct bodies that only meet at an interface.
+      • cricket bat -> ["blade","handle"]    • bolt + nut -> ["bolt","nut"]
+      Fork one child per solid; each designs freely in its OWN local frame.
+
+  (B) FEATURES OF ONE CONNECTED BODY (hub+spokes+rim, flange+bolt-bosses+ribs) —
+      fork one child per feature, but ONLY AFTER you fix a SHARED-FRAME CONTRACT
+      yourself so the blind children still line up. Use this when designing the whole
+      body in your own REPL would bloat your context (many features / standard dims).
+        1. YOU decide the skeleton numbers FIRST: every shared anchor (radii, planes,
+           bolt-circle positions) and HOW features OVERLAP (~0.5-1mm INTO each other —
+           features that only touch do NOT fuse → mesh fails).
+        2. YOU assign each feature an ABSOLUTE placement + an operation (EXACTLY ONE
+           feature is "base"; the rest "union"/"cut").
+        3. Each child builds ONLY its feature at the absolute position you gave it, in
+           the shared frame — it NEVER invents or changes a shared anchor.
+      Wheel example: you fix hub cyl r=15, rim ring inner=40/outer=44, spoke box
+      spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 — THEN fork
+      [hub(base), rim(union), spoke(union)].
+
+RULE: SIMPLE parts (a cube, a box with 2 holes) — do NOT fork; just emit the steps
+yourself (fork has overhead). Fork when (A) independence OR (B) the single body is
+complex enough that one context would balloon. (B) is what makes big parts fast +
+reliable — small per-call context, alignment guaranteed by YOUR contract.
 
 ## Procedure — follow in order:
 
-Step 1 — In ONE block, get the catalog and the KB menu:
-  primitives = list_primitives()   ← shape catalog
-  kb_index = list_kb_index()       ← compact menu: {cadquery: {slug: desc}, forgecad: {slug: desc}}
-  print(primitives, kb_index)      ← never print full catalog; just skim it
+Step 1 — Your catalog + KB menu are ALREADY in context (pre-fetched for you). Do NOT
+  call list_primitives() or list_kb_index() — that wastes a whole REPL step. Read:
+    primitives = context["available_primitives"]   ← shape catalog (names)
+    kb_index   = context["kb_index"]               ← {cadquery:{slug:desc}}  (CadQuery KB menu)
+  ONLY if a key is missing, fall back to list_primitives() / list_kb_index().
 
-Step 2 — Based on the request and the kb_index you just read, fetch ONLY the
+Step 2 — Based on the request and the kb_index already in context, fetch ONLY the
   KB sections that are actually relevant. Pick ≤5 slugs. Examples:
     • User wants a mug → fetch ["3d-primitives", "modification", "revolve", "shell"]
     • User wants a bracket with holes → fetch ["3d-primitives", "holes", "multi-point"]
     • Simple box → fetch ["3d-primitives"] only — don't over-fetch
   kb = fetch_kb_sections(["slug-1", "slug-2", ...])
 
-  IMPORTANT: kb tells you what the DETERMINISTIC COMPILERS support.
-  The plan schema ONLY supports: operation = base / union / cut.
-  There is NO finish operation at compile time. For rounded edges, use
-  filleted_box / chamfered_box / rounded_cylinder PRIMITIVES instead.
-  Do NOT plan fillet/shell/hole as plan steps — the compilers will reject them.
+  IMPORTANT: kb tells you what the DETERMINISTIC COMPILER supports.
+  PrimitiveStep operations: base / union / cut / intersect.
+  FinishStep ops (post-body, deterministic): fillet / chamfer / shell / hole /
+  cbore / csk / mirror. Plan fillet/shell/holes as FINISH STEPS — they compile
+  to fixed CadQuery calls (.edges().fillet(), .faces().shell(), .hole(), etc.).
 
 Step 3 — Read context["original_prompt"]. For any standard feature (bolt/screw holes,
   counterbores, bolt circles, ribs, mounting plates) call:
@@ -117,38 +145,69 @@ Step 3 — Read context["original_prompt"]. For any standard feature (bolt/screw
   ADAPT ref["recipes"][name]["steps"] — fill the <...> placeholders with real mm values
   and positions, then inline them. Adapting a recipe beats composing CSG from scratch.
   If a REQUIRED dimension is still missing and no sensible default exists, FINAL with
-  action="ask_user" NOW. Offer: (a) "Search the web for standard {name} dimensions",
-  (b) a concrete default you suggest.
+  action="ask_user" NOW. Offer a concrete default you suggest, or ask the user to provide the value.
 
 Step 4 — Decide structure with the FORK rule above.
-  • ONE coherent part (the common case): build the steps yourself. Start with the
-    base solid (operation="base"), then union/cut features (adapted recipes). For
-    rounded/chamfered edges pick a filleted_box / chamfered_box / rounded_cylinder
-    PRIMITIVE — there is no finish op. Keep every feature in the same coordinate frame.
-  • Multiple independent solids ONLY: fork one sub-agent per solid, IN PARALLEL, with
-    batch_llm_query (NEVER asyncio.gather — the engine blocks it). Give each child a
-    SHORTLIST of candidate primitives (not the whole catalog) and tools=[lookup_primitive,
-    lookup_design_reference]:
+  • SIMPLE single part (the common case): build the steps yourself. base first, then
+    union/cut/intersect features (adapted recipes), then FINISH STEPS last
+    (fillet/chamfer/shell/holes/mirror act on the finished body). One frame. Fastest.
+  • FORK — independent solids (A) OR features of a complex body (B): fork IN PARALLEL
+    with batch_llm_query (NEVER asyncio.gather — the engine blocks it). Give each child
+    a SHORTLIST of candidate primitives + tools=[lookup_primitive, lookup_design_reference].
+    For (B) you MUST pass each child its absolute placement + assigned operation from
+    YOUR shared-frame contract — the child does not invent shared anchors:
 
       STEP_SCHEMA = {"type": "array", "items": {"type": "object"}}
 
-      def design(part, candidates):
+      def design(feature, candidates, frame):
           return llm_query({
-              "task": ("Design ONE independent solid. Use lookup_primitive(key) for exact "
-                       "parameter names and lookup_design_reference(q) for standard dims/"
-                       "recipes. Return a JSON list of step objects: {id, primitive, "
-                       "operation, parameters, position:[x,y,z], orientation:[rx,ry,rz]}."),
-              "sub_part": part,
-              "request": context["original_prompt"],
+              "task": ("Build ONLY this feature, IN THE SHARED FRAME given. Use the "
+                       "absolute position + operation provided — do NOT change any shared "
+                       "anchor. Use lookup_primitive(key) for exact param names. Return a "
+                       "JSON list of step objects: {id, primitive, operation, parameters, "
+                       "position:[x,y,z], orientation:[rx,ry,rz], pattern?}."),
+              "feature": feature,            # (B): {"name":"spoke","operation":"union",
+                                             #   "position":[0,0,4],"overlap":"span r=14..41",
+                                             #   "pattern":"polar count=5"}  — or just the
+                                             #   sub-part name for (A) independent solids
+              "shared_frame": frame,         # (B) the contract: every shared anchor/radius
+                                             #   you fixed. Pass {} for (A).
               "candidate_primitives": candidates,   # 2-5 keys YOU pre-selected, NOT all
           }, STEP_SCHEMA, tools=[lookup_primitive, lookup_design_reference])
 
-      sub_results = await batch_llm_query(*[design(p, c) for p, c in parts_with_candidates])
+      sub_results = await batch_llm_query(*[design(f, c, frame) for f, c in features])
 
-Step 5 — Assemble ONE steps array. Exactly ONE step has operation="base" and it is
-  FIRST. Unique ids. Then FINAL with:
+Step 5 — Assemble ONE steps array. If you forked, FLATTEN all child step-lists into
+  one list. Enforce: EXACTLY ONE step has operation="base" and it is FIRST (the base
+  feature you designated in your contract); every other primitive step is
+  union/cut/intersect; FINISH STEPS last. Make ids UNIQUE — if children reused ids,
+  prefix each with its feature name (e.g. "spoke_s1"). Children already returned
+  ABSOLUTE positions in the shared frame, so do NOT re-place them. Then FINAL with:
     {"action": "plan_ready",
      "plan": {"part_name": <short_name>, "units": "mm", "steps": <all steps>}}
+
+## STEP SHAPES — emit exactly these JSON shapes:
+
+PRIMITIVE STEP:
+  {"id": "s1", "primitive": "box", "operation": "base|union|cut|intersect",
+   "parameters": {...}, "position": [x,y,z], "orientation": [rx,ry,rz],
+   "pattern": {"type":"polar|linear", "count":N, "axis":[0,0,1], "angle_deg":360,
+               "spacing":[0,0,0]}}   # pattern OPTIONAL, only on union/cut/intersect
+
+FINISH STEP (no primitive; acts on the whole body so far):
+  {"id": "f1", "op": "fillet|chamfer|shell|hole|cbore|csk|mirror",
+   "selector": "<edge/face selector>", "value": <number or list>,
+   "positions": [[x,y],...], "face": ">Z"}
+  • fillet/chamfer: selector = edges (e.g. "|Z" all vertical, ">Z" top), value = radius/length (mm)
+  • shell:          selector = face to open (e.g. ">Z"), value = wall thickness (mm)
+  • hole:           face = drilled face (">Z"), value = diameter, positions = [[x,y],...]
+  • cbore:          value = [clr_dia, bore_dia, bore_depth], positions, face
+  • csk:            value = [clr_dia, csk_dia, csk_angle_deg], positions, face
+  • mirror:         selector = mirror plane ("XY"/"XZ"/"YZ")
+
+CadQuery selector cheatsheet: ">Z" top face, "<Z" bottom, "|Z" all Z-parallel edges,
+"%Circle" circular edges, ">Z[-2]" second-from-top. Wrong selectors just no-op (fillet/
+chamfer are skipped if they fail) — pick the obvious one for the edges you mean.
 
 Return EXACTLY one of the two shapes defined by the output schema.
 """
@@ -184,27 +243,31 @@ def parse_planner_result(result: dict[str, Any]) -> PlannerOutput:
     return PlannerOutput.model_validate(result)
 
 
-def build_planner_query(original_prompt: str, chat_history: list[dict[str, str]]) -> dict[str, Any]:
-    """Assemble the structured context dict handed to the RLM for one turn."""
-    return {
+def build_planner_query(
+    original_prompt: str,
+    chat_history: list[dict[str, str]],
+    *,
+    available_primitives: list[str] | None = None,
+    kb_index: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble the structured context dict handed to the RLM for one turn.
+
+    available_primitives + kb_index are pre-fetched by run_planner_turn and embedded
+    here so the planner can skip the list_primitives()/list_kb_index() REPL steps —
+    two fewer model calls per turn. Omitted (None) → the planner falls back to the
+    tools (used by pure unit tests that don't pre-fetch).
+    """
+    query: dict[str, Any] = {
         "task": PLANNER_TASK,
         "original_prompt": original_prompt,
         "chat_history": chat_history,
     }
+    if available_primitives is not None:
+        query["available_primitives"] = available_primitives
+    if kb_index is not None:
+        query["kb_index"] = kb_index
+    return query
 
-
-def _user_granted_web_search(chat_history: list[dict[str, str]]) -> bool:
-    """True iff the user's MOST RECENT message explicitly granted web access.
-
-    The planner offers a "Search the web for ..." option on an ask_user turn;
-    clicking it sends that text back as a user message. We grant web access only
-    for the turn right after the user says so — never speculatively, never carried
-    forward. This is what flips DTCM_WEB_SEARCH_ALLOWED for the web_search gate.
-    """
-    for turn in reversed(chat_history):
-        if turn.get("role") == "user":
-            return "search the web" in turn.get("content", "").lower()
-    return False
 
 
 def run_planner_turn(
@@ -220,13 +283,15 @@ def run_planner_turn(
         original_prompt: The user's first request.
         chat_history: Prior turns as [{"role": "user"|"planner", "content": str}].
         backend_url: Base URL of the product backend, injected into the REPL as
-            DTCM_BACKEND_URL so the pull tools (incl. web_search) can reach it.
+            DTCM_BACKEND_URL so the pull tools can reach it.
         config: Optional fast-rlm RLMConfig; defaults to rlm.rlm_config.config.
 
     Returns:
         A PlannerOutput — action="ask_user" (question + options) or
         action="plan_ready" (validated PrimitivePlan).
     """
+    import os
+
     import fast_rlm
 
     if config is None:
@@ -234,16 +299,33 @@ def run_planner_turn(
 
         config = default_config
 
+    # Pre-fetch the catalog + KB menu ONCE (localhost HTTP) and embed them in the
+    # context, so the planner skips the list_primitives()/list_kb_index() REPL steps
+    # — two fewer model calls per turn (each call is a stall risk). The pull tools
+    # read DTCM_BACKEND_URL from the env, so set it here before calling. On any
+    # failure we pass None and the planner falls back to the tools.
+    os.environ["DTCM_BACKEND_URL"] = backend_url
+    try:
+        available_primitives: list[str] | None = list_primitives()
+    except Exception:
+        available_primitives = None
+    try:
+        kb_index: dict[str, Any] | None = list_kb_index()
+    except Exception:
+        kb_index = None
+
     result = fast_rlm.run(
-        build_planner_query(original_prompt, chat_history),
+        build_planner_query(
+            original_prompt,
+            chat_history,
+            available_primitives=available_primitives,
+            kb_index=kb_index,
+        ),
         config=config,
         tools=_PLANNER_TOOLS,
         output_schema=PlannerOutput,
         env_variables={
             "DTCM_BACKEND_URL": backend_url,
-            # Permission gate for web_search: only "1" when the user's latest
-            # message explicitly granted web access. The tool raises otherwise.
-            "DTCM_WEB_SEARCH_ALLOWED": "1" if _user_granted_web_search(chat_history) else "0",
         },
     )
     return parse_planner_result(result["results"])
@@ -296,7 +378,7 @@ def run_replanner_turn(
     result = fast_rlm.run(
         query,
         config=config,
-        tools=[],  # no tools — fix the plan directly from the failure message
+        tools=_PLANNER_TOOLS,
         output_schema=PlannerOutput,
     )
     return parse_planner_result(result["results"])

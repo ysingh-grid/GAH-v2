@@ -27,26 +27,39 @@ with workflow.unsafe.imports_passed_through():
     from runtime.replan import is_exhausted  # pure cap logic, shared with in-process loop
     from runtime.trace import category_for_stage  # pure stage -> failure-category map
     from temporal.activities import (
-        generate_activity,
+        compile_activity,
+        execute_activity,
+        inspect_activity,
         record_trace_activity,
+        render_activity,
+        repair_activity,
         replan_activity,
         verify_activity,
     )
     from temporal.shared import (
+        CompileInput,
         DesignInput,
         DesignResult,
         DesignStage,
-        GenerateInput,
+        ExecuteInput,
+        InspectInput,
+        RenderInput,
+        RepairInput,
         ReplanInput,
         TraceInput,
         VerifyInput,
     )
 
-# Per-stage timeouts. generate is the heavy one (CadQuery/OCCT + render); verify
-# is one Gemini multimodal call; replan is one no-tools Gemini turn.
-_GEN_TIMEOUT = timedelta(minutes=8)
+# Per-step timeouts. The old monolithic generate is now five activities; each is
+# small except execute (CadQuery/OCCT) and render (VTK). verify is one Gemini
+# multimodal call; replan is one full-tool Gemini turn.
+_COMPILE_TIMEOUT = timedelta(minutes=1)
+_EXECUTE_TIMEOUT = timedelta(minutes=6)
+_INSPECT_TIMEOUT = timedelta(minutes=2)
+_REPAIR_TIMEOUT = timedelta(minutes=3)
+_RENDER_TIMEOUT = timedelta(minutes=2)
 _VERIFY_TIMEOUT = timedelta(minutes=3)
-_REPLAN_TIMEOUT = timedelta(minutes=2)
+_REPLAN_TIMEOUT = timedelta(minutes=3)
 _TRACE_TIMEOUT = timedelta(seconds=30)
 
 # No Temporal-level retries: the workflow itself is the bounded retry loop. Letting
@@ -75,36 +88,97 @@ class DesignWorkflow:
     async def run(self, inp: DesignInput) -> DesignResult:
         plan_dict = inp.plan_dict
         feedback_log: list[str] = []   # verifier feedback accumulated across outer attempts
-        inner = 0                       # compile/execute/mesh/forge attempts (cap 5)
+        inner = 0                       # compile/execute/mesh attempts (cap 5)
         outer = 0                       # visual_mismatch attempts (cap 2)
 
         while True:
-            # ── GENERATE ──────────────────────────────────────────────────────
-            # compile CadQuery + .forge.js in parallel, execute, inspect, repair, render.
+            # ── GENERATE (split into per-step activities) ──────────────────────
+            # compile → execute → inspect → (repair?) → render. Each is its own
+            # Temporal activity → a distinct timeline event, repeated every loop.
+            # The STL flows between steps by file path on the shared ./outputs volume.
+            code = ""
+            execution_result: dict = {}
+            mesh_report: dict = {}
+            renders: dict = {}
+            stl_path = ""
+            failure_stage = ""
+            failure_detail = ""
+
             self._stage = DesignStage.GENERATING
-            gen = await workflow.execute_activity(
-                generate_activity,
-                GenerateInput(plan_dict=plan_dict, run_id=inp.run_id),
-                schedule_to_close_timeout=_GEN_TIMEOUT,
+            comp = await workflow.execute_activity(
+                compile_activity,
+                CompileInput(plan_dict=plan_dict, run_id=inp.run_id),
+                schedule_to_close_timeout=_COMPILE_TIMEOUT,
                 retry_policy=_NO_RETRY,
             )
+            code = comp.code
+            if not comp.ok:
+                failure_stage, failure_detail = comp.failure_stage, comp.failure_detail
 
-            failure_stage = "" if gen.ok else gen.failure_stage
-            failure_detail = "" if gen.ok else gen.failure_detail
+            if not failure_stage:
+                ex = await workflow.execute_activity(
+                    execute_activity,
+                    ExecuteInput(code=code, run_id=inp.run_id),
+                    schedule_to_close_timeout=_EXECUTE_TIMEOUT,
+                    retry_policy=_NO_RETRY,
+                )
+                execution_result = ex.execution_result
+                stl_path = ex.stl_path
+                if not ex.ok:
+                    failure_stage, failure_detail = ex.failure_stage, ex.failure_detail
+
+            if not failure_stage:
+                self._stage = DesignStage.INSPECTING
+                insp = await workflow.execute_activity(
+                    inspect_activity,
+                    InspectInput(stl_path=stl_path),
+                    schedule_to_close_timeout=_INSPECT_TIMEOUT,
+                    retry_policy=_NO_RETRY,
+                )
+                mesh_report = insp.mesh_report
+                if not insp.passes:
+                    # Only repair when inspect failed (mirrors the in-process loop).
+                    self._stage = DesignStage.REPAIRING
+                    rep_mesh = await workflow.execute_activity(
+                        repair_activity,
+                        RepairInput(stl_path=stl_path, run_id=inp.run_id),
+                        schedule_to_close_timeout=_REPAIR_TIMEOUT,
+                        retry_policy=_NO_RETRY,
+                    )
+                    if rep_mesh.mesh_report:
+                        mesh_report = rep_mesh.mesh_report
+                    if not rep_mesh.passes:
+                        failure_stage, failure_detail = rep_mesh.failure_stage, rep_mesh.failure_detail
+                    else:
+                        stl_path = rep_mesh.repaired_stl_path
+
+            if not failure_stage:
+                self._stage = DesignStage.GENERATING
+                rnd = await workflow.execute_activity(
+                    render_activity,
+                    RenderInput(stl_path=stl_path, run_id=inp.run_id),
+                    schedule_to_close_timeout=_RENDER_TIMEOUT,
+                    retry_policy=_NO_RETRY,
+                )
+                renders = rnd.renders
+                if not rnd.ok:
+                    failure_stage, failure_detail = rnd.failure_stage, rnd.failure_detail
+
+            geometry_ok = not failure_stage
             verdict: dict = {}
 
             # ── VERIFY ────────────────────────────────────────────────────────
             # Only runs if geometry was produced. A reject becomes a visual_mismatch.
-            if gen.ok:
+            if geometry_ok:
                 self._stage = DesignStage.VERIFYING
                 ver = await workflow.execute_activity(
                     verify_activity,
                     VerifyInput(
                         prompt=inp.original_prompt,
-                        code=gen.code,
-                        execution_result=gen.execution_result,
-                        mesh_report=gen.mesh_report,
-                        renders=gen.renders,
+                        code=code,
+                        execution_result=execution_result,
+                        mesh_report=mesh_report,
+                        renders=renders,
                         prior_feedback=list(feedback_log),
                     ),
                     schedule_to_close_timeout=_VERIFY_TIMEOUT,
@@ -119,11 +193,10 @@ class DesignWorkflow:
             # ── SUCCESS ───────────────────────────────────────────────────────
             if not failure_stage:
                 self._stage = DesignStage.DONE
-                await self._record(inp, plan_dict, gen, verdict,
-                                   status="success", attempts=inner + outer + 1)
+                await self._record(inp, plan_dict, code, execution_result, mesh_report,
+                                   renders, verdict, status="success", attempts=inner + outer + 1)
                 return DesignResult(
                     status="success",
-                    forge_js=gen.forge_js,
                     final_plan=plan_dict,
                     run_id=inp.run_id,
                 )
@@ -140,8 +213,8 @@ class DesignWorkflow:
             # ── EXHAUSTED: give up, tag the canonical failure category ────────
             if is_exhausted(failure_stage, attempt_for_stage):
                 self._stage = DesignStage.FAILED
-                await self._record(inp, plan_dict, gen, verdict,
-                                   status="failed", attempts=inner + outer,
+                await self._record(inp, plan_dict, code, execution_result, mesh_report,
+                                   renders, verdict, status="failed", attempts=inner + outer,
                                    failure_stage=failure_stage, failure_detail=failure_detail)
                 return DesignResult(
                     status="failed",
@@ -152,8 +225,9 @@ class DesignWorkflow:
                 )
 
             # ── REPLAN ────────────────────────────────────────────────────────
-            # No-tools replanner fixes the plan from the failure message, or asks the user.
-            self._stage = DesignStage.PLANNING
+            # Full-tool planner fixes the plan from the failure message, or asks the user.
+            # Distinct REPLANNING stage (not PLANNING) so the chat UI shows the loop-back.
+            self._stage = DesignStage.REPLANNING
             rep = await workflow.execute_activity(
                 replan_activity,
                 ReplanInput(
@@ -161,14 +235,15 @@ class DesignWorkflow:
                     last_plan_dict=plan_dict,
                     failure_stage=failure_stage,
                     detail=failure_detail,
+                    backend_url=inp.backend_url,
                 ),
                 schedule_to_close_timeout=_REPLAN_TIMEOUT,
                 retry_policy=_NO_RETRY,
             )
             if rep.action == "ask_user":
                 self._stage = DesignStage.NEEDS_USER
-                await self._record(inp, plan_dict, gen, verdict,
-                                   status="needs_user", attempts=inner + outer,
+                await self._record(inp, plan_dict, code, execution_result, mesh_report,
+                                   renders, verdict, status="needs_user", attempts=inner + outer,
                                    failure_stage=failure_stage, failure_detail=failure_detail)
                 return DesignResult(
                     status="needs_user",
@@ -182,7 +257,10 @@ class DesignWorkflow:
         self,
         inp: DesignInput,
         plan_dict: dict,
-        gen,  # GenerateOutput
+        code: str,
+        execution_result: dict,
+        mesh_report: dict,
+        renders: dict,
         verdict: dict,
         *,
         status: str,
@@ -190,17 +268,21 @@ class DesignWorkflow:
         failure_stage: str = "",
         failure_detail: str = "",
     ) -> None:
-        """Write the auditable trace for the final outcome (artifact-store record)."""
+        """Write the auditable trace for the final outcome (artifact-store record).
+
+        Takes the per-step artifacts directly (the split GENERATE no longer returns
+        a single GenerateOutput).
+        """
         await workflow.execute_activity(
             record_trace_activity,
             TraceInput(
                 run_id=inp.run_id,
                 prompt=inp.original_prompt,
                 plan_dict=plan_dict,
-                code=gen.code,
-                execution_result=gen.execution_result,
-                mesh_report=gen.mesh_report,
-                renders=gen.renders,
+                code=code,
+                execution_result=execution_result,
+                mesh_report=mesh_report,
+                renders=renders,
                 verdict=verdict,
                 status=status,
                 attempts=attempts,

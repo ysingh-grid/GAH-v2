@@ -22,13 +22,11 @@ class DesignStage:
     """
 
     PLANNING = "planning"      # planner turn (runs in backend before the workflow)
-    GENERATING = "generating"  # compile CadQuery + .forge.js IN PARALLEL, then
-                               # execute CadQuery -> solid + render. Both compilers
-                               # are deterministic from the same plan and mutually
-                               # independent, so they run concurrently in one stage.
+    GENERATING = "generating"  # compile CadQuery, execute -> solid + STL, inspect/repair.
     INSPECTING = "inspecting"  # MeshLib watertight / manifold check
     REPAIRING = "repairing"    # MeshLib repair (only when inspect fails)
     VERIFYING = "verifying"    # multimodal verify against intent
+    REPLANNING = "replanning"  # no-tools replanner fixing the plan after a failure (loop-back)
     DONE = "done"
     FAILED = "failed"
     NEEDS_USER = "needs_user"
@@ -50,7 +48,6 @@ class DesignResult:
     """Outcome returned by the DesignWorkflow to the workflow starter."""
 
     status: str  # "success" | "failed" | "needs_user"
-    forge_js: str = ""
     final_plan: dict[str, Any] = field(default_factory=dict)
     run_id: str = ""
     failure_category: str = ""
@@ -75,20 +72,99 @@ class GenerateInput:
 
 @dataclass
 class GenerateOutput:
-    """Result of one generate attempt (compile CQ+forge, execute, inspect, repair, render).
+    """Result of one generate attempt (compile CQ, execute, inspect, repair, render).
 
     On failure, `failure_stage` is one of: primitive_gap, cadquery_compile,
-    cadquery_execute, mesh_repair, forge_compile — each routes to the replanner.
+    cadquery_execute, mesh_repair — each routes to the replanner.
+
+    NOTE: superseded by the per-step activities below (compile/execute/inspect/
+    repair/render) so the Temporal timeline shows each step distinctly. Kept for the
+    in-process loop's GenerateOutput shape and back-compat; the workflow no longer
+    uses generate_activity.
     """
 
     ok: bool
     failure_stage: str = ""
     failure_detail: str = ""
     code: str = ""        # compiled CadQuery source
-    forge_js: str = ""    # compiled .forge.js (parallel with code)
     execution_result: dict[str, Any] = field(default_factory=dict)
     mesh_report: dict[str, Any] = field(default_factory=dict)
     renders: dict[str, Any] = field(default_factory=dict)
+
+
+# ── Per-step generate activities (the split of generate_activity) ────────────────
+# Each is ONE Temporal activity → one timeline event, repeated every replan loop.
+# Heavy artifacts (STL) are passed by FILE PATH on the shared ./outputs volume, so
+# the Temporal payloads stay small (just paths + metadata + the code string).
+
+
+@dataclass
+class CompileInput:
+    plan_dict: dict[str, Any]
+    run_id: str
+
+
+@dataclass
+class CompileOutput:
+    ok: bool
+    code: str = ""
+    failure_stage: str = ""   # primitive_gap | cadquery_compile
+    failure_detail: str = ""
+
+
+@dataclass
+class ExecuteInput:
+    code: str
+    run_id: str
+
+
+@dataclass
+class ExecuteOutput:
+    ok: bool
+    execution_result: dict[str, Any] = field(default_factory=dict)
+    stl_path: str = ""
+    failure_stage: str = ""   # cadquery_execute
+    failure_detail: str = ""
+
+
+@dataclass
+class InspectInput:
+    stl_path: str
+
+
+@dataclass
+class InspectOutput:
+    passes: bool
+    mesh_report: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RepairInput:
+    stl_path: str
+    run_id: str
+
+
+@dataclass
+class RepairOutput:
+    passes: bool
+    mesh_report: dict[str, Any] = field(default_factory=dict)
+    repaired_stl_path: str = ""
+    failure_stage: str = ""   # mesh_repair
+    failure_detail: str = ""
+
+
+@dataclass
+class RenderInput:
+    stl_path: str
+    run_id: str
+
+
+@dataclass
+class RenderOutput:
+    ok: bool
+    renders: dict[str, Any] = field(default_factory=dict)
+    failure_stage: str = ""   # cadquery_execute (render failure)
+    failure_detail: str = ""
 
 
 @dataclass
@@ -114,13 +190,14 @@ class VerifyOutput:
 
 @dataclass
 class ReplanInput:
-    """Input to replan_activity: the failure to fix + context for the no-tools replanner."""
+    """Input to replan_activity: the failure to fix + context for the full-tool replanner."""
 
     original_prompt: str
     last_plan_dict: dict[str, Any]
     failure_stage: str
     detail: str
     history: list[dict[str, str]] = field(default_factory=list)
+    backend_url: str = ""  # so the worker-side replanner's pull tools can reach the backend
 
 
 @dataclass

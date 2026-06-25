@@ -31,6 +31,7 @@
     inspecting: 'GENERATING',
     repairing:  'GENERATING',
     verifying:  'VERIFYING',
+    replanning: 'PLANNING',   // loop-back: bar returns to PLANNING; labeled below
     done:       'DONE',
   };
 
@@ -184,6 +185,12 @@
             advanceProgress(chip);
           } else {
             showProgress(chip);
+          }
+          // Replan maps onto the PLANNING chip (loop-back). Label it so the user
+          // sees a distinct "fixing geometry" step instead of an unexplained reset.
+          if (evt.stage === 'replanning') {
+            var pmsg = el('ga-prog-msg');
+            if (pmsg) pmsg.textContent = '↻ Replanning — fixing the geometry…';
           }
         }
         break;

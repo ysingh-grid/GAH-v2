@@ -1,13 +1,13 @@
 """Unified, stage-tagged re-entry into the planner (the single loop-back path).
 
-All four failure sources — cadquery_compile, cadquery_execute / mesh_repair
-(inner repair loop), forge_compile, and visual_mismatch (outer refine loop) —
-come back through `replan_with_feedback`. The failure stage selects which
-guidance skill the planner should read and which attempt cap applies; the
-planner then returns a revised PrimitivePlan or escalates to the user.
+All failure sources — primitive_gap, cadquery_compile, cadquery_execute,
+mesh_repair (inner repair loop), and visual_mismatch (outer refine loop) — come
+back through `replan_with_feedback`. The failure stage selects which guidance
+skill the planner should read and which attempt cap applies; the planner then
+returns a revised PrimitivePlan or escalates to the user.
 
-Bounds (Q8): inner stages max 3 attempts, outer (visual) max 5. The loop checks
-`is_exhausted` and, when a budget is spent, escalates rather than looping
+Bounds (Q8): inner (repair) stages max 5 attempts, outer (visual) max 2. The loop
+checks `is_exhausted` and, when a budget is spent, escalates rather than looping
 forever.
 """
 
@@ -27,7 +27,6 @@ STAGE_TO_SKILL: dict[str, str] = {
     "cadquery_compile": "repair_guidance",
     "cadquery_execute": "repair_guidance",
     "mesh_repair": "repair_guidance",
-    "forge_compile": "repair_guidance",
     "visual_mismatch": "refinement_guidance",
 }
 
@@ -37,7 +36,6 @@ _INNER_STAGES = {
     "cadquery_compile",
     "cadquery_execute",
     "mesh_repair",
-    "forge_compile",
 }
 INNER_CAP = 5
 OUTER_CAP = 2
@@ -52,7 +50,7 @@ class PlannerFn(Protocol):
 
 
 def cap_for_stage(stage: str) -> int:
-    """Return the attempt cap for a failure stage (inner=3, outer=5)."""
+    """Return the attempt cap for a failure stage (inner=5, outer=2)."""
     return INNER_CAP if stage in _INNER_STAGES else OUTER_CAP
 
 

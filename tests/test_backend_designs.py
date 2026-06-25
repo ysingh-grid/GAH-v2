@@ -65,8 +65,8 @@ def test_session_to_dict_fields():
     assert d["status"] == "chatting"
     assert d["original_prompt"] == ""
     assert d["history"] == []
-    assert d["forge_js"] is None
     assert d["run_id"] is None
+    assert "forge_js" not in d  # forge path removed in the scope reduction
 
 
 # ── HTTP route tests ──────────────────────────────────────────────────────────
@@ -174,11 +174,11 @@ def test_ws_history_grows_after_ask_user(client):
     assert "planner" in roles
 
 
-@patch("backend.designs.runner.compile_plan_to_forge", return_value="// forge js")
+@patch("backend.designs.runner.write_stl_to_studio", return_value=True)
 @patch("backend.designs.runner.run_geometry_loop")
 @patch("backend.designs.runner.run_planner_turn")
-def test_ws_plan_ready_success_flow(mock_planner, mock_loop, _mock_forge, client):
-    """plan_ready → loop success → success event with forge_js."""
+def test_ws_plan_ready_success_flow(mock_planner, mock_loop, mock_write_stl, client):
+    """plan_ready → loop success → success event (run_id + plan); STL pushed to Studio."""
     mock_planner.return_value = _plan_ready_output()
     mock_loop.return_value = _loop_result("success")
 
@@ -193,12 +193,13 @@ def test_ws_plan_ready_success_flow(mock_planner, mock_loop, _mock_forge, client
     assert "success" in types
 
     success_evt = next(e for e in events if e["type"] == "success")
-    assert success_evt["forge_js"] == "// forge js"
+    assert "forge_js" not in success_evt
+    assert success_evt["run_id"]
     assert "plan" in success_evt
 
     session = design_store.get_session(design_id)
     assert session.status == "done"
-    assert session.forge_js == "// forge js"
+    mock_write_stl.assert_called_once()  # STL copied into the Studio workspace
 
 
 @patch("backend.designs.runner.run_planner_turn")
@@ -254,7 +255,7 @@ def test_ws_plan_ready_runs_real_geometry_pipeline_with_mocked_models(mock_plann
     trace_path = Path("outputs") / run_id / "trace.json"
 
     try:
-        assert success_evt["forge_js"] is not None
+        assert success_evt["run_id"]
         assert success_evt["plan"]["part_name"] == "electronics_mounting_plate"
         assert trace_path.exists()
 

@@ -137,12 +137,17 @@ services:
       PYTHONUNBUFFERED: "1"
       TEMPORAL_HOST: "temporal:7233"
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
+      # The worker-side replanner's pull tools HTTP the backend; reach it by the
+      # compose service name, NOT localhost (which is the worker itself).
+      BACKEND_URL: "http://backend:8001"
     volumes:
       - ./artifacts:/app/artifacts
       - ./outputs:/app/outputs    # run artifacts (STL/STEP/renders/trace.json) persisted to host
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log
     depends_on:
       temporal:
+        condition: service_healthy
+      backend:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:

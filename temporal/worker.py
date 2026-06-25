@@ -16,8 +16,13 @@ import os
 from temporalio.worker import Worker
 
 from temporal.activities import (
+    compile_activity,
+    execute_activity,
     generate_activity,
+    inspect_activity,
     record_trace_activity,
+    render_activity,
+    repair_activity,
     replan_activity,
     verify_activity,
 )
@@ -40,6 +45,13 @@ async def main() -> None:
             task_queue=_TASK_QUEUE,
             workflows=[DesignWorkflow],
             activities=[
+                # Per-step generate activities (split): one timeline event each.
+                compile_activity,
+                execute_activity,
+                inspect_activity,
+                repair_activity,
+                render_activity,
+                # generate_activity kept registered (isolated) for back-compat / in-process parity.
                 generate_activity,
                 verify_activity,
                 replan_activity,

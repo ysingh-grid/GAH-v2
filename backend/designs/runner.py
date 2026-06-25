@@ -1,14 +1,14 @@
-"""Chat-turn orchestrator: planner → geometry loop → ForgeCAD compile.
+"""Chat-turn orchestrator: planner → geometry loop → Studio render.
 
 One async function (`run_chat_turn`) drives the full pipeline for a single user
-message. Blocking work (RLM call, geometry loop, ForgeCAD compile) is dispatched
-to a thread-pool executor so the event loop stays free for WS I/O.
+message. Blocking work (RLM call, geometry loop) is dispatched to a thread-pool
+executor so the event loop stays free for WS I/O.
 
 Event protocol (Server → Client, JSON):
   {"type": "thinking"}                            — planner is working
   {"type": "ask_user", "question", "options"}     — planner needs more info
   {"type": "generating", "stage"}                 — geometry loop running
-  {"type": "success", "forge_js", "run_id", "plan"} — part produced
+  {"type": "success", "run_id", "plan"}           — part produced; Studio renders STL
   {"type": "needs_user", "question", "options"}   — loop escalated to user
   {"type": "failed", "category", "message"}       — exhausted / permanent error
   {"type": "error", "message"}                    — unexpected exception
@@ -19,14 +19,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from backend.designs.models import DesignSession
-from runtime.compile_forge import compile_plan_to_forge
 from runtime.loop import LoopResult, run_geometry_loop
-from runtime.planner import PlannerOutput, run_planner_turn, run_replanner_turn
+from runtime.planner import PlannerOutput, run_planner_turn
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from tools.artifacts import new_run_id
 
@@ -44,23 +44,29 @@ _USE_TEMPORAL = bool(os.environ.get("TEMPORAL_HOST"))
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 
 
-def write_forge_js_to_studio(forge_js: str) -> bool:
-    """Persist forge_js to the ForgeCAD Studio workspace so the live-reload picks it up.
+def write_stl_to_studio(run_id: str) -> bool:
+    """Copy the best available STL into the ForgeCAD Studio workspace and
+    write a 1-line importMesh loader so Studio live-reloads the geometry.
 
-    Writes to artifacts/forgecad/main.forge.js — the file the forgecad-studio
-    container is watching via its Docker volume mount. The Studio automatically
-    re-renders on file change (no iframe reload needed on the client side).
-
+    Prefers solid_repaired.stl (mesh-repaired) over solid.stl if available.
+    Writes artifacts/forgecad/solid.stl + artifacts/forgecad/main.forge.js.
     Returns True on success, False if the write failed (non-fatal; logged only).
     """
+    from tools.artifacts import run_dir
+
+    base = run_dir(run_id)
+    repaired = base / "solid_repaired.stl"
+    original = base / "solid.stl"
+    stl_source = repaired if repaired.exists() else original
     try:
         _FORGECAD_WORKSPACE.mkdir(parents=True, exist_ok=True)
-        target = _FORGECAD_WORKSPACE / "main.forge.js"
-        target.write_text(forge_js, encoding="utf-8")
-        log.info("forge_js written to studio workspace: %s", target)
+        shutil.copy2(stl_source, _FORGECAD_WORKSPACE / "solid.stl")
+        stub = _FORGECAD_WORKSPACE / "main.forge.js"
+        stub.write_text('module.exports = importMesh("./solid.stl");\n', encoding="utf-8")
+        log.info("STL copied to studio workspace: %s", stl_source)
         return True
     except OSError as exc:
-        log.warning("Could not write forge_js to studio workspace: %s", exc)
+        log.warning("Could not write STL to studio workspace: %s", exc)
         return False
 
 
@@ -73,7 +79,7 @@ async def run_chat_turn(
 ) -> None:
     """Process one user message: planner turn, then optionally the geometry loop.
 
-    Mutates *session* in place (status, history, last_plan, forge_js, run_id).
+    Mutates *session* in place (status, history, last_plan, run_id).
     All events are emitted through *send*, which must be awaitable.
     """
     if not session.original_prompt:
@@ -154,7 +160,7 @@ async def _run_in_process(
         await send({"type": "error", "message": str(exc)})
         return
 
-    await _emit_loop_result(session, plan, result, run_id, send, ev_loop=ev_loop)
+    await _emit_loop_result(session, result, run_id, send)
 
 
 async def _run_via_temporal(
@@ -222,15 +228,11 @@ async def _run_via_temporal(
 
     # Map DesignResult dataclass → terminal WS event
     if result_dc.status == "success":
-        session.forge_js = result_dc.forge_js or None
         session.status = "done"
-        # Write to Studio workspace so ForgeCAD live-reloads the new part.
-        if result_dc.forge_js:
-            write_forge_js_to_studio(result_dc.forge_js)
+        write_stl_to_studio(run_id)
         await send(
             {
                 "type": "success",
-                "forge_js": result_dc.forge_js or None,
                 "run_id": run_id,
                 "plan": result_dc.final_plan,
             }
@@ -253,31 +255,17 @@ async def _run_via_temporal(
 
 async def _emit_loop_result(
     session: DesignSession,
-    plan: PrimitivePlan,
     result: LoopResult,
     run_id: str,
     send: SendFn,
-    *,
-    ev_loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Translate a LoopResult into WS events (in-process path)."""
-    library = load_library()
     if result.status == "success":
-        try:
-            forge_js: str | None = await ev_loop.run_in_executor(
-                None, lambda: compile_plan_to_forge(plan, library)
-            )
-        except Exception:
-            forge_js = None
-        session.forge_js = forge_js
         session.status = "done"
-        # Write to Studio workspace so ForgeCAD live-reloads the new part.
-        if forge_js:
-            write_forge_js_to_studio(forge_js)
+        write_stl_to_studio(run_id)
         await send(
             {
                 "type": "success",
-                "forge_js": forge_js,
                 "run_id": run_id,
                 "plan": result.final_plan,
             }
@@ -301,11 +289,13 @@ async def _emit_loop_result(
 def _make_planner_fn(backend_url: str) -> Callable[..., PlannerOutput]:
     """Return a PlannerFn closure for the geometry loop's replan path.
 
-    Uses run_replanner_turn (no tools, single REPL step) so replans never
-    hit the tool-cascade timeout that affects run_planner_turn.
+    Uses the FULL run_planner_turn (all pull tools + KB pre-inject), not the
+    stripped no-tools replanner, so a replan can re-consult primitives/KB to fix
+    wrong-primitive or wrong-approach errors — not just tweak dimensions. The
+    failure feedback arrives in `history` (appended by replan_with_feedback).
     """
 
     def _fn(original_prompt: str, history: list[dict[str, str]]) -> PlannerOutput:
-        return run_replanner_turn(original_prompt, history)
+        return run_planner_turn(original_prompt, history, backend_url=backend_url)
 
     return _fn
