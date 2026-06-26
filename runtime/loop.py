@@ -8,9 +8,6 @@ trace tagged with the 6-category taxonomy.
 
 The planner is dependency-injected (`planner_fn`) so the whole loop is testable
 with real geometry tools but no live RLM.
-
-Scope: compile_forge is intentionally not imported here. Forge JS output is
-written by backend/designs/runner.py after the loop completes (importMesh stub).
 """
 
 from __future__ import annotations
@@ -41,6 +38,7 @@ class LoopResult:
     failure_category: str | None = None
     message: str = ""
     question: str | None = None  # set when status == "needs_user"
+    forge_js: str = ""  # emit artifact, compiled in parallel during generate
 
 
 @dataclass
@@ -54,6 +52,7 @@ class _Artifacts:
     """Mutable bag of per-attempt artifacts collected for the trace."""
 
     code: str | None = None
+    forge_js: str | None = None  # .forge.js compiled in parallel with `code`
     execution_result: dict[str, Any] | None = None
     mesh_report: dict[str, Any] | None = None
     renders: dict[str, Any] | None = None
@@ -74,15 +73,10 @@ def _merge_metrics(execution_result: dict[str, Any], mesh_report: dict[str, Any]
         "num_components": mesh_report.get("num_components"),
     }
 
-
 def _compile_cadquery(
     plan: PrimitivePlan, library: dict[str, Any], art: _Artifacts
 ) -> _StageFailure | None:
-    """Compile plan to CadQuery Python script; routes failures back to replan.
-
-    forge JS compilation removed — Studio now renders the STEP file directly
-    via an importMesh stub written by backend/designs/runner.py after loop success.
-    """
+    """Compile plan to CadQuery Python script; routes failures back to replan."""
     try:
         art.code = compile_plan_to_cadquery(plan, library)
     except CompileError as exc:
@@ -181,6 +175,7 @@ def _finalize(
         failure_category=failure_category.value if failure_category else None,
         message=message,
         question=question,
+        forge_js=art.forge_js or "",
     )
 
 

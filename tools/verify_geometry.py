@@ -44,12 +44,28 @@ def verify_geometry(
                         break
 
     # Mock fallback when no real key is configured (keyless dev / e2e).
+        # No usable key. Two outcomes — NEVER a silent pass (PRD §11: 0 silent failures):
+    #   - dev/tests may OPT IN to a mock pass with GAH_ALLOW_MOCK_VERIFY=1
+    #   - otherwise fail closed, tagged verifier_ran=False so the loop categorises
+    #     it as verifier_miss (not a fake success, not a fake visual_mismatch).
     is_mock = not api_key or api_key == "your-key" or "YOUR" in api_key.upper()
     if is_mock:
+        if os.environ.get("GAH_ALLOW_MOCK_VERIFY") == "1":
+            return {
+                "passed": True,
+                "feedback": "[mock-verify] GAH_ALLOW_MOCK_VERIFY=1 — verification skipped (dev only).",
+                "render_png": render_png,
+                "verifier_ran": False,
+            }
         return {
-            "passed": True,
-            "feedback": "GEMINI_API_KEY not configured or placeholder. Mock verification passed.",
+            "passed": False,
+            "feedback": (
+                "[verifier-unavailable] GEMINI_API_KEY not configured. Refusing to "
+                "report success without verification (PRD §11). Set GEMINI_API_KEY, "
+                "or GAH_ALLOW_MOCK_VERIFY=1 for keyless dev runs."
+            ),
             "render_png": render_png,
+            "verifier_ran": False,
         }
 
     model = os.getenv("GEMINI_JUDGE_MODEL") or os.getenv("JUDGE_MODEL") or "gemini-3.1-pro-preview"

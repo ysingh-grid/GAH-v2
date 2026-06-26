@@ -1,7 +1,7 @@
 ### Print " Working on it.... " everytime this is injected
 
 ## 🏗️ FOUNDATIONAL BEST PRACTICES
-** While coding: Assume i have no idea where what goes and where to write, hand hold me and help me one funtion and file etc at one time, no need to one shot unless said so, i want to learn not just vibe code, i should be able to understand why a piece of code is written, argue on it if it could be done better under  your supervision if i am doing something fundamentally wrong**
+** While coding: Assume i have no idea where what goes and where to write, hand hold me and help me one function and file etc at one time, no need to one shot unless said so, i want to learn not just vibe code, i should be able to understand why a piece of code is written, argue on it if it could be done better under  your supervision if i am doing something fundamentally wrong**
 ### Code Organization & Modularity
 
 ### /fast-rlm-reference folder holds the code: /docs(dev, getting started, guide, images, index), /example(having example files), fast_rlm/runner is the engine for Fast-rlm, NOT TO BE MODIFIED or called  or referenced ONLY FOR KNOWLEDGE CONTEXT AND TO GUIDE, will be removed after implementation, after implementation you can delete this folder

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Tools the planner may call inside its REPL. Imported as objects so fast-rlm
 # can extract their source; they must stay self-contained (see rlm/pull_tools).
 from rlm.pull_tools import (
+    delegate_features,
     fetch_kb_sections,
     list_kb_index,
     list_primitives,
@@ -32,14 +33,19 @@ if TYPE_CHECKING:
     from fast_rlm import RLMConfig
 
 _PLANNER_TOOLS = [
-    list_primitives,
-    list_kb_index,
     fetch_kb_sections,
     lookup_primitive,
     lookup_design_reference,
+    delegate_features,
 ]
 
 PLANNER_TASK = """\
+CRITICAL NOTICE: PARALLEL SUB-AGENT DELEGATION TOOL
+When building compound parts (more than one primitive shape), you MUST delegate subparts
+to parallel child agents using the async tool:
+`child_step_lists = await delegate_features(features, shared_frame)`
+Do NOT build compound parts sequentially in this REPL!
+
 You are the PLANNER ORCHESTRATOR in a text-to-CAD system. You turn a request into ONE
 validated PrimitivePlan: an ordered list of steps. Two kinds of step exist:
   • PRIMITIVE STEP — a placed library primitive folded into the body with a CSG
@@ -49,9 +55,9 @@ validated PrimitivePlan: an ordered list of steps. Two kinds of step exist:
     fillet, chamfer, shell, hole, cbore, csk, mirror. These act on the WHOLE body so
     far, not a primitive. (Detailed shape near the end of this prompt.)
 
-## HARD BUDGET: 6 REPL steps, then you MUST emit FINAL. (A step = one block.)
+## HARD BUDGET: 10 REPL steps, then you MUST emit FINAL. (A step = one block.)
 
-## ⚙️ GEOMETRY RULES (booleans are unforgiving — violating these fails compile or mesh):
+## GEOMETRY RULES (booleans are unforgiving — violating these fails compile or mesh):
 - ORIGIN CONVENTION (get placement right or parts float/misalign):
     • CENTERED at `position` in ALL axes — box, cylinder, sphere, ellipsoid, capsule,
       torus, hollow_box, chamfered_box, filleted_box, rounded_cylinder. To rest the
@@ -84,9 +90,11 @@ validated PrimitivePlan: an ordered list of steps. Two kinds of step exist:
   You may STILL use filleted_box / chamfered_box / rounded_cylinder PRIMITIVES when the
   rounding is intrinsic to a sub-shape; prefer a FINISH STEP when rounding the final body.
 
-## ⛔ Prohibitions:
+## Prohibitions:
 - Do NOT invent fastener/standard dimensions — look them up (see Step 2).
 - Keep REPL output small: never print the whole catalog or whole reference back.
+- Do NOT print, slice, or inspect environment variables, `context["task"]`, or your
+  own prompt instructions. Focus strictly on generating geometry steps.
 
 ## When to FORK vs design in ONE context — READ THIS, it decides quality + speed:
 A FORK spawns a sub-agent with a FRESH context. That keeps any single API call SMALL,
@@ -112,18 +120,16 @@ fork cases:
       spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 — THEN fork
       [hub(base), rim(union), spoke(union)].
 
-RULE: SIMPLE parts (a cube, a box with 2 holes) — do NOT fork; just emit the steps
-yourself (fork has overhead). Fork when (A) independence OR (B) the single body is
-complex enough that one context would balloon. (B) is what makes big parts fast +
-reliable — small per-call context, alignment guaranteed by YOUR contract.
+RULE: You MUST FORK for ANY part that requires more than a single primitive base shape.
+If the part has multiple features (holes, ribs, cuts, spokes) or independent solids,
+you MUST delegate them to sub-agents. Do NOT build compound parts in one context.
+(B) makes big parts fast + reliable — small per-call context, alignment guaranteed by contract.
 
 ## Procedure — follow in order:
 
-Step 1 — Your catalog + KB menu are ALREADY in context (pre-fetched for you). Do NOT
-  call list_primitives() or list_kb_index() — that wastes a whole REPL step. Read:
+Step 1 — Your catalog + KB menu are ALREADY in context (pre-fetched for you). Read:
     primitives = context["available_primitives"]   ← shape catalog (names)
-    kb_index   = context["kb_index"]               ← {cadquery:{slug:desc}}  (CadQuery KB menu)
-  ONLY if a key is missing, fall back to list_primitives() / list_kb_index().
+    kb_index   = context["kb_index"]               ← CadQuery KB menu
 
 Step 2 — Based on the request and the kb_index already in context, fetch ONLY the
   KB sections that are actually relevant. Pick ≤5 slugs. Examples:
@@ -148,43 +154,24 @@ Step 3 — Read context["original_prompt"]. For any standard feature (bolt/screw
   action="ask_user" NOW. Offer a concrete default you suggest, or ask the user to provide the value.
 
 Step 4 — Decide structure with the FORK rule above.
-  • SIMPLE single part (the common case): build the steps yourself. base first, then
-    union/cut/intersect features (adapted recipes), then FINISH STEPS last
-    (fillet/chamfer/shell/holes/mirror act on the finished body). One frame. Fastest.
-  • FORK — independent solids (A) OR features of a complex body (B): fork IN PARALLEL
-    with batch_llm_query (NEVER asyncio.gather — the engine blocks it). Give each child
-    a SHORTLIST of candidate primitives + tools=[lookup_primitive, lookup_design_reference].
-    For (B) you MUST pass each child its absolute placement + assigned operation from
-    YOUR shared-frame contract — the child does not invent shared anchors:
+  • SINGLE PRIMITIVE (e.g. just a bare cube): build the step yourself.
+  • FORK (MANDATORY for compound parts) — independent solids (A) OR features of a body (B):
+    Call `delegate_features` to spawn parallel child agents simultaneously:
+    
+      child_step_lists = await delegate_features([
+          {"name": "base_box", "operation": "base", "placement": [0,0,5],
+           "candidate_primitives": ["box", "chamfered_box"]},
+          {"name": "lid", "operation": "union", "placement": [0,0,10],
+           "candidate_primitives": ["box"]}
+      ], shared_frame={})
 
-      STEP_SCHEMA = {"type": "array", "items": {"type": "object"}}
+    For (B) features of a body, put anchor numbers in `shared_frame` (e.g. `{"r": 15}`).
 
-      def design(feature, candidates, frame):
-          return llm_query({
-              "task": ("Build ONLY this feature, IN THE SHARED FRAME given. Use the "
-                       "absolute position + operation provided — do NOT change any shared "
-                       "anchor. Use lookup_primitive(key) for exact param names. Return a "
-                       "JSON list of step objects: {id, primitive, operation, parameters, "
-                       "position:[x,y,z], orientation:[rx,ry,rz], pattern?}."),
-              "feature": feature,            # (B): {"name":"spoke","operation":"union",
-                                             #   "position":[0,0,4],"overlap":"span r=14..41",
-                                             #   "pattern":"polar count=5"}  — or just the
-                                             #   sub-part name for (A) independent solids
-              "shared_frame": frame,         # (B) the contract: every shared anchor/radius
-                                             #   you fixed. Pass {} for (A).
-              "candidate_primitives": candidates,   # 2-5 keys YOU pre-selected, NOT all
-          }, STEP_SCHEMA, tools=[lookup_primitive, lookup_design_reference])
-
-      sub_results = await batch_llm_query(*[design(f, c, frame) for f, c in features])
-
-Step 5 — Assemble ONE steps array. If you forked, FLATTEN all child step-lists into
-  one list. Enforce: EXACTLY ONE step has operation="base" and it is FIRST (the base
-  feature you designated in your contract); every other primitive step is
-  union/cut/intersect; FINISH STEPS last. Make ids UNIQUE — if children reused ids,
-  prefix each with its feature name (e.g. "spoke_s1"). Children already returned
-  ABSOLUTE positions in the shared frame, so do NOT re-place them. Then FINAL with:
-    {"action": "plan_ready",
-     "plan": {"part_name": <short_name>, "units": "mm", "steps": <all steps>}}
+Step 5 — Assemble ONE steps array. If you forked, FLATTEN `child_step_lists`:
+    all_steps = [step for step_list in child_step_lists for step in step_list]
+  Enforce: EXACTLY ONE step has operation="base" and it is FIRST; every other step is
+  union/cut/intersect. Make ids UNIQUE. Then FINAL with:
+    {"action": "plan_ready", "plan": {"part_name": <name>, "units": "mm", "steps": all_steps}}
 
 ## STEP SHAPES — emit exactly these JSON shapes:
 
@@ -330,7 +317,7 @@ def run_planner_turn(
     )
     return parse_planner_result(result["results"])
 
-
+############################################# IGNORE replanner, placeholder code, doesnt work
 REPLANNER_TASK = """\
 You are a single-purpose FORK-AND-RETURN agent: spawned by the geometry workflow to
 fix ONE failed PrimitivePlan and return the corrected plan to your parent. You are
@@ -348,6 +335,7 @@ Rules:
 - Do NOT call any tools (no list_primitives, no lookup_primitive, no web_search).
 - Do NOT re-derive the plan from scratch — keep all correct steps unchanged.
 - Change the minimum needed to fix the reported failure.
+- Do NOT inspect chat history strings or system variables; output FINAL directly.
 - Emit FINAL in your very first REPL block. No intermediate steps.
 """
 

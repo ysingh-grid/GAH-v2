@@ -84,8 +84,8 @@ def read_skill(name: str) -> str:
     resp.raise_for_status()
     return resp.text
 
-
-def web_search(query: str) -> dict:
+# --- DISABLED WEB SEARCH TEMPORARILY ---
+def web_search(query: str) -> dict: 
     """Search the web for a real-world measurement or standard.
 
     PERMISSION-GATED: only callable after the USER has explicitly granted web
@@ -115,6 +115,7 @@ def web_search(query: str) -> dict:
     resp.raise_for_status()
     return resp.json()
 
+# --- DISABLED WEB SEARCH TEMPORARILY ---
 
 def list_kb_index() -> dict:
     """Return the compact index of what is available in both KBs.
@@ -200,3 +201,54 @@ def lookup_design_reference(query: str) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+async def delegate_features(features: list[dict], shared_frame: dict) -> list[list[dict]]:
+    """Delegate independent solids or body features to parallel child agents.
+
+    Call this tool when planning compound parts (e.g. box + lid, hub + spokes + rim).
+    It spawns parallel child sub-agents with clean context windows, runs them
+    simultaneously, and returns their generated CSG step lists.
+
+    Args:
+        features: List of feature specifications. Each dictionary should contain:
+                  - "name": str (e.g. "lid", "spoke")
+                  - "operation": str ("base", "union", "cut", or "intersect")
+                  - "placement": list[float] (absolute [x, y, z] position)
+                  - "candidate_primitives": list[str] (2-4 catalog keys to consider)
+                  - "notes": str (optional overlap or sizing details)
+        shared_frame: Dictionary defining shared skeleton dimensions (radii, planes,
+                      bolt circles) so child parts align correctly. Pass {} if parts
+                      are completely independent solids.
+
+    Returns:
+        A list of step-lists (one list of CSG step dicts per feature), in the exact
+        order requested. Flatten these into your main steps array.
+    """
+    _llm_query = globals()["llm_query"]
+    _batch_query = globals()["batch_llm_query"]
+    _lookup_prim = globals()["lookup_primitive"]
+    _lookup_ref = globals()["lookup_design_reference"]
+
+    step_schema = {"type": "array", "items": {"type": "object"}}
+    child_tools = [_lookup_prim, _lookup_ref]
+
+    queries = []
+    for feat in features:
+        q_context = {
+            "task": (
+                "Build ONLY this feature/solid IN THE SHARED FRAME given. Use the "
+                "absolute position + operation provided — do NOT change any shared "
+                "anchor. Use lookup_primitive(key) for exact param names. Return a "
+                "JSON list of step objects: {id, primitive, operation, parameters, "
+                "position:[x,y,z], orientation:[rx,ry,rz], pattern?}."
+            ),
+            "feature": feat,
+            "shared_frame": shared_frame,
+            "candidate_primitives": feat.get("candidate_primitives", []),
+        }
+        queries.append(_llm_query(q_context, step_schema, tools=child_tools))
+
+    results = await _batch_query(*queries)
+    return list(results)
+
