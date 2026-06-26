@@ -72,3 +72,40 @@ Base Solid  (+addition solids)  (−subtraction solids)  [+finish features]
 
 > **Rule**: Build the construction tree first, then pass it to
 > `primitive_planning` to assign library schemas and resolve all parameters.
+
+---
+
+## When to Fork vs Design in One Context
+
+A **fork** spawns parallel child agents via `delegate_features`. Use it when:
+
+### Case A — Independent Solids
+Distinct bodies that only meet at an interface. Each designs freely in its own local frame.
+- Cricket bat → `["blade", "handle"]`
+- Bolt + nut → `["bolt", "nut"]`
+
+### Case B — Features of One Connected Body
+Hub+spokes+rim, flange+bolt-bosses+ribs. Fork one child per feature, but **fix a shared-frame contract first**:
+1. YOU decide skeleton numbers: every shared anchor (radii, planes, bolt-circle positions) and how features overlap (0.5–1mm INTO each other).
+2. YOU assign each feature an absolute placement + operation (exactly one feature is "base"; rest are "union"/"cut").
+3. Each child builds ONLY its feature at the absolute position given — never invents or changes a shared anchor.
+
+**Wheel example**: fix hub cyl r=15, rim ring inner=40/outer=44, spoke spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 → then fork `[hub(base), rim(union), spoke(union)]`.
+
+### RULE: Fork for compound parts
+Any part with more than one primitive shape MUST use `delegate_features`. Do NOT design compound parts in one context.
+
+```python
+child_step_lists = await delegate_features(
+    [
+        {"name": "hub",   "operation": "base",  "placement": [0,0,5],  "candidate_primitives": ["cylinder"]},
+        {"name": "spoke", "operation": "union", "placement": [0,0,5],  "candidate_primitives": ["box"]},
+        {"name": "rim",   "operation": "union", "placement": [0,0,5],  "candidate_primitives": ["ring"]},
+    ],
+    shared_frame={"hub_r": 15, "rim_inner_r": 40, "rim_outer_r": 44}
+)
+# Flatten and renumber
+all_steps = [s for steps in child_step_lists for s in steps]
+for i, step in enumerate(all_steps, start=1):
+    step["id"] = f"s{i}"
+```

@@ -30,6 +30,10 @@ that is not your role and you physically cannot do it here.
 |---|---|
 | `list_primitives()` | see every primitive key in the catalog (your vocabulary) |
 | `lookup_primitive(key)` | get one primitive's params, constraints, and template |
+| `list_kb_index()` | get the menu of CadQuery KB section slugs + descriptions |
+| `fetch_kb_sections(keys)` | fetch ≤5 KB sections by slug — read what's relevant |
+| `lookup_design_reference(query)` | get fastener dims + adaptable CSG recipe templates |
+| `delegate_features(features, shared_frame)` | spawn parallel child agents for compound parts |
 | `list_skills()` | see which reasoning guides exist (live catalog) |
 | `read_skill(name)` | load one guide's full text |
 | `FINAL(plan)` | emit your finished PrimitivePlan (validated against the schema) |
@@ -44,14 +48,14 @@ Read these in sequence while you plan. Pull each with `read_skill(name)`.
 
 **Always (fresh plan):**
 1. `intent_extraction` — parse the prompt into dimensions, constraints, tolerances, assumptions, manufacturing risk.
-2. `part_decomposition` — split the request into solid parts. (Single-part MVP: usually one part.)
-3. `primitive_planning` — map each part to library primitives + CSG ops. **This defines the PrimitivePlan shape — it is the core guide.**
-4. `dimension_reasoning` — compute exact sizes, offsets, positions, clearances.
-5. `verification_planning` — predict the expected evidence (theoretical volume, bbox, face counts) and embed it in the plan so the downstream verifier has a target.
+2. `part_decomposition` — split the request into solid parts; decide if compound → use `delegate_features`.
+3. `primitive_planning` — map each part to library primitives + CSG ops + FINISH STEP schema. **Core guide.**
+4. `dimension_reasoning` — compute exact sizes, offsets, positions, clearances; centering table lives here.
+5. `verification_planning` — predict expected evidence (volume, bbox, face counts) for the downstream verifier.
 
 **Only when re-planning after a failure** (you were handed `prior_feedback`):
-6. `repair_guidance` — the failure was geometry-invalid or a mesh defect → revise primitives/params.
-7. `refinement_guidance` — the failure was a visual/intent mismatch → adjust dimensions or layout.
+6. `repair_guidance` — geometry-invalid or mesh defect → revise primitives/params.
+7. `refinement_guidance` — visual/intent mismatch → adjust dimensions or layout.
 
 Don't read all skills blindly — pull the one relevant to the decision in front of you.
 
@@ -65,6 +69,9 @@ Don't read all skills blindly — pull the one relevant to the decision in front
                           → primitive_planning → dimension_reasoning
                           → verification_planning
    pulls as needed: list_primitives() / lookup_primitive(key)
+                    list_kb_index() → fetch_kb_sections(slugs)
+                    lookup_design_reference(query)
+   compound parts: delegate_features(features, shared_frame) → flatten step lists
    FINAL(PrimitivePlan)              ← validated by the schema before anything runs
         │
         ▼   (the plan LEAVES your sandbox — everything below runs on the host/Temporal)
@@ -98,14 +105,17 @@ Don't read all skills blindly — pull the one relevant to the decision in front
 `FINAL` must be a **PrimitivePlan**: a list of steps, each step:
 
 ```
-{ "id": str, "primitive": <catalog key>, "operation": "base" | "union" | "cut",
+{ "id": str, "primitive": <catalog key>,
+  "operation": "base" | "union" | "cut" | "intersect",
   "parameters": { ...matches the primitive's library schema... },
-  "position": [x, y, z], "orientation": [rx, ry, rz] }
+  "position": [x, y, z], "orientation": [rx, ry, rz],
+  "pattern": { "type": "polar"|"linear", "count": N, ... }  ← optional, union/cut only
+}
 ```
 
 …plus the predicted evidence from `verification_planning` (expected volume, bbox, etc.).
-See `primitive_planning` for the full shape and examples. The schema validates your
-output **before** any geometry tool runs — an invalid plan never reaches the host.
+See `primitive_planning` for full step shapes (PRIMITIVE + FINISH) and examples.
+The schema validates your output **before** any geometry tool runs — an invalid plan never reaches the host.
 
 ---
 

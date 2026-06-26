@@ -72,3 +72,33 @@ Each step in a plan must contain:
 
 > **Critical**: Position offsets must correctly stack primitives to avoid
 > overlaps or gaps. Apply `dimension_reasoning` rules when computing `position`.
+
+---
+
+## FINISH STEP Schema
+
+Finish steps act on the **whole accumulated body** (not a new primitive). Place them after all CSG steps.
+
+```json
+{ "id": "f1", "op": "<finish_op>", "selector": "<edge/face>", "value": <number|list>,
+  "positions": [[x,y],...], "face": ">Z" }
+```
+
+| `op` | What it does | Required fields |
+|---|---|---|
+| `fillet` | Round edges | `selector`, `value` (radius mm) |
+| `chamfer` | Bevel edges | `selector`, `value` (length mm) |
+| `shell` | Hollow body (open one face) | `selector` (face to open), `value` (wall thickness mm) |
+| `hole` | Drill simple holes at (x,y) points on a face | `face`, `value` (diameter mm), `positions` |
+| `cbore` | Counterbored holes | `face`, `value` [clr_dia, bore_dia, bore_depth], `positions` |
+| `csk` | Countersunk holes | `face`, `value` [clr_dia, csk_dia, csk_angle_deg], `positions` |
+| `mirror` | Mirror body about a plane | `selector` ("XY"/"XZ"/"YZ") |
+
+**CadQuery selector cheatsheet:**
+- `">Z"` — top face (highest Z)
+- `"<Z"` — bottom face
+- `"|Z"` — all Z-parallel edges (verticals)
+- `"%Circle"` — all circular edges
+- `">Z[-2]"` — second-from-top face
+
+Wrong selectors silently no-op on fillet/chamfer (they're skipped, not errors). Pick the obvious one.

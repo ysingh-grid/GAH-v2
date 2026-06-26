@@ -68,8 +68,9 @@ def list_skills() -> list[str]:
 def read_skill(name: str) -> str:
     """Return the full markdown text of one skill guide.
 
-    Call after list_skills (or with a name from the playbook) to read a guide's
-    reasoning instructions into your working context.
+    ALWAYS call read_skill('playbook') as your FIRST action — it contains your
+    operating instructions, tool list, skill read order, and output contract.
+    After reading the playbook, follow its skill read order for subsequent reads.
     """
     import os
 

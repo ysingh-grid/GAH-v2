@@ -26,24 +26,34 @@ primitives **before** writing CadQuery code. This is integrated into
 
 ## Rule 1 — Center Points & Alignment
 
-- CadQuery primitives (`box`, `cylinder`) are **centered at the workplane origin** by default.
-- A cylinder of height `H` spans `z = -H/2` to `z = +H/2`.
-- To sit a cylinder **on top of** a base flange of height `B` (centered at `z=0`):
+Primitives place their geometry relative to `position` in one of two ways:
 
-  ```
-  cylinder_center_z = B/2 + H_cylinder/2
-  ```
+| Convention | Primitives | Notes |
+|---|---|---|
+| **CENTERED** at `position` (all axes) | `box`, `cylinder`, `sphere`, `ellipsoid`, `capsule`, `torus`, `hollow_box`, `chamfered_box`, `filleted_box`, `rounded_cylinder` | To rest flat on XY plane (base at z=0): `position.z = height/2` |
+| **BASE at `position`** (extrudes UP) | `ring`, `prism`, `hexagon_prism`, `octagonal_prism`, `hollow_cylinder`, `cone`, `pyramid`, `profile_extrude`, `revolve` | `position.z = 0` sits these on the plane |
 
+Unsure for a specific primitive? Call `lookup_primitive(key)` and read its description before placing.
+
+- A CENTERED cylinder of height `H` spans `z = position.z - H/2` to `z = position.z + H/2`.
+- To sit a cylinder **on top of** a base of height `B` (centered at `z=0`):
+  `cylinder_center_z = B/2 + H_cylinder/2`
 - **Always track half-heights and half-lengths** to align faces flush.
 
 ## Rule 2 — Interference & Clearance Fits
 
-- **Through-holes**: Make the cutter `H + 2mm` tall and offset by `1mm` outward
-  to avoid zero-thickness skins (non-manifold errors).
-- **Clearance fit**: If a shaft of diameter `D` fits into a hole, the hole
-  diameter = `D + clearance` (typically `0.2mm` to `0.5mm`).
-- **Union overlap**: Primitives being fused must overlap by **at least 0.1mm**
-  — never place them perfectly flush (→ non-manifold).
+- **Through-holes (cut)**: The cut primitive is CENTERED, so to pierce a body spanning
+  `z=0..T` set `position.z = T/2` and `height = T + 1` (spans −0.5 to T+0.5).
+  Never leave a paper-thin film — cuts must pass fully through.
+- **Clearance fit**: Shaft of diameter `D` → hole diameter = `D + clearance` (0.2–0.5mm typical).
+- **Union overlap**: Features being fused must extend **0.5–1mm INTO** the body they join.
+  A feature that only touches (tangent/coincident face) does NOT fuse → disconnected components → mesh fails.
+- **ONE connected solid**: After all unions the part must be a single connected body.
+  Every union feature must overlap something already attached. Verify by tracing the overlap chain.
+- **Intersect semantics**: `intersect` keeps only the boolean AND (shared volume) of the primitive
+  and the accumulated body. The intersecting primitive must actually overlap the body or the result
+  is an empty solid → mesh fails. Use intersect to carve a body to a shared region
+  (e.g. box ∩ sphere = domed top, cylinder ∩ box = D-profile).
 
 ## Rule 3 — Derived Parameters
 

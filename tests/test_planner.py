@@ -79,7 +79,7 @@ def test_build_planner_query_shape():
     q = build_planner_query("make a 60mm cube", [{"role": "user", "content": "hi"}])
     assert q["original_prompt"] == "make a 60mm cube"
     assert q["chat_history"][0]["content"] == "hi"
-    assert "PLANNER" in q["task"]
+    assert q["task"] == "make a 60mm cube"
 
 
 # ── live turn (opt-in) ───────────────────────────────────────────────────────
