@@ -66,7 +66,7 @@ def list_skills() -> list[str]:
 
 
 def read_skill(name: str) -> str:
-    """Return the full markdown text of one skill guide.
+    """Load one skill guide into REPL memory `_SKILLS[name]` (and `context['skills'][name]`).
 
     ALWAYS call read_skill('playbook') as your FIRST action — it contains your
     operating instructions, tool list, skill read order, and output contract.
@@ -83,7 +83,21 @@ def read_skill(name: str) -> str:
         timeout=10,
     )
     resp.raise_for_status()
-    return resp.text
+    text = resp.text
+
+    g = globals()
+    if "_SKILLS" not in g:
+        g["_SKILLS"] = {}
+    g["_SKILLS"][name] = text
+    if "context" in g and isinstance(g["context"], dict):
+        g["context"].setdefault("skills", {})[name] = text
+
+    return (
+        f"[MEMORY_LOADED] Skill '{name}' ({len(text)} chars) stored in "
+        f"`_SKILLS['{name}']` (and `context['skills']['{name}']`). "
+        "Do NOT print. Query or slice in Python."
+    )
+
 
 # --- DISABLED WEB SEARCH TEMPORARILY ---
 def web_search(query: str) -> dict: 
@@ -117,6 +131,7 @@ def web_search(query: str) -> dict:
     return resp.json()
 
 # --- DISABLED WEB SEARCH TEMPORARILY ---
+
 
 def list_kb_index() -> dict:
     """Return the compact index of what is available in both KBs.
@@ -158,7 +173,7 @@ def fetch_kb_sections(keys: list[str]) -> dict:
               Fetch ≤5 sections to keep token cost bounded.
 
     Returns:
-        {slug: content_snippet} for each found key. Missing keys are omitted.
+        {slug: memory_handle} pointing to stored content in `_KB[slug]`.
     """
     import os
 
@@ -171,24 +186,32 @@ def fetch_kb_sections(keys: list[str]) -> dict:
         timeout=10,
     )
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+
+    g = globals()
+    if "_KB" not in g:
+        g["_KB"] = {}
+    if "context" in g and isinstance(g["context"], dict):
+        g["context"].setdefault("kb_cache", {})
+
+    handles = {}
+    for k, content in data.items():
+        g["_KB"][k] = content
+        if "context" in g and isinstance(g["context"], dict):
+            g["context"]["kb_cache"][k] = content
+        handles[k] = f"[MEMORY_LOADED] {len(content)} chars stored in `_KB['{k}']`"
+
+    return handles
 
 
 def lookup_design_reference(query: str) -> dict:
     """Look up standard dimensions + adaptable CSG recipes for a design task.
 
-    Call this BEFORE inventing geometry or web-searching. It returns, compactly:
-      - "fastener_dims": metric clearance / tap / counterbore tables (mm). Use
-        these for any bolt/screw hole instead of guessing a diameter.
-      - "recipes": a few known-good step templates (e.g. through_hole,
-        counterbored_hole, bolt_circle, rib, mounting_plate) matched to your
-        query. Each recipe's "steps" are PrimitivePlan fragments with <...>
-        placeholders — ADAPT them (fill real mm values + positions) and inline
-        them into your own steps. Recipes use only real library primitives, so an
-        adapted recipe needs no special handling.
+    Call this BEFORE inventing geometry or web-searching. It stores in REPL memory:
+      - `_REF['fastener_dims']` (metric clearance tables)
+      - `_REF['recipes']` (adaptable CSG step templates)
 
-    Returns {"fastener_dims": {...}, "recipes": {name: {description, steps, ...}}}.
-    Grounding a plan in a retrieved recipe beats composing CSG from scratch.
+    Returns dict of memory pointers. Query `_REF['recipes']` or `_REF['fastener_dims']` in Python.
     """
     import os
 
@@ -201,7 +224,28 @@ def lookup_design_reference(query: str) -> dict:
         timeout=10,
     )
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+
+    g = globals()
+    if "_REF" not in g:
+        g["_REF"] = {}
+    if "context" in g and isinstance(g["context"], dict):
+        g["context"].setdefault("design_ref", {})
+
+    handles = {}
+    for k, val in data.items():
+        g["_REF"][k] = val
+        if "context" in g and isinstance(g["context"], dict):
+            g["context"]["design_ref"][k] = val
+        if isinstance(val, dict):
+            summary = f"{len(val)} keys: {list(val.keys())[:5]}"
+        elif isinstance(val, list):
+            summary = f"{len(val)} items"
+        else:
+            summary = f"{type(val).__name__}"
+        handles[k] = f"[MEMORY_LOADED] stored in `_REF['{k}']` ({summary})"
+
+    return handles
 
 
 async def delegate_features(features: list[dict], shared_frame: dict) -> list[list[dict]]:

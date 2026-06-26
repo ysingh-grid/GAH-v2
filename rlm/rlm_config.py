@@ -27,7 +27,7 @@ config.sub_agent = "gemini-3.5-flash"
 # NOTE: this is NOT the token-balloon guard — max_depth=1 is (it stops the recursive
 # grandchild fan-out). With depth capped, only ~6 agents exist, so a higher step cap
 # does not re-balloon the cumulative token budget.
-config.max_calls_per_subagent = 12
+config.max_calls_per_subagent = 50
 # max_prompt_tokens is a CUMULATIVE budget across all LLM calls in one run
 # (not a per-call context limit). The fast-rlm default (200k) was calibrated
 # for GPT-4 class models. Gemini Flash has a 1M token context window; our
@@ -35,7 +35,7 @@ config.max_calls_per_subagent = 12
 # 6 REPL steps (system prompt × N + growing history + skill reads + web search
 # answers). Raising to 400k gives comfortable headroom without approaching the
 # model's actual window limit.
-config.max_prompt_tokens = 400_000
+config.max_prompt_tokens = 1_000_000
 # truncate_len controls how many chars of REPL stdout the engine shows back to
 # the model after each execution step. The default (2000) is too short for our
 # skills (playbook.md is 5,353 chars). When truncated, the model compensates by
