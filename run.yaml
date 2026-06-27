@@ -1,0 +1,64 @@
+# ==============================================================================
+# ForgeCAD v4 — Run Configuration (run.yaml)
+# ==============================================================================
+# v4 model: the agent drives its OWN stateful build->verify loop and self-governs
+# termination. There is NO host-side retry count anymore. Stopping is bounded by
+# the fast-rlm NATIVE budgets below + the in-agent termination contract (core.md).
+
+# --- (1) Model -----------------------------------------------------------------
+# TIP: set these to the LATEST, most-capable Gemini model — design taste, spatial/orientation
+# reasoning, and operation-selection all improve with a stronger model. Verify the exact current
+# model name on Google's model list (e.g. a newer gemini-2.5/3.x tier) before changing; an invalid
+# name breaks every run. The same model is also used host-side for the vision brief + design critic.
+primary_agent:          gemini-3.5-flash     # root agent (the assembler / planner)
+sub_agent:              gemini-3.5-flash    # per-part children (only used if it recurses)
+# model_base_url:       https://...        # override API base URL for non-Gemini providers
+
+# --- (2) Budgets = the HARD termination ceiling (replaces max_repair_attempts) --
+max_depth:              1                  # root + ONE level of children (NOT "root only" — the
+                                           #   engine blocks recursion at depth >= max_depth, so 1
+                                           #   permits the root to spawn depth-1 children and stops
+                                           #   them recursing further). This ENABLES parallel
+                                           #   strategy exploration: the root fans out 2-3 children
+                                           #   via batch_llm_query, each GRANTED the geometry_kernel
+                                           #   + host_tools MCP (so they self-verify — the old
+                                           #   unreliability was missing MCP, now fixed) and each
+                                           #   self-verifies; the root picks the best with
+                                           #   select_best_candidate. Cost is bounded by
+                                           #   max_global_calls + max_money_spent below.
+max_calls_per_subagent: 64                 # ~14-18 build/verify iterations per agent before force-stop.
+                                           #   Raised 50->64: a MONOLITHIC single_solid (impeller/
+                                           #   turbine/gear) legitimately needs more build steps than
+                                           #   an assembly — test the core, cut the bore, prove ONE
+                                           #   feature, prove the radial pattern-fuse, then refine —
+                                           #   and the now-surfaced twisted_loft + radial-fuse recipe
+                                           #   means those steps BUILD instead of being spent guessing.
+                                           #   Still bounded by max_global_calls + max_money_spent below.
+max_global_calls:       150                 # whole-run ceiling across root + every child (bounds the tree)
+truncate_len:           1500               # REPL output chars shown per step
+max_money_spent:        1.00               # hard USD cap (OpenRouter-style backends)
+max_completion_tokens:  150000             # cumulative completion-token cap
+max_prompt_tokens:      3000000            # cumulative prompt-token cap (long KB lookups add up)
+api_max_retries:                           # blank = fast-rlm default (3)
+api_timeout_ms:         120000
+
+# --- (3) Ablation / optimization ----------------------------------------------
+enable_tools:                              # blank = default (true)
+enable_structured_io:                      # blank = default (true)
+enable_compression_guard: true             # one compression review when a delegated context is large
+compression_min_chars:  3000
+compression_ratio:      0.6
+
+# --- (4) Generation params ----------------------------------------------------
+temperature:            0.1
+seed:                                      # set an int for reproducible runs
+
+# --- (5) Orchestrator flags ---------------------------------------------------
+skill:                  skills/core.md
+schema:                 schemas/geometry_plan.py
+clarify:                true               # dedicated requirement-gathering pass before planning
+# prefix:               run1
+# verbose:              true
+# REMOVED in v4 (these were host-side bandages; the agent now owns repair in-loop):
+#   max_repair_attempts
+#   max_validation_repair_attempts
