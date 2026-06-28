@@ -19,7 +19,11 @@ Timeouts and retry policy live on the workflow side, not here.
 
 from __future__ import annotations
 
+import logging
+
 from temporalio import activity
+
+logger = logging.getLogger(__name__)
 
 # Pure single-attempt helpers shared with the in-process loop (runtime is the
 # canonical, Temporal-free home of stage logic; temporal/ depends on runtime/).
@@ -189,24 +193,38 @@ def replan_activity(inp: ReplanInput) -> ReplanOutput:
     """
     import os
 
-    last_plan = PrimitivePlan.model_validate(inp.last_plan_dict)
-    backend_url = os.environ.get("BACKEND_URL") or inp.backend_url
+    try:
+        last_plan = PrimitivePlan.model_validate(inp.last_plan_dict)
+        backend_url = os.environ.get("BACKEND_URL") or inp.backend_url
 
-    def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
-        return run_planner_turn(original_prompt, history, backend_url=backend_url)
+        def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
+            return run_planner_turn(original_prompt, history, backend_url=backend_url)
 
-    out = replan_with_feedback(
-        original_prompt=inp.original_prompt,
-        last_plan=last_plan,
-        failure_stage=inp.failure_stage,
-        detail=inp.detail,
-        prior_history=inp.history,
-        planner_fn=planner_fn,
-    )
+        out = replan_with_feedback(
+            original_prompt=inp.original_prompt,
+            last_plan=last_plan,
+            failure_stage=inp.failure_stage,
+            detail=inp.detail,
+            prior_history=inp.history,
+            planner_fn=planner_fn,
+        )
 
-    if out.action == "ask_user":
-        return ReplanOutput(action="ask_user", question=out.question or "")
-    return ReplanOutput(action="plan_ready", plan_dict=plan_to_dict(out.plan))
+        if out.action == "ask_user":
+            return ReplanOutput(action="ask_user", question=out.question or "")
+        return ReplanOutput(action="plan_ready", plan_dict=plan_to_dict(out.plan))
+    except Exception:
+        # CONTAINMENT: run_planner_turn already returns gracefully (Phase 1), but
+        # replan_with_feedback or plan_to_dict can still raise. Never let an
+        # uncaught exception here crash the Temporal workflow — return ask_user so
+        # the workflow surfaces a clean needs_user result instead of dying.
+        logger.exception("replan_activity failed; returning ask_user fallback")
+        return ReplanOutput(
+            action="ask_user",
+            question=(
+                "I hit an internal error while trying to fix the plan. "
+                "Could you restate or simplify your request?"
+            ),
+        )
 
 
 @activity.defn

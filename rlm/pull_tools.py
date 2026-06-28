@@ -11,21 +11,25 @@ def list_primitives() -> list[str]:
     """Return the keys of every primitive in the catalog.
 
     Tool the RLM calls to discover what shapes it's allowed to plan with.
-    """
-    """
-    INFO !!!!! :os.environ["DTCM_BACKEND_URL"] — the backend's address is injected via
- fast-rlm's env_variables, not hardcoded. Sandbox can't guess 127.0.0.1:8001;
-  we hand it in. Bracket access (not .get) so a missing var fails loud.
+    DTCM_BACKEND_URL is injected via fast-rlm's env_variables, not hardcoded.
     """
     import os
-
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(f"{base}/internal/list-primitives", timeout=10)
-
-    resp.raise_for_status()
-    return list(resp.json().keys())
+    url = f"{base}/internal/list-primitives"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return list(resp.json().keys())
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"list_primitives: backend unreachable at {url!r} ({_e}). "
+                "Check DTCM_BACKEND_URL."
+            ) from None
 
 
 def lookup_primitive(key: str) -> dict:
@@ -35,17 +39,21 @@ def lookup_primitive(key: str) -> dict:
     parameter names and constraints to fill the plan correctly.
     """
     import os
-
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(
-        f"{base}/internal/lookup-primitive",
-        params={"key": key},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    url = f"{base}/internal/lookup-primitive"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, params={"key": key}, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"lookup_primitive({key!r}): backend unreachable at {url!r} ({_e})."
+            ) from None
 
 
 def list_skills() -> list[str]:
@@ -56,13 +64,21 @@ def list_skills() -> list[str]:
     even before the playbook mentions them.
     """
     import os
-
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(f"{base}/internal/list-skills", timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    url = f"{base}/internal/list-skills"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"list_skills: backend unreachable at {url!r} ({_e})."
+            ) from None
 
 
 def read_skill(name: str) -> str:
@@ -73,17 +89,22 @@ def read_skill(name: str) -> str:
     After reading the playbook, follow its skill read order for subsequent reads.
     """
     import os
-
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(
-        f"{base}/internal/read-skill",
-        params={"name": name},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    text = resp.text
+    url = f"{base}/internal/read-skill"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, params={"name": name}, timeout=10)
+            resp.raise_for_status()
+            text = resp.text
+            break
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"read_skill({name!r}): backend unreachable at {url!r} ({_e})."
+            ) from None
 
     g = globals()
     if "_SKILLS" not in g:
@@ -151,13 +172,21 @@ def list_kb_index() -> dict:
         }
     """
     import os
-
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(f"{base}/internal/kb-index", timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    url = f"{base}/internal/kb-index"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"list_kb_index: backend unreachable at {url!r} ({_e})."
+            ) from None
 
 
 def fetch_kb_sections(keys: list[str]) -> dict:
@@ -180,13 +209,19 @@ def fetch_kb_sections(keys: list[str]) -> dict:
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(
-        f"{base}/internal/kb-fetch",
-        params={"keys": ",".join(keys)},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    url = f"{base}/internal/kb-fetch"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, params={"keys": ",".join(keys)}, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"fetch_kb_sections({keys!r}): backend unreachable at {url!r} ({_e})."
+            ) from None
 
     g = globals()
     if "_KB" not in g:
@@ -218,13 +253,19 @@ def lookup_design_reference(query: str) -> dict:
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    resp = requests.get(
-        f"{base}/internal/design-reference",
-        params={"q": query},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    url = f"{base}/internal/design-reference"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, params={"q": query}, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"lookup_design_reference({query!r}): backend unreachable at {url!r} ({_e})."
+            ) from None
 
     g = globals()
     if "_REF" not in g:

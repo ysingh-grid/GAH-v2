@@ -177,3 +177,17 @@ See `primitive_planning` for full step shapes. Your output is validated by `pars
   `llm_query` is engine-blocked at your depth — calling it throws MAXIMUM DEPTH REACHED
   and wastes the turn. Use only the §2 pull tools (`lookup_primitive`, `fetch_kb_sections`,
   `lookup_design_reference`), build your step list inline, and call `FINAL`.
+- **NEVER write `batch_llm_query(...)` or `llm_query(...)` directly in your REPL code.**
+  These are engine internals. If you want to delegate, call `delegate_features(features,
+  shared_frame)` — that is the ONLY supported delegation path. Writing raw
+  `batch_llm_query` or `llm_query` calls yourself causes a `TypeError` crash that ends
+  the run immediately with no recovery. There are no exceptions to this rule.
+- **Serialize `context` values before passing them to `llm_query` / `delegate_features`.**
+  Values from the injected `context` dict may be Pyodide JS proxies that crash on
+  iteration or JSON serialization. Always copy what you need:
+  `safe = json.loads(json.dumps(context["chat_history"]))` before use. Import `json`
+  inside the REPL block before calling this.
+- **You have a hard call budget of 50 REPL steps.** Every step re-sends the full
+  transcript — cost grows quadratically. Reach `FINAL` in ≤3 blocks (one quick lookup,
+  one build-and-FINAL block). Spending 5+ steps on reads before building exhausts
+  your budget and the run dies with no result. Plan inline, FINAL fast.

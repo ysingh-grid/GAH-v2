@@ -13,7 +13,10 @@ result parser). The single impure call — `fast_rlm.run` — is isolated in
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Literal
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -158,21 +161,38 @@ def run_planner_turn(
     except Exception:
         kb_index = None
 
-    result = fast_rlm.run(
-        build_planner_query(
-            original_prompt,
-            chat_history,
-            available_primitives=available_primitives,
-            kb_index=kb_index,
-        ),
-        config=config,
-        tools=_PLANNER_TOOLS,
-        output_schema=dict,
-        env_variables={
-            "DTCM_BACKEND_URL": backend_url,
-        },
-    )
-    return parse_planner_result(result["results"])
+    try:
+        result = fast_rlm.run(
+            build_planner_query(
+                original_prompt,
+                chat_history,
+                available_primitives=available_primitives,
+                kb_index=kb_index,
+            ),
+            config=config,
+            tools=_PLANNER_TOOLS,
+            output_schema=dict,
+            env_variables={
+                "DTCM_BACKEND_URL": backend_url,
+            },
+        )
+        return parse_planner_result(result["results"])
+    except Exception:
+        # CONTAINMENT: the fast-rlm engine raises on budget exhaustion ("Did not
+        # finish the function stack before subagent died"), MAXIMUM DEPTH REACHED,
+        # a TypeError from a misused batch_llm_query, or a Pyodide JsException.
+        # parse_planner_result also raises: KeyError when no FINAL was emitted,
+        # or ValidationError on a malformed FINAL. None of these may reach the
+        # user as a stack trace or hang the Temporal workflow — collapse them all
+        # into a clean ask_user turn the caller already knows how to surface.
+        logger.exception("planner turn failed; returning graceful ask_user")
+        return PlannerOutput(
+            action="ask_user",
+            question=(
+                "I ran into an internal error while planning and couldn't finish "
+                "a design. Could you restate or simplify your request so I can try again?"
+            ),
+        )
 
 ############################################# IGNORE replanner, placeholder code, doesnt work
 REPLANNER_TASK = """\
@@ -220,10 +240,20 @@ def run_replanner_turn(
         "original_prompt": original_prompt,
         "chat_history": chat_history,
     }
-    result = fast_rlm.run(
-        query,
-        config=config,
-        tools=_PLANNER_TOOLS,
-        output_schema=PlannerOutput,
-    )
-    return parse_planner_result(result["results"])
+    try:
+        result = fast_rlm.run(
+            query,
+            config=config,
+            tools=_PLANNER_TOOLS,
+            output_schema=PlannerOutput,
+        )
+        return parse_planner_result(result["results"])
+    except Exception:
+        logger.exception("replanner turn failed; returning graceful ask_user")
+        return PlannerOutput(
+            action="ask_user",
+            question=(
+                "I ran into an internal error while replanning. "
+                "Could you clarify or simplify the request so I can try again?"
+            ),
+        )
