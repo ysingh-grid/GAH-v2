@@ -49,6 +49,57 @@ services:
       start_period: 20s
       retries: 3
 
+  # ── Dev override: live source mounts + uvicorn --reload ───────────────────
+  # Usage: docker compose --profile dev up
+  # Source dirs are bind-mounted over the image's COPY'd layers so any file
+  # change on the host is visible inside the container immediately.
+  # uvicorn --reload picks up Python changes without a restart.
+  # Skills / KB .md files are read from disk at request time — also live.
+  # Only rebuild the image when pyproject.toml or uv.lock changes.
+  backend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gah-backend:latest
+    platform: linux/amd64
+    container_name: gah-backend
+    profiles:
+      - dev
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      BACKEND_URL: "http://localhost:8001"
+      FORGECAD_STUDIO_URL: "${FORGECAD_STUDIO_URL:-}"
+      TEMPORAL_HOST: "${TEMPORAL_HOST:-}"
+      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
+    volumes:
+      # live source — overrides what was COPY'd into the image
+      - ./backend:/app/backend
+      - ./runtime:/app/runtime
+      - ./rlm:/app/rlm
+      - ./tools:/app/tools
+      - ./primitives:/app/primitives
+      - ./skills:/app/skills
+      - ./KB:/app/KB
+      - ./temporal:/app/temporal
+      # runtime artifacts (same as prod)
+      - ./artifacts:/app/artifacts
+      - ./outputs:/app/outputs
+      - ./logs:/app/logs
+    command: >
+      uv run uvicorn backend.server:app
+        --host 0.0.0.0 --port 8001 --workers 1 --reload
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8001/health" ]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
   # ── Temporal Database (Postgres) ──────────────────────────────────────────
   temporal-db:
     image: postgres:14-alpine
