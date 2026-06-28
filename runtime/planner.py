@@ -37,11 +37,20 @@ if TYPE_CHECKING:
 _PLANNER_TOOLS = [
     read_skill,
     list_skills,
+    list_primitives,
     lookup_primitive,
+    list_kb_index,
     fetch_kb_sections,
     lookup_design_reference,
     delegate_features,
 ]
+# delegate_stage is intentionally NOT exposed. Measured: per-stage child delegation
+# spawns a full agent per stage over tiny context = pure overhead; it drove a single
+# solid to >1M tokens / runaway. The def is kept in rlm/pull_tools.py but isolated.
+# delegate_features stays (genuine compound multi-solid assemblies). NOTE: isolating
+# delegate_features too gave NO token benefit (pure-inline box still ~183k/17 steps),
+# so the bloat is the monolithic root's per-step context growth + flash's step count,
+# not delegation alone.
 
 
 class PlannerOutput(BaseModel):
@@ -83,10 +92,14 @@ def build_planner_query(
 ) -> dict[str, Any]:
     """Assemble the structured context dict handed to the RLM for one turn.
 
-    available_primitives + kb_index are pre-fetched by run_planner_turn and embedded
-    here so the planner can skip the list_primitives()/list_kb_index() REPL steps —
-    two fewer model calls per turn. Omitted (None) → the planner falls back to the
-    tools (used by pure unit tests that don't pre-fetch).
+    MENU by value, CONTENT by reference. available_primitives (20 catalog keys) and
+    kb_index (a compact section menu) are tiny — pre-fetching them once and embedding
+    them here is cheaper than making the monolithic root spend extra REPL steps to
+    pull them (each added step re-sends the whole transcript — quadratic cost; this
+    was MEASURED: removing the menu pushed a complex part from 326k → 464k tokens).
+    The LARGE data — full primitive specs and KB section bodies — is NOT injected;
+    the planner still pulls only what it needs via lookup_primitive()/
+    fetch_kb_sections(). Omitted (None) → the planner falls back to the tools.
     """
     query: dict[str, Any] = {
         "task": original_prompt,
@@ -130,11 +143,11 @@ def run_planner_turn(
 
         config = default_config
 
-    # Pre-fetch the catalog + KB menu ONCE (localhost HTTP) and embed them in the
-    # context, so the planner skips the list_primitives()/list_kb_index() REPL steps
-    # — two fewer model calls per turn (each call is a stall risk). The pull tools
-    # read DTCM_BACKEND_URL from the env, so set it here before calling. On any
-    # failure we pass None and the planner falls back to the tools.
+    # Pre-fetch the tiny MENUS once (catalog keys + KB section index) and embed them
+    # so the monolithic root skips the list_primitives()/list_kb_index() REPL steps —
+    # cheaper than the extra growing-context round-trips (measured). The large CONTENT
+    # is still pulled by reference inside the REPL. The pull tools read
+    # DTCM_BACKEND_URL from the env, so set it before the host-side pre-fetch.
     os.environ["DTCM_BACKEND_URL"] = backend_url
     try:
         available_primitives: list[str] | None = list_primitives()
@@ -154,7 +167,7 @@ def run_planner_turn(
         ),
         config=config,
         tools=_PLANNER_TOOLS,
-        output_schema=PlannerOutput,
+        output_schema=dict,
         env_variables={
             "DTCM_BACKEND_URL": backend_url,
         },

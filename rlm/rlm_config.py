@@ -17,7 +17,13 @@ config = RLMConfig.default()
 # emit JSON) — not a reasoning task. Billing is pay-as-you-go (Tier 1+), so RPM is
 # NOT the constraint; flash is chosen for lower cost + 2-8s latency vs Pro's slower
 # turns. (Free-tier RPM throttling does not apply on this account.)
-config.primary_agent = "gemini-3.5-flash"
+# ROOT DRIVER = pro-tier thinking model. flash was a weak nondeterministic driver
+# (13-40 turns for a box, over-delegated against instructions, same box swung
+# 35k-498k tokens). A stronger coding model reasons more per turn → fewer turns →
+# less of the quadratic prompt-token growth that dominated cost. Trade: pro spends
+# more COMPLETION (reasoning) tokens per call, but prompt_tokens were the bloat.
+# sub_agent (delegate_features children) stays flash for cost — separation of roles.
+config.primary_agent = "gemini-3.1-pro-preview"
 config.sub_agent = "gemini-3.5-flash"
 # Hard safety-net cap on REPL steps per agent (the soft target lives in the prompt:
 # root ~5-6 steps, leaf child ~3). Too low STARVES the root orchestrator — it needs
@@ -27,7 +33,12 @@ config.sub_agent = "gemini-3.5-flash"
 # NOTE: this is NOT the token-balloon guard — max_depth=1 is (it stops the recursive
 # grandchild fan-out). With depth capped, only ~6 agents exist, so a higher step cap
 # does not re-balloon the cumulative token budget.
-config.max_calls_per_subagent = 50
+# Per-agent REPL step cap. With FLASH this couldn't go below ~50 (12 and 24 starved
+# the complex container — "Did not finish the function stack before subagent died").
+# Now paired with the pro-tier root driver, which reasons more per turn and should
+# finish in far fewer turns, so 20 is the bet: bounds runaway AND should suffice for
+# complex. If a complex part dies here, the pro driver still needs >20 turns — raise.
+config.max_calls_per_subagent = 20
 # max_prompt_tokens is a CUMULATIVE budget across all LLM calls in one run
 # (not a per-call context limit). The fast-rlm default (200k) was calibrated
 # for GPT-4 class models. Gemini Flash has a 1M token context window; our

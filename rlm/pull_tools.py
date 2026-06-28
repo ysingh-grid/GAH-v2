@@ -297,3 +297,68 @@ async def delegate_features(features: list[dict], shared_frame: dict) -> list[li
     results = await _batch_query(*queries)
     return list(results)
 
+
+async def delegate_stage(stage: str, skill_name: str, payload: dict) -> dict:
+    """ISOLATED / NOT IN THE TOOLSET — kept for reference, do not re-add blindly.
+
+    Measured harmful: a planning stage has tiny context, so spawning a full child
+    agent per stage is pure overhead (drove a single-solid part to >1M tokens /
+    runaway). Inline reasoning in the root is cheaper. Delegation is reserved for
+    delegate_features (independent SOLIDS in a multi-solid assembly). See
+    runtime/planner._PLANNER_TOOLS for why this is excluded.
+
+    Run ONE reasoning stage in an isolated child agent — keep the root tiny.
+
+    This is the by-reference workhorse. Instead of YOU (the root) reading a skill
+    guide into your own context and reasoning over it, you hand the stage off: this
+    fetches the guide itself, ships it + only the data the stage needs into a fresh
+    child agent, and returns the child's clean dict. The guide text and the child's
+    working tokens NEVER enter your context — you only get the small result back.
+
+    Use it for each planning stage in order, e.g.:
+        intent = await delegate_stage("intent_extraction", "intent_extraction",
+                                      {"prompt": context["original_prompt"]})
+        dims   = await delegate_stage("dimension_reasoning", "dimension_reasoning",
+                                      {"intent": intent})
+        prim   = await delegate_stage("primitive_planning", "primitive_planning",
+                                      {"intent": intent, "dimensions": dims})
+
+    Args:
+        stage: short label for the stage (e.g. "intent_extraction"), for the child.
+        skill_name: the guide to fetch and hand the child (e.g. "primitive_planning").
+        payload: ONLY the data this stage needs (prior stage results, the prompt).
+                 Keep it minimal — do not dump your whole context in.
+
+    Returns:
+        The child's result as a Python dict (e.g. {"steps": [...]} for
+        primitive_planning, or extracted fields for intent_extraction).
+    """
+    import os
+
+    import requests
+
+    base = os.environ["DTCM_BACKEND_URL"]
+    guide = requests.get(
+        f"{base}/internal/read-skill",
+        params={"name": skill_name},
+        timeout=10,
+    ).text
+
+    _llm_query = globals()["llm_query"]
+    g = globals()
+    child_tools = [
+        g[name] for name in ("lookup_primitive", "lookup_design_reference") if name in g
+    ]
+
+    child_context = {
+        "task": (
+            f"You are the '{stage}' stage of a CAD planner. Follow the GUIDE exactly "
+            "and operate ONLY on the PAYLOAD given. Use lookup_primitive(key) for exact "
+            "parameter names when the guide calls for it. Return a single JSON object "
+            "with this stage's result — no prose, no explanation."
+        ),
+        "guide": guide,
+        "payload": payload,
+    }
+    return await _llm_query(child_context, {"type": "object"}, tools=child_tools)
+
