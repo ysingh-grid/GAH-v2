@@ -25,8 +25,12 @@ artifacts/
 # Docs and reference
 docs/
 fast-rlm-reference/
-*.md
 *.sh
+# skills/*.md are runtime data — NOT excluded (planner reads them at request time)
+# Only exclude top-level and docs-folder markdown
+README.md
+CHANGELOG.md
+content.md
 
 # Git
 .git/
