@@ -186,7 +186,7 @@ class DesignWorkflow:
                 )
                 verdict = ver.verdict
                 if not ver.passed:
-                    failure_stage = "visual_mismatch"
+                    failure_stage = str(verdict.get("failure_stage") or "visual_mismatch")
                     failure_detail = ver.feedback
                     feedback_log.append(ver.feedback)
 
@@ -209,6 +209,21 @@ class DesignWorkflow:
             else:
                 inner += 1
                 attempt_for_stage = inner
+
+            # A verifier transport/parse/config failure is not a geometry problem,
+            # so do not spend replan attempts changing a plan that was not judged.
+            if failure_stage == "verifier_error":
+                self._stage = DesignStage.FAILED
+                await self._record(inp, plan_dict, code, execution_result, mesh_report,
+                                   renders, verdict, status="failed", attempts=inner + outer,
+                                   failure_stage=failure_stage, failure_detail=failure_detail)
+                return DesignResult(
+                    status="failed",
+                    final_plan=plan_dict,
+                    run_id=inp.run_id,
+                    failure_category=category_for_stage(failure_stage).value,
+                    message="visual verifier failed",
+                )
 
             # ── EXHAUSTED: give up, tag the canonical failure category ────────
             if is_exhausted(failure_stage, attempt_for_stage):

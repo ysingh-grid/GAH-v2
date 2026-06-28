@@ -69,13 +69,11 @@ config.max_depth = 1
 # bundled rlm_config.yaml defaults to 30000ms / 3 retries; we set them explicitly
 # here so the values are owned in code, not silently inherited.
 #
-# Healthy gemini-3.5-flash calls finish in ~2-8s, so 30s/attempt is ALREADY
-# fail-fast — shortening it risks killing legit slow (large-context) calls for
-# marginal gain, so keep 30s. Retries use exponential backoff on retryable errors
-# (timeout / 429 / 5xx). Observed a ~2-minute transient Gemini OpenAI-compat stall
-# where 3 attempts (30s×3 + backoff ≈ 124s) all timed out → fatal run. 5 retries
-# span a longer backoff window, riding out that transient outage.
-config.api_timeout_ms = 30_000   # per-attempt timeout, milliseconds
-config.api_max_retries = 5
+# The planner can send large-context calls after reading skills/primitive specs.
+# A 30s per-attempt timeout killed valid Gemini calls before Temporal could start
+# the workflow, leaving the UI with an empty workflow list. Give each attempt
+# enough room to finish, but keep retries modest so a real outage still returns.
+config.api_timeout_ms = int(os.environ.get("RLM_API_TIMEOUT_MS", "120000"))
+config.api_max_retries = int(os.environ.get("RLM_API_MAX_RETRIES", "2"))
 
 print("✅ RLM Config created with Gemini adapter")

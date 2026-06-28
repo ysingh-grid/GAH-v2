@@ -56,6 +56,13 @@ def test_plan_ready_output_carries_validated_plan():
     assert out.plan.steps[0].primitive == "box"
 
 
+def test_parse_planner_result_accepts_already_validated_model():
+    expected = PlannerOutput.model_validate(
+        {"action": "plan_ready", "plan": _CUBE_PLAN}
+    )
+    assert parse_planner_result(expected) is expected
+
+
 def test_plan_ready_without_plan_raises():
     with pytest.raises(ValidationError, match="requires a 'plan'"):
         PlannerOutput.model_validate({"action": "plan_ready"})
@@ -80,6 +87,31 @@ def test_build_planner_query_shape():
     assert q["original_prompt"] == "make a 60mm cube"
     assert q["chat_history"][0]["content"] == "hi"
     assert q["task"] == "make a 60mm cube"
+
+
+def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
+    import fast_rlm
+
+    captured = {}
+
+    def fake_run(*args, **kwargs):
+        captured.update(kwargs)
+        return {"results": {"action": "plan_ready", "plan": _CUBE_PLAN}}
+
+    monkeypatch.setattr(fast_rlm, "run", fake_run)
+    monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box"])
+    monkeypatch.setattr("runtime.planner.list_kb_index", lambda: {})
+
+    out = run_planner_turn(
+        "make a 60mm cube",
+        [{"role": "user", "content": "make a 60mm cube"}],
+        backend_url="http://backend.test",
+        config={},
+    )
+
+    assert out.action == "plan_ready"
+    assert captured["output_schema"] is PlannerOutput
+    assert captured["env_variables"]["DTCM_BACKEND_URL"] == "http://backend.test"
 
 
 # ── live turn (opt-in) ───────────────────────────────────────────────────────

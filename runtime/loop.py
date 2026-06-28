@@ -130,9 +130,10 @@ def _run_verify(prompt: str, plan_code: str, art: _Artifacts) -> _StageFailure |
         prompt, plan_code, metrics, png, prior_feedback=art.feedback_log or None
     )
     if not art.verdict.get("passed"):
-        feedback = collect_feedback_detail("visual_mismatch", art.verdict)
+        failure_stage = str(art.verdict.get("failure_stage") or "visual_mismatch")
+        feedback = collect_feedback_detail(failure_stage, art.verdict)
         art.feedback_log.append(feedback)
-        return _StageFailure("visual_mismatch", feedback)
+        return _StageFailure(failure_stage, feedback)
     return None
 
 
@@ -237,6 +238,19 @@ def run_geometry_loop(
             inner_attempts += 1
         attempt_for_stage = outer_attempts if is_outer else inner_attempts
         category = category_for_stage(failure.stage)
+
+        if failure.stage == "verifier_error":
+            return _finalize(
+                run_id=run_id,
+                prompt=original_prompt,
+                plan=plan,
+                art=art,
+                status="failed",
+                attempts=attempts,
+                failure_category=category,
+                failure_detail=failure.detail,
+                message="visual verifier failed",
+            )
 
         if is_exhausted(failure.stage, attempt_for_stage):
             return _finalize(

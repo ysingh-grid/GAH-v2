@@ -81,8 +81,10 @@ class PlannerOutput(BaseModel):
         return self
 
 
-def parse_planner_result(result: dict[str, Any]) -> PlannerOutput:
+def parse_planner_result(result: Any) -> PlannerOutput:
     """Validate a fast-rlm FINAL dict into a PlannerOutput (raises on mismatch)."""
+    if isinstance(result, PlannerOutput):
+        return result
     return PlannerOutput.model_validate(result)
 
 
@@ -171,7 +173,7 @@ def run_planner_turn(
             ),
             config=config,
             tools=_PLANNER_TOOLS,
-            output_schema=dict,
+            output_schema=PlannerOutput,
             env_variables={
                 "DTCM_BACKEND_URL": backend_url,
             },
