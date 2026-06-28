@@ -54,20 +54,29 @@ CadQuery v2 does **NOT** have `.cone()` or `.torus()` as Workplane methods.
 `.cone()` and `.torus()` don't exist on Workplane.
 - **Fix**: `cq.Workplane("XY").add(cq.Solid.makeCone(r1, r2, h))`
 
-### Error 2 — Non-Manifold (`BRep_API: command not done`, `Standard_ConstructionError`)
-Bodies whose faces are exactly co-planar or completely disjoint.
+### Error 2 — Fillet/chamfer radius too large (`BRep_API: command not done` inside `.fillet()`)
+Traceback shows `in fillet` in the call stack. The fillet radius exceeds the geometry.
+- **Rule**: `fillet_val` MUST be < half the smallest adjacent face dimension.
+  For a `filleted_box` with `height=4`, max safe `fillet_val` ≈ 1.5 (< 4/2=2).
+- **Fix in the plan**: Reduce `fillet_val` in the `filleted_box` parameters:
+  `fillet_val = floor(min(height, width) / 2) - 0.5` (e.g. height=4 → fillet_val=1.5).
+- **Fix in code**: Lower the radius passed to `.fillet(radius, ...)`.
+- **Distinguish from Error 3**: if `in fillet` is in the traceback, use THIS fix first.
+
+### Error 3 — Non-Manifold (`BRep_API: command not done`, `Standard_ConstructionError`)
+Bodies whose faces are exactly co-planar or completely disjoint. Traceback does NOT show `in fillet`.
 - **Fix for cuts**: Make cutter `2mm` taller, offset `1mm` outward.
 - **Fix for unions**: Ensure overlap ≥ `0.1mm` before `.union()`.
 
-### Error 3 — Empty Selector (`IndexError` from `.faces(">Z")`)
+### Error 5 — Empty Selector (`IndexError` from `.faces(">Z")`)
 The model was rotated/translated and the face is no longer axis-aligned.
 - **Fix**: Use `.faces("#Z")` (Z-normal regardless of sign) or `.faces().item(0)`.
 
-### Error 4 — Syntax / Import Errors
+### Error 6 — Syntax / Import Errors
 - Always `import cadquery as cq` at the top.
 - Match all brackets and quotes consistently.
 
-### Error 5 — `.union()` / `.cut()` Type Mismatch
+### Error 7 — `.union()` / `.cut()` Type Mismatch
 Only `Workplane` objects can be combined with other `Workplane` objects.
 - **Fix**: Wrap bare Solids: `cq.Workplane("XY").add(cq.Solid.makeCone(...))`.
 
