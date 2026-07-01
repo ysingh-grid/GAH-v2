@@ -3,18 +3,18 @@ name: dimension_reasoning
 version: "1.0"
 purpose: >
   Resolve relative offsets, stack heights, clearance fits, and bounding
-  dimensions so that generated CadQuery code places primitives correctly
-  without overlaps, gaps, or non-manifold contact.
+  dimensions so the PrimitivePlan places primitives correctly without
+  overlaps, gaps, or non-manifold contact once compiled.
 used_by:
-  - planning_worker (Step 2+3 of W·01, integrated into primitive_planning)
-  - repair_sub_agent (checking position math during repair)
+  - planner (dimensions/positioning step of every plan, and again on replan for
+    cadquery_compile/cadquery_execute/mesh_repair feedback)
 inputs:
   - primitive_plan: "PrimitivePlan dict being constructed"
   - parameters: "Resolved numeric parameters for each primitive"
 outputs:
   - position_vectors: "Corrected [x,y,z] center positions for each primitive"
   - validated_params: "Numeric parameters after engineering sanity check"
-tags: [geometry, math, positioning, alignment, W01, phase1]
+tags: [geometry, math, positioning, alignment, phase1]
 token_budget: low   # ~350 tokens body — load always
 ---
 

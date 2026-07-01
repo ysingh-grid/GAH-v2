@@ -2,17 +2,17 @@
 name: repair_guidance
 version: "1.0"
 purpose: >
-  Help the Repair Sub-Agent identify the root cause of a CadQuery execution
-  traceback and apply the minimal targeted fix to produce valid, compilable code.
+  Help identify the root cause of a CadQuery execution traceback and apply
+  the minimal targeted fix to produce valid, compilable code.
 used_by:
-  - repair_sub_agent (W·01 inner repair loop, max 3 attempts)
+  - planner (re-entered during the inner repair loop, shared cap of 5 attempts)
 inputs:
   - broken_code: "The Python code string that failed"
   - traceback: "Full Python traceback / error message from execute_cadquery"
   - primitive_plan: "PrimitivePlan dict for parameter reference"
 outputs:
   - fixed_code: "Corrected Python code string assigning final solid to `result`"
-tags: [repair, debugging, cadquery, errors, W01, inner-loop]
+tags: [repair, debugging, cadquery, errors, inner-loop]
 token_budget: medium  # ~600 tokens — load only when repair is triggered
 sub_agent_contract: >
   Return ONLY the corrected Python code string.
@@ -22,8 +22,8 @@ sub_agent_contract: >
 
 # Skill: Repair Guidance (Inner Loop)
 
-Fix CadQuery execution errors. This is used by the **Repair Sub-Agent**
-inside the **W·01 inner repair loop** (max 3 attempts).
+Fix CadQuery execution errors. Used during the **inner repair loop**
+(shared cap of 5 attempts).
 
 > **Contract**: Return ONLY the corrected Python code. No markdown, no prose.
 > The fixed code MUST assign the final solid to `result`.

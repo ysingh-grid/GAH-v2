@@ -2,19 +2,19 @@
 name: refinement_guidance
 version: "1.0"
 purpose: >
-  Help the Refinement Sub-Agent adjust primitive parameters and positioning
-  coordinates based on visual/geometric feedback from the verifier, without
-  rewriting the whole design.
+  Adjust primitive parameters and positioning coordinates based on
+  visual/geometric feedback from the verifier, without rewriting the whole
+  design.
 used_by:
-  - refine_sub_agent (W·05 outer refinement loop, max 5 attempts)
+  - planner (re-entered during the outer refinement loop, cap of 2 attempts)
 inputs:
   - current_code: "The CadQuery Python code that passed compilation"
   - verdict: "Verifier output dict with passed/score/issues/feedback"
   - primitive_plan: "PrimitivePlan dict with resolved parameters"
-  - attempt: "Current refinement attempt number (1–5)"
+  - attempt: "Current refinement attempt number (1-2)"
 outputs:
   - refined_code: "Updated Python code string assigning final solid to `result`"
-tags: [refinement, feedback, geometry, W05, outer-loop]
+tags: [refinement, feedback, geometry, outer-loop]
 token_budget: low   # ~500 tokens — load only when refinement is triggered
 sub_agent_contract: >
   Return ONLY the corrected Python code string.
@@ -24,8 +24,8 @@ sub_agent_contract: >
 
 # Skill: Refinement Guidance (Outer Loop)
 
-Adjust geometry based on verifier feedback. Used by the **Refinement Sub-Agent**
-in the **W·05 outer refinement loop** (max 5 attempts).
+Adjust geometry based on verifier feedback. Used during the **outer
+refinement loop** (cap of 2 attempts).
 
 > **Contract**: Return ONLY the corrected Python code. No markdown, no prose.
 > Final solid MUST be assigned to `result`.

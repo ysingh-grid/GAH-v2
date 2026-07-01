@@ -5,15 +5,15 @@ purpose: >
   Parse a user's free-form CAD prompt into a structured JSON intent object
   containing the target object, explicit/implicit dimensions, and constraints.
 used_by:
-  - planning_worker (Step 1 of W·01)
+  - planner (intent step of every plan)
 inputs:
   - user_prompt: "Raw natural-language design request string"
-  - primitives_list: "List of supported primitive names from list_primitives()"
+  - primitives_list: "context[\"available_primitives\"] — supported primitive keys"
 outputs:
   - target_object: "Closest matching primitive name"
   - dimensions: "Dict of param → {value, unit, type}"
   - constraints: "Dict of geometric/functional constraints"
-tags: [planning, intent, parsing, W01, phase1]
+tags: [planning, intent, parsing, phase1]
 token_budget: low   # ~300 tokens body — load always
 ---
 

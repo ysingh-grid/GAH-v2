@@ -6,16 +6,16 @@ purpose: >
   selecting the best-matching primitive from the library and resolving all
   required parameters.
 used_by:
-  - planning_worker (Step 2+3 of W·01)
+  - planner (primitive-selection step of every plan)
 inputs:
   - intent: "Output of intent_extraction skill"
-  - primitive_schema: "Schema dict from lookup_primitive()"
-  - dimension_reasoning_skill: "Loaded via read_skill('dimension_reasoning')"
+  - primitive_schema: "Schema for the chosen catalog primitive"
+  - dimension_reasoning_skill: "dimension_reasoning skill content"
 outputs:
   - primitive: "Chosen primitive name string"
   - parameters: "Dict of param_name → resolved numeric value (mm)"
   - description: "One-sentence shape description"
-tags: [planning, primitives, CSG, W01, phase1]
+tags: [planning, primitives, CSG, phase1]
 token_budget: low   # ~400 tokens body — load always
 ---
 

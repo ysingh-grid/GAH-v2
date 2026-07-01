@@ -6,13 +6,13 @@ purpose: >
   of CSG operations on simple primitives (base → unions → cuts → finish).
   Used before primitive_planning to create the construction tree.
 used_by:
-  - planning_worker (Step 1.5 of W·01 — optional for complex shapes)
+  - planner (decomposition step, for multi-primitive shapes)
 inputs:
   - user_prompt: "Raw natural-language design request"
   - intent: "Output of intent_extraction skill"
 outputs:
   - construction_tree: "Ordered list of {id, role, primitive_type, operation} steps"
-tags: [planning, CSG, decomposition, W01, phase1]
+tags: [planning, CSG, decomposition, phase1]
 token_budget: low   # ~400 tokens — load only for multi-primitive shapes
 ---
 
@@ -75,37 +75,31 @@ Base Solid  (+addition solids)  (−subtraction solids)  [+finish features]
 
 ---
 
-## When to Fork vs Design in One Context
+## When to hand off vs design in one context
 
-A **fork** spawns parallel child agents via `delegate_features`. Use it when:
+You have a way to hand a piece of the design off to be planned separately in
+parallel. Use it when, and only when:
 
-### Case A — Independent Solids
+### Case A — Independent Solids (hand off)
 Distinct bodies that only meet at an interface. Each designs freely in its own local frame.
 - Cricket bat → `["blade", "handle"]`
 - Bolt + nut → `["bolt", "nut"]`
 
-### Case B — Features of One Connected Body
-Hub+spokes+rim, flange+bolt-bosses+ribs. Fork one child per feature, but **fix a shared-frame contract first**:
-1. YOU decide skeleton numbers: every shared anchor (radii, planes, bolt-circle positions) and how features overlap (0.5–1mm INTO each other).
-2. YOU assign each feature an absolute placement + operation (exactly one feature is "base"; rest are "union"/"cut").
-3. Each child builds ONLY its feature at the absolute position given — never invents or changes a shared anchor.
+### Case B — Features of One Connected Body (do NOT hand off — plan inline)
+Hub+spokes+rim, flange+bolt-bosses+ribs. These are one connected body, not
+independent solids — plan them yourself as a single construction tree
+(`base` → `union` → `cut` → finish). Fix your own shared anchors first: every
+shared radius, plane, or bolt-circle position, decided once and reused
+consistently across steps. Every union feature must overlap the body it joins
+by 0.5–1mm (a feature that only touches — tangent/coincident face — does NOT
+fuse; see `dimension_reasoning` Rule 2).
 
-**Wheel example**: fix hub cyl r=15, rim ring inner=40/outer=44, spoke spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 → then fork `[hub(base), rim(union), spoke(union)]`.
+**Wheel example** (Case B, plan inline): hub cyl r=15, rim ring inner=40/outer=44,
+spoke spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 — all as steps
+in one plan: `[hub(base), spoke×5(union, pattern=polar), rim(union)]`.
 
-### RULE: Fork for compound parts
-Any part with more than one primitive shape MUST use `delegate_features`. Do NOT design compound parts in one context.
-
-```python
-child_step_lists = await delegate_features(
-    [
-        {"name": "hub",   "operation": "base",  "placement": [0,0,5],  "candidate_primitives": ["cylinder"]},
-        {"name": "spoke", "operation": "union", "placement": [0,0,5],  "candidate_primitives": ["box"]},
-        {"name": "rim",   "operation": "union", "placement": [0,0,5],  "candidate_primitives": ["ring"]},
-    ],
-    shared_frame={"hub_r": 15, "rim_inner_r": 40, "rim_outer_r": 44}
-)
-# Flatten and renumber
-all_steps = [s for steps in child_step_lists for s in steps]
-for i, step in enumerate(all_steps, start=1):
-    step["id"] = f"s{i}"
-```
+### RULE: Only hand off for genuinely independent solids
+A single connected body with many features — however many fillets, shells,
+patterns, or holes — is NOT a hand-off case. Design it in one context. Only
+a true multi-solid assembly (Case A) warrants a hand-off, and even then only
+after you've fixed the shared anchors every piece must agree on.

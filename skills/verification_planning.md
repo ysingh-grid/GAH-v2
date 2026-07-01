@@ -4,10 +4,10 @@ version: "1.0"
 purpose: >
   Define expected volume, bounding box, face count, and mesh quality thresholds
   BEFORE executing code, so that the verifier can detect silent CSG failures
-  and trigger the repair or refinement sub-agent appropriately.
+  and trigger a replan at the right stage.
 used_by:
-  - planning_worker (Step 3 of W·01 — woven into primitive_planning)
-  - verifier_worker (W·05 — reference thresholds for vision judge)
+  - planner (self-check step of every plan)
+  - verifier (host-side — reference thresholds for the vision judge)
 inputs:
   - primitive_plan: "PrimitivePlan dict with resolved parameters"
   - exec_result: "Output of execute_cadquery — volume_mm3, faces_count, bbox"
@@ -16,8 +16,8 @@ outputs:
   - volume_theoretical_mm3: "Predicted volume from formula"
   - bbox_expected: "[xmin,xmax,ymin,ymax,zmin,zmax] in mm"
   - min_faces: "Minimum expected face count"
-  - repair_triggered: "Boolean — whether to invoke Repair Sub-Agent"
-tags: [verification, geometry, quality, W01, W05, phase3, phase4]
+  - repair_triggered: "Boolean — whether the orchestrator should re-enter the planner"
+tags: [verification, geometry, quality, phase3, phase4]
 token_budget: low   # ~500 tokens — load for planning and verification
 ---
 
@@ -102,7 +102,7 @@ Predict `[xmin, xmax, ymin, ymax, zmin, zmax]` for each primitive:
 
 ## Step 5 — Repair Trigger Logic
 
-Trigger **Repair Sub-Agent** if **any** of:
+Trigger a replan (the orchestrator re-enters the planner) if **any** of:
 
 - `execute_cadquery.success == False`
 - `inspect_mesh.passes == False`
