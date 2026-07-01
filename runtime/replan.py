@@ -74,7 +74,7 @@ def build_feedback_message(failure_stage: str, detail: str, last_plan: Primitive
 
 def replan_with_feedback(
     *,
-    original_prompt: str,
+    original_prompt: str,#current state only
     last_plan: PrimitivePlan,
     failure_stage: str,
     detail: str,

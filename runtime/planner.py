@@ -18,6 +18,19 @@ from typing import TYPE_CHECKING, Any, Literal
 
 logger = logging.getLogger(__name__)
 
+
+def _llm_kwargs() -> dict:
+    """Generation params (temperature/seed/top_p) for every fast_rlm.run call.
+
+    Lazy import keeps this module import-safe without rlm_config (mirrors how
+    `config` is lazily imported below). fast_rlm.run spreads these into every
+    chat.completions.create call (root + all delegate_features sub-agents), so
+    setting them once per run() covers the whole agent tree."""
+    from rlm.rlm_config import LLM_KWARGS
+
+    return LLM_KWARGS
+
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Tools the planner may call inside its REPL. Imported as objects so fast-rlm
@@ -169,14 +182,14 @@ def run_planner_turn(
                 original_prompt,
                 chat_history,
                 available_primitives=available_primitives,
-                kb_index=kb_index,
             ),
             config=config,
             tools=_PLANNER_TOOLS,
-            output_schema=PlannerOutput,
+            output_schema=dict,
             env_variables={
                 "DTCM_BACKEND_URL": backend_url,
             },
+            llm_kwargs=_llm_kwargs(),
         )
         return parse_planner_result(result["results"])
     except Exception:
@@ -248,6 +261,7 @@ def run_replanner_turn(
             config=config,
             tools=_PLANNER_TOOLS,
             output_schema=PlannerOutput,
+            llm_kwargs=_llm_kwargs(),
         )
         return parse_planner_result(result["results"])
     except Exception:
