@@ -88,6 +88,12 @@ config.max_depth = 1
 config.api_timeout_ms = int(os.environ.get("RLM_API_TIMEOUT_MS", "120000"))
 config.api_max_retries = int(os.environ.get("RLM_API_MAX_RETRIES", "2"))
 
+# ── Compression guard ──────────────────────────────────────────────────────────
+# Default forces a self-confirm (same model, same system prompt) + compress+retry
+# before a delegate_features call with a large, barely-compressed context runs.
+# Explicitly off: no compression step, no extra confirm call before a fork.
+config.enable_compression_guard = False
+
 # ── Generation params (temperature / seed / top_p) ────────────────────────────
 # NOT RLMConfig fields — fast_rlm.run() takes these via its `llm_kwargs=` arg and
 # spreads them UNTOUCHED into every chat.completions.create call (root + all
@@ -126,6 +132,7 @@ def _audit_inherited_defaults(cfg) -> list[str]:
         "primary_agent", "sub_agent", "max_depth", "max_calls_per_subagent",
         "max_prompt_tokens", "max_completion_tokens", "max_money_spent",
         "truncate_len", "api_timeout_ms", "api_max_retries",
+        "enable_compression_guard",
     }
     defaults = RLMConfig.default()
     inherited = []

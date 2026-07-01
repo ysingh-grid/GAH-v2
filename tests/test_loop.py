@@ -12,7 +12,6 @@ import pytest
 
 from runtime import schema
 from runtime.loop import run_geometry_loop
-from runtime.planner import PlannerOutput
 from runtime.schema import plan_from_dict
 from tests.real_world_scenarios import mounting_plate_with_four_holes
 
@@ -33,7 +32,7 @@ _AEROFOIL = plan_from_dict(
 
 
 def _planner_returning(*outputs):
-    """A fake planner that yields the given PlannerOutputs in order, then repeats last."""
+    """A fake planner that yields the given PrimitivePlans in order, then repeats last."""
     calls = {"n": 0}
 
     def fake(prompt, history):
@@ -56,7 +55,7 @@ def test_loop_success_on_mounting_plate_with_mock_vlm_judge():
 
     scenario = mounting_plate_with_four_holes()
     run_id = new_run_id("test_loop_mounting_plate")
-    planner = _planner_returning(PlannerOutput(action="plan_ready", plan=scenario.plan))
+    planner = _planner_returning(scenario.plan)
     try:
         with patch("tools.verify_geometry.verify_geometry") as judge:
             judge.return_value = {
@@ -86,7 +85,7 @@ def test_loop_replans_primitive_gap_then_succeeds():
     from tools.artifacts import new_run_id
 
     run_id = new_run_id("test_loop_replan")
-    planner = _planner_returning(PlannerOutput(action="plan_ready", plan=_MOUNTING_PLATE))
+    planner = _planner_returning(_MOUNTING_PLATE)
     try:
         result = run_geometry_loop(
             original_prompt="a blade, else a practical mounting plate",
@@ -108,7 +107,7 @@ def test_loop_exhausts_inner_cap_and_fails_with_category():
 
     run_id = new_run_id("test_loop_exhaust")
     # planner keeps returning the unbuildable plan -> never fixes it
-    planner = _planner_returning(PlannerOutput(action="plan_ready", plan=_AEROFOIL))
+    planner = _planner_returning(_AEROFOIL)
     try:
         result = run_geometry_loop(
             original_prompt="an impossible blade",
@@ -130,7 +129,7 @@ def test_loop_replans_when_vlm_rejects_visual_result():
 
     scenario = mounting_plate_with_four_holes()
     run_id = new_run_id("test_loop_vlm_replan")
-    planner = _planner_returning(PlannerOutput(action="plan_ready", plan=scenario.plan))
+    planner = _planner_returning(scenario.plan)
     try:
         with patch("tools.verify_geometry.verify_geometry") as judge:
             judge.side_effect = [
@@ -161,22 +160,64 @@ def test_loop_replans_when_vlm_rejects_visual_result():
         _cleanup(run_id)
 
 
-def test_loop_escalates_to_user_when_planner_asks():
+def test_loop_replans_on_verifier_error_instead_of_failing_immediately():
+    """verifier_error (VLM transport/parse failure) gets a bounded replan pass,
+    same as any other stage — no fail-fast special case."""
     from tools.artifacts import new_run_id
 
-    run_id = new_run_id("test_loop_ask")
-    planner = _planner_returning(PlannerOutput(action="ask_user", question="Which blade profile?"))
+    scenario = mounting_plate_with_four_holes()
+    run_id = new_run_id("test_loop_verifier_error_replan")
+    planner = _planner_returning(scenario.plan)
+    try:
+        with patch("tools.verify_geometry.verify_geometry") as judge:
+            judge.side_effect = [
+                {
+                    "passed": False,
+                    "failure_stage": "verifier_error",
+                    "feedback": "[verifier-error] VLM judge failed: unterminated JSON object",
+                    "render_png": "",
+                },
+                {
+                    "passed": True,
+                    "feedback": "All constraints met.",
+                    "render_png": "",
+                },
+            ]
+            result = run_geometry_loop(
+                original_prompt=scenario.prompt,
+                initial_plan=scenario.plan,
+                planner_fn=planner,
+                library=LIBRARY,
+                run_id=run_id,
+                verify=True,
+            )
+        assert result.status == "success"  # NOT an immediate "failed"
+        assert planner.calls["n"] == 1  # replan was actually attempted
+        assert judge.call_count == 2
+    finally:
+        _cleanup(run_id)
+
+
+def test_loop_fails_when_replanner_raises():
+    """No ask_user escalation — a replanner failure is a categorized 'failed' result."""
+    from tools.artifacts import new_run_id
+
+    run_id = new_run_id("test_loop_replan_error")
+
+    def failing_planner(prompt, history):
+        raise RuntimeError("RLM budget exhausted")
+
     try:
         result = run_geometry_loop(
             original_prompt="a blade",
             initial_plan=_AEROFOIL,
-            planner_fn=planner,
+            planner_fn=failing_planner,
             library=LIBRARY,
             run_id=run_id,
             verify=False,
         )
-        assert result.status == "needs_user"
-        assert result.failure_category == "user_ambiguity"
-        assert result.question == "Which blade profile?"
+        assert result.status == "failed"
+        assert "replanner failed" in result.message
+        assert result.failure_category == "geometry_invalidity"
     finally:
         _cleanup(run_id)

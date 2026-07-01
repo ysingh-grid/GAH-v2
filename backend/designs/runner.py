@@ -6,12 +6,13 @@ executor so the event loop stays free for WS I/O.
 
 Event protocol (Server → Client, JSON):
   {"type": "thinking"}                            — planner is working
-  {"type": "ask_user", "question", "options"}     — planner needs more info
   {"type": "generating", "stage"}                 — geometry loop running
   {"type": "success", "run_id", "plan"}           — part produced; Studio renders STL
-  {"type": "needs_user", "question", "options"}   — loop escalated to user
   {"type": "failed", "category", "message"}       — exhausted / permanent error
   {"type": "error", "message"}                    — unexpected exception
+
+The planner/replanner never ask the user a clarifying question — they always
+resolve ambiguity themselves and return a plan, or the turn fails outright.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from typing import Any
 
 from backend.designs.models import DesignSession
 from runtime.loop import LoopResult, run_geometry_loop
-from runtime.planner import PlannerOutput, run_planner_turn
+from runtime.planner import run_planner_turn, run_replanner_turn
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from tools.artifacts import new_run_id
 
@@ -92,7 +93,7 @@ async def run_chat_turn(
 
     # ── 1. Planner turn (blocking RLM call → thread) ──────────────────────────
     try:
-        output = await ev_loop.run_in_executor(
+        plan = await ev_loop.run_in_executor(
             None,
             lambda: run_planner_turn(
                 session.original_prompt, session.history, backend_url=backend_url
@@ -102,22 +103,7 @@ async def run_chat_turn(
         await send({"type": "error", "message": str(exc)})
         return
 
-    if output.action == "ask_user":
-        session.history.append({"role": "planner", "content": output.question or ""})
-        await send(
-            {
-                "type": "ask_user",
-                "question": output.question,
-                "options": output.suggested_options,
-            }
-        )
-        return
-
-    # ── 2. plan_ready → geometry loop ────────────────────────────────────────
-    plan = output.plan
-    if plan is None:
-        await send({"type": "error", "message": "planner returned plan_ready with no plan"})
-        return
+    # ── 2. plan → geometry loop ──────────────────────────────────────────────
     session.status = "generating"
     session.last_plan = plan_to_dict(plan)
     run_id = new_run_id(f"design_{session.id[:8]}")
@@ -237,11 +223,6 @@ async def _run_via_temporal(
                 "plan": result_dc.final_plan,
             }
         )
-    elif result_dc.status == "needs_user":
-        question = result_dc.question or "Can you clarify the design requirements?"
-        session.status = "needs_user"
-        session.history.append({"role": "planner", "content": question})
-        await send({"type": "needs_user", "question": question, "options": []})
     else:
         session.status = "failed"
         await send(
@@ -270,11 +251,6 @@ async def _emit_loop_result(
                 "plan": result.final_plan,
             }
         )
-    elif result.status == "needs_user":
-        question = result.question or "Can you clarify the design requirements?"
-        session.status = "needs_user"
-        session.history.append({"role": "planner", "content": question})
-        await send({"type": "needs_user", "question": question, "options": []})
     else:
         session.status = "failed"
         await send(
@@ -286,16 +262,16 @@ async def _emit_loop_result(
         )
 
 
-def _make_planner_fn(backend_url: str) -> Callable[..., PlannerOutput]:
+def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
     """Return a PlannerFn closure for the geometry loop's replan path.
 
-    Uses the FULL run_planner_turn (all pull tools + KB pre-inject), not the
-    stripped no-tools replanner, so a replan can re-consult primitives/KB to fix
-    wrong-primitive or wrong-approach errors — not just tweak dimensions. The
-    failure feedback arrives in `history` (appended by replan_with_feedback).
+    Uses the scoped run_replanner_turn (read-only pull tools, no delegate_features
+    fork tool) — mirrors temporal.activities.replan_activity so the in-process and
+    Temporal paths behave the same on a replan. Failure feedback arrives in
+    `history` (appended by replan_with_feedback).
     """
 
-    def _fn(original_prompt: str, history: list[dict[str, str]]) -> PlannerOutput:
-        return run_planner_turn(original_prompt, history, backend_url=backend_url)
+    def _fn(original_prompt: str, history: list[dict[str, str]]) -> PrimitivePlan:
+        return run_replanner_turn(original_prompt, history, backend_url=backend_url)
 
     return _fn

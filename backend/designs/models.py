@@ -6,7 +6,6 @@ events. Status transitions:
 
   chatting → generating → done
                        ↘ failed
-                       ↘ needs_user → (user answers) → generating → ...
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-DesignStatus = Literal["chatting", "generating", "done", "failed", "needs_user"]
+DesignStatus = Literal["chatting", "generating", "done", "failed"]
 
 
 @dataclass

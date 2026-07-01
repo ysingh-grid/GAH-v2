@@ -24,19 +24,26 @@ Return only JSON:
 """
 
 
-def judge_geometry_render(prompt: str, render_png: str) -> dict[str, Any]:
-    """Judge whether a render matches the user's requested geometry."""
+def judge_geometry_render(
+    prompt: str, render_png: str, last_replan_feedback: str | None = None
+) -> dict[str, Any]:
+    """Judge whether a render matches the user's requested geometry.
+
+    last_replan_feedback: the failure detail the replanner most recently acted
+    on (None on a first attempt) — lets the judge check whether THAT specific
+    fix landed, not just the original request in isolation.
+    """
     if not Path(render_png).exists():
         return _error(f"Render PNG not found: {render_png}", render_png)
 
     try:
-        response_text = _call_vlm(prompt, render_png)
+        response_text = _call_vlm(prompt, render_png, last_replan_feedback)
         return _format_verdict(_read_json(response_text), render_png)
     except Exception as exc:
         return _error(f"VLM judge failed: {exc}", render_png)
 
 
-def _call_vlm(prompt: str, render_png: str) -> str:
+def _call_vlm(prompt: str, render_png: str, last_replan_feedback: str | None) -> str:
     """Call the configured vision model with prompt + image."""
     from google import genai
     from google.genai import types
@@ -48,16 +55,34 @@ def _call_vlm(prompt: str, render_png: str) -> str:
     with open(render_png, "rb") as image_file:
         image_bytes = image_file.read()
 
+    text = f"USER REQUEST:\n{prompt}"
+    if last_replan_feedback:
+        text += (
+            f"\n\nTHIS ATTEMPT WAS REPLANNED TO FIX:\n{last_replan_feedback}\n"
+            f"Check specifically whether that was addressed, in addition to the "
+            f"original request above."
+        )
+
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
         model=os.environ.get("VLM_JUDGE_MODEL", "gemini-3.1-pro-preview"),
         contents=[
-            types.Part.from_text(text=f"USER REQUEST:\n{prompt}"),
+            types.Part.from_text(text=text),
             types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
         ],
         config=types.GenerateContentConfig(
             system_instruction=JUDGE_INSTRUCTION,
             response_mime_type="application/json",
+            # gemini-3.1-pro-preview is a THINKING model — with no budget set,
+            # internal reasoning tokens can exhaust the default output cap before
+            # the actual JSON gets written, truncating it mid-object ("unterminated
+            # JSON object"). thinking_budget=0 and ThinkingLevel.MINIMAL are BOTH
+            # rejected by this model (400 INVALID_ARGUMENT — "only works in
+            # thinking mode" / "MINIMAL is not supported"); LOW is the lowest
+            # level it actually accepts (probed live). Pair with a generous
+            # max_output_tokens so thinking + the final JSON both fit.
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
+            max_output_tokens=4096,
         ),
     )
     return response.text or ""

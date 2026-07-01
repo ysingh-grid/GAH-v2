@@ -30,14 +30,13 @@ from runtime.trace import FailureCategory, build_trace, category_for_stage, writ
 class LoopResult:
     """Outcome of one geometry-loop run."""
 
-    status: str  # "success" | "failed" | "needs_user"
+    status: str  # "success" | "failed"
     run_id: str
     trace_path: str
     attempts: int
     final_plan: dict[str, Any]
     failure_category: str | None = None
     message: str = ""
-    question: str | None = None  # set when status == "needs_user"
     forge_js: str = ""  # emit artifact, compiled in parallel during generate
 
 
@@ -148,7 +147,6 @@ def _finalize(
     failure_category: FailureCategory | None,
     failure_detail: str | None,
     message: str,
-    question: str | None = None,
 ) -> LoopResult:
     """Build + write the trace and return the LoopResult."""
     plan_dict = plan_to_dict(plan)
@@ -175,7 +173,6 @@ def _finalize(
         final_plan=plan_dict,
         failure_category=failure_category.value if failure_category else None,
         message=message,
-        question=question,
         forge_js=art.forge_js or "",
     )
 
@@ -202,8 +199,8 @@ def run_geometry_loop(
         history: Conversation history to thread into replans.
 
     Returns:
-        A LoopResult with status success | failed | needs_user, always with a
-        trace written and (on non-success) a failure_category set.
+        A LoopResult with status success | failed, always with a trace written
+        and (on failure) a failure_category set.
     """
     plan = initial_plan
     art = _Artifacts()
@@ -239,19 +236,6 @@ def run_geometry_loop(
         attempt_for_stage = outer_attempts if is_outer else inner_attempts
         category = category_for_stage(failure.stage)
 
-        if failure.stage == "verifier_error":
-            return _finalize(
-                run_id=run_id,
-                prompt=original_prompt,
-                plan=plan,
-                art=art,
-                status="failed",
-                attempts=attempts,
-                failure_category=category,
-                failure_detail=failure.detail,
-                message="visual verifier failed",
-            )
-
         if is_exhausted(failure.stage, attempt_for_stage):
             return _finalize(
                 run_id=run_id,
@@ -265,27 +249,24 @@ def run_geometry_loop(
                 message=f"exhausted attempts at stage '{failure.stage}'",
             )
 
-        decision = replan_with_feedback(
-            original_prompt=original_prompt,
-            last_plan=plan,
-            failure_stage=failure.stage,
-            detail=failure.detail,
-            prior_history=history,
-            planner_fn=planner_fn,
-        )
-        if decision.action == "ask_user":
+        try:
+            plan = replan_with_feedback(
+                original_prompt=original_prompt,
+                last_plan=plan,
+                failure_stage=failure.stage,
+                detail=failure.detail,
+                prior_history=history,
+                planner_fn=planner_fn,
+            )
+        except Exception as exc:
             return _finalize(
                 run_id=run_id,
                 prompt=original_prompt,
                 plan=plan,
                 art=art,
-                status="needs_user",
+                status="failed",
                 attempts=attempts,
-                failure_category=FailureCategory.user_ambiguity,
-                failure_detail=failure.detail,
-                message="planner needs clarification",
-                question=decision.question,
+                failure_category=category_for_stage("replan_error"),
+                failure_detail=str(exc),
+                message="replanner failed to produce a corrected plan",
             )
-        if decision.plan is None:
-            raise RuntimeError("planner returned plan_ready without a plan")
-        plan = decision.plan

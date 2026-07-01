@@ -60,9 +60,9 @@ def build_trace(
 ) -> dict[str, Any]:
     """Assemble the full trace payload for one attempt (pure, no I/O).
 
-    `status` is "success" | "failed" | "needs_user". A non-success status MUST
-    carry a `failure_category`; this is asserted so a failure can never slip
-    through uncategorised.
+    `status` is "success" | "failed". A non-success status MUST carry a
+    `failure_category`; this is asserted so a failure can never slip through
+    uncategorised.
     """
     if status != "success" and failure_category is None:
         raise ValueError(f"status '{status}' requires a failure_category (PRD §14)")

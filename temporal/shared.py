@@ -26,10 +26,9 @@ class DesignStage:
     INSPECTING = "inspecting"  # MeshLib watertight / manifold check
     REPAIRING = "repairing"    # MeshLib repair (only when inspect fails)
     VERIFYING = "verifying"    # multimodal verify against intent
-    REPLANNING = "replanning"  # no-tools replanner fixing the plan after a failure (loop-back)
+    REPLANNING = "replanning"  # scoped replanner fixing the plan after a failure (loop-back)
     DONE = "done"
     FAILED = "failed"
-    NEEDS_USER = "needs_user"
 
 
 @dataclass
@@ -47,12 +46,11 @@ class DesignInput:
 class DesignResult:
     """Outcome returned by the DesignWorkflow to the workflow starter."""
 
-    status: str  # "success" | "failed" | "needs_user"
+    status: str  # "success" | "failed"
     final_plan: dict[str, Any] = field(default_factory=dict)
     run_id: str = ""
     failure_category: str = ""
     message: str = ""
-    question: str = ""
 
 
 # ── Per-activity I/O contracts ──────────────────────────────────────────────────
@@ -190,7 +188,7 @@ class VerifyOutput:
 
 @dataclass
 class ReplanInput:
-    """Input to replan_activity: the failure to fix + context for the full-tool replanner."""
+    """Input to replan_activity: the failure to fix + context for the scoped replanner."""
 
     original_prompt: str
     last_plan_dict: dict[str, Any]
@@ -202,11 +200,15 @@ class ReplanInput:
 
 @dataclass
 class ReplanOutput:
-    """Replanner decision: a corrected plan, or a question escalated to the user."""
+    """Replanner outcome: a corrected plan, or a categorized failure.
 
-    action: str  # "plan_ready" | "ask_user"
+    There is no ask_user branch — the replanner always attempts a fix; ok=False
+    means it could not (exception, exhausted budget), not that it asked a question.
+    """
+
+    ok: bool
     plan_dict: dict[str, Any] = field(default_factory=dict)
-    question: str = ""
+    error: str = ""
 
 
 @dataclass

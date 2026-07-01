@@ -1,20 +1,26 @@
-"""Per-turn RLM planner: one user message in, one typed decision out.
+"""Per-turn RLM planner: one user message in, one validated PrimitivePlan out.
 
 The backend re-invokes `run_planner_turn` on every user message with the full
-chat history. The RLM either asks one more clarifying question or, once it has
-enough, emits a validated PrimitivePlan. That two-way decision is the
-`PlannerOutput` model below, used as the fast-rlm `output_schema` so the
-model's FINAL value is schema-checked before we ever see it.
+chat history. The RLM must always resolve the request to a validated
+PrimitivePlan — there is no clarifying-question escape hatch; ambiguity gets
+resolved with reasonable defaults, not punted back to the user. output_schema
+is the PrimitivePlan itself, so the model's FINAL is schema-checked (and
+self-corrected on mismatch) by fast-rlm before we ever see it.
 
 This module owns the *pure* pieces (the output contract, the task prompt, the
 result parser). The single impure call — `fast_rlm.run` — is isolated in
 `run_planner_turn` so everything else is unit-testable without network or cost.
+
+Callers must handle exceptions: run_planner_turn/run_replanner_turn raise on
+unrecoverable failure (budget exhausted, no FINAL emitted, a schema mismatch
+fast-rlm's own retry loop couldn't resolve) instead of masking it as a fake
+user-facing question.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +36,6 @@ def _llm_kwargs() -> dict:
 
     return LLM_KWARGS
 
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Tools the planner may call inside its REPL. Imported as objects so fast-rlm
 # can extract their source; they must stay self-contained (see rlm/pull_tools).
@@ -68,37 +72,26 @@ _PLANNER_TOOLS = [
 # so the bloat is the monolithic root's per-step context growth + flash's step count,
 # not delegation alone.
 
-
-class PlannerOutput(BaseModel):
-    """The planner's typed FINAL: either a question for the user, or a plan.
-
-    `action` discriminates. For ask_user, `question` is required (and
-    `suggested_options` is encouraged). For plan_ready, `plan` is required.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    action: Literal["ask_user", "plan_ready"]
-    question: str | None = None
-    suggested_options: list[str] = Field(default_factory=list)
-    plan: PrimitivePlan | None = None
-
-    @model_validator(mode="after")
-    def _fields_match_action(self) -> PlannerOutput:
-        if self.action == "ask_user":
-            if not self.question:
-                raise ValueError("action 'ask_user' requires a non-empty 'question'")
-        elif self.action == "plan_ready":
-            if self.plan is None:
-                raise ValueError("action 'plan_ready' requires a 'plan'")
-        return self
+_REPLANNER_TOOLS = [
+    read_skill,
+    list_skills,
+    list_primitives,
+    lookup_primitive,
+    list_kb_index,
+    fetch_kb_sections,
+    lookup_design_reference,
+]
+# delegate_features intentionally absent: a replan edits ONE existing plan, it
+# never decomposes a new assembly, so the fork tool has no legitimate use here.
+# If you add a new tool to _PLANNER_TOOLS, it does NOT automatically appear here
+# — add it explicitly only if the replanner genuinely needs it.
 
 
-def parse_planner_result(result: Any) -> PlannerOutput:
-    """Validate a fast-rlm FINAL dict into a PlannerOutput (raises on mismatch)."""
-    if isinstance(result, PlannerOutput):
+def parse_planner_result(result: Any) -> PrimitivePlan:
+    """Validate a fast-rlm FINAL dict into a PrimitivePlan (raises on mismatch)."""
+    if isinstance(result, PrimitivePlan):
         return result
-    return PlannerOutput.model_validate(result)
+    return PrimitivePlan.model_validate(result)
 
 
 def build_planner_query(
@@ -131,15 +124,14 @@ def build_planner_query(
     return query
 
 
-
 def run_planner_turn(
     original_prompt: str,
     chat_history: list[dict[str, str]],
     *,
     backend_url: str,
     config: RLMConfig | None = None,
-) -> PlannerOutput:
-    """Run one planner turn against the RLM and return its typed decision.
+) -> PrimitivePlan:
+    """Run one planner turn against the RLM and return its validated plan.
 
     Args:
         original_prompt: The user's first request.
@@ -149,8 +141,13 @@ def run_planner_turn(
         config: Optional fast-rlm RLMConfig; defaults to rlm.rlm_config.config.
 
     Returns:
-        A PlannerOutput — action="ask_user" (question + options) or
-        action="plan_ready" (validated PrimitivePlan).
+        A validated PrimitivePlan.
+
+    Raises:
+        Whatever fast-rlm/parse_planner_result raise on unrecoverable failure
+        (budget exhaustion, no FINAL emitted, a schema mismatch the engine's own
+        retry loop couldn't resolve). Callers must handle this — there is no
+        graceful ask_user fallback here.
     """
     import os
 
@@ -176,59 +173,30 @@ def run_planner_turn(
     except Exception:
         kb_index = None
 
-    try:
-        result = fast_rlm.run(
-            build_planner_query(
-                original_prompt,
-                chat_history,
-                available_primitives=available_primitives,
-            ),
-            config=config,
-            tools=_PLANNER_TOOLS,
-            output_schema=dict,
-            env_variables={
-                "DTCM_BACKEND_URL": backend_url,
-            },
-            llm_kwargs=_llm_kwargs(),
-        )
-        return parse_planner_result(result["results"])
-    except Exception:
-        # CONTAINMENT: the fast-rlm engine raises on budget exhaustion ("Did not
-        # finish the function stack before subagent died"), MAXIMUM DEPTH REACHED,
-        # a TypeError from a misused batch_llm_query, or a Pyodide JsException.
-        # parse_planner_result also raises: KeyError when no FINAL was emitted,
-        # or ValidationError on a malformed FINAL. None of these may reach the
-        # user as a stack trace or hang the Temporal workflow — collapse them all
-        # into a clean ask_user turn the caller already knows how to surface.
-        logger.exception("planner turn failed; returning graceful ask_user")
-        return PlannerOutput(
-            action="ask_user",
-            question=(
-                "I ran into an internal error while planning and couldn't finish "
-                "a design. Could you restate or simplify your request so I can try again?"
-            ),
-        )
+    result = fast_rlm.run(
+        build_planner_query(
+            original_prompt,
+            chat_history,
+            available_primitives=available_primitives,
+        ),
+        config=config,
+        tools=_PLANNER_TOOLS,
+        output_schema=PrimitivePlan,
+        env_variables={
+            "DTCM_BACKEND_URL": backend_url,
+        },
+        llm_kwargs=_llm_kwargs(),
+    )
+    return parse_planner_result(result["results"])
 
-############################################# IGNORE replanner, placeholder code, doesnt work
+
 REPLANNER_TASK = """\
-You are a single-purpose FORK-AND-RETURN agent: spawned by the geometry workflow to
-fix ONE failed PrimitivePlan and return the corrected plan to your parent. You are
-isolated (no tools, fresh context) and you speak only to the parent that spawned you.
+You are the REPLANNER. A plan already exists and needs ONE revision — the request
+is in the last message of chat_history, along with the current plan.
 
-The failure details and the prior plan are in chat_history (the last system message).
-Your job:
-
-1. Read the failure message in chat_history[-1]["content"].
-2. Identify which parameter(s) caused the failure.
-3. Call FINAL immediately with the corrected plan_ready — change only what is broken.
-   OR call FINAL with ask_user if fixing requires information only the user can provide.
-
-Rules:
-- Do NOT call any tools (no list_primitives, no lookup_primitive, no web_search).
-- Do NOT re-derive the plan from scratch — keep all correct steps unchanged.
-- Change the minimum needed to fix the reported failure.
-- Do NOT inspect chat history strings or system variables; output FINAL directly.
-- Emit FINAL in your very first REPL block. No intermediate steps.
+Load your replan playbook guide first — it has your steps and output contract.
+Change only what the request calls for; keep every other step unchanged. Emit
+FINAL in as few REPL steps as possible.
 """
 
 
@@ -236,40 +204,50 @@ def run_replanner_turn(
     original_prompt: str,
     chat_history: list[dict[str, str]],
     *,
+    backend_url: str | None = None,
     config: RLMConfig | None = None,
-) -> PlannerOutput:
-    """Run one replan turn — no tools, immediate FINAL, used after geometry failure.
+) -> PrimitivePlan:
+    """Run one replan turn against the scoped replanner toolset (no fork tool).
 
-    Unlike run_planner_turn this gives the model NO tools. It just sees the
-    failure message in chat_history and must emit a corrected plan or ask_user
-    in a single REPL step.  No tool calls = no timeouts = fast replan.
+    Args:
+        original_prompt: The user's original request.
+        chat_history: Prior turns plus the trailing feedback/edit system message
+            (see runtime.replan.replan_with_feedback).
+        backend_url: Base URL of the product backend, injected into the REPL as
+            DTCM_BACKEND_URL so the read-only pull tools can reach it.
+        config: Optional fast-rlm RLMConfig; defaults to rlm.rlm_config.config.
+
+    Returns:
+        A validated, corrected PrimitivePlan.
+
+    Raises:
+        Same as run_planner_turn — no graceful ask_user fallback. Callers
+        (replan_activity / the in-process loop) handle the failure explicitly.
     """
+    import os
+
     import fast_rlm
 
     if config is None:
         from rlm.rlm_config import config as default_config
         config = default_config
 
+    if backend_url:
+        os.environ["DTCM_BACKEND_URL"] = backend_url
+
     query = {
         "task": REPLANNER_TASK,
         "original_prompt": original_prompt,
         "chat_history": chat_history,
     }
-    try:
-        result = fast_rlm.run(
-            query,
-            config=config,
-            tools=_PLANNER_TOOLS,
-            output_schema=PlannerOutput,
-            llm_kwargs=_llm_kwargs(),
-        )
-        return parse_planner_result(result["results"])
-    except Exception:
-        logger.exception("replanner turn failed; returning graceful ask_user")
-        return PlannerOutput(
-            action="ask_user",
-            question=(
-                "I ran into an internal error while replanning. "
-                "Could you clarify or simplify the request so I can try again?"
-            ),
-        )
+    result = fast_rlm.run(
+        query,
+        config=config,
+        tools=_REPLANNER_TOOLS,
+        output_schema=PrimitivePlan,
+        env_variables={
+            "DTCM_BACKEND_URL": backend_url or "",
+        },
+        llm_kwargs=_llm_kwargs(),
+    )
+    return parse_planner_result(result["results"])

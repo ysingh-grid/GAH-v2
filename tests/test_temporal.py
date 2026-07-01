@@ -53,11 +53,12 @@ class TestDesignResult:
         r = DesignResult(status="success")
         # forge_js is gone (forge path removed in the scope reduction)
         assert not hasattr(r, "forge_js")
+        # no ask_user escalation path — needs_user status is gone
+        assert not hasattr(r, "question")
         assert r.final_plan == {}
         assert r.run_id == ""
         assert r.failure_category == ""
         assert r.message == ""
-        assert r.question == ""
 
     def test_failed_fields(self):
         r = DesignResult(
@@ -66,11 +67,6 @@ class TestDesignResult:
         )
         assert r.status == "failed"
         assert r.failure_category == "geometry_invalidity"
-
-    def test_needs_user_fields(self):
-        r = DesignResult(status="needs_user", question="What radius?")
-        assert r.status == "needs_user"
-        assert r.question == "What radius?"
 
     def test_final_plan_is_independent_dict(self):
         r1, r2 = DesignResult(status="success"), DesignResult(status="success")

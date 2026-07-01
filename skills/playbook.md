@@ -87,11 +87,18 @@ then hand each solid off to be planned separately, and flatten the results
 into your `steps` before `FINAL`. See `part_decomposition` for the Case A/B
 distinction and worked examples.
 
+**EXACTLY ONE `base` step, always — even for disjoint bodies.** A plan is one
+tree with one root. If the design has multiple physically separate bodies
+(a hinge's base plate + top plate + pin, a bolt + nut), only the FIRST one you
+place is `operation: "base"`. Every other body — even one that doesn't touch
+anything yet — is still `operation: "union"`, never a second `base`. A union
+of disjoint solids is legal; it produces one multi-component compound. Two
+`base` steps is always a validation error, no exceptions.
+
 ```repl
-FINAL({"action": "plan_ready",
-       "plan": {"part_name": "block",
-                "steps": [{"id": "body", "primitive": "box", "operation": "base",
-                           "parameters": {"length": 50.0, "width": 30.0, "height": 20.0}}]}})
+FINAL({"part_name": "block",
+       "steps": [{"id": "body", "primitive": "box", "operation": "base",
+                  "parameters": {"length": 50.0, "width": 30.0, "height": 20.0}}]})
 ```
 
 **Re-planning after failure** (`prior_feedback` present): reason over the feedback
@@ -104,7 +111,7 @@ inline, change the broken parameter(s), re-emit.
 ```
 [YOU: PLAN]  inputs = prompt + context (+ prior_feedback on a retry)
    read context → build steps inline → FINAL
-   FINAL(output_dict)                ← validated by parse_planner_result before anything runs
+   FINAL(plan_dict)                  ← validated by parse_planner_result before anything runs
         │
         ▼   (the plan LEAVES your sandbox — everything below runs on the host/Temporal)
 [HOST: EXECUTE]
@@ -134,35 +141,27 @@ inline, change the broken parameter(s), re-emit.
 
 ## 7. Output contract
 
-`FINAL` must be a **PlannerOutput** dictionary containing your `action` and `plan` (or `question`):
+`FINAL` must be a **PrimitivePlan** dictionary directly — no wrapper, no other
+shape. There is no clarifying-question option: resolve ambiguity yourself with
+the context you have and reasonable defaults, and always emit a plan.
 
 ```python
 FINAL({
-    "action": "plan_ready",
-    "plan": {
-        "part_name": "target_part",
-        "steps": [
-            { "id": str, "primitive": <catalog key>,
-              "operation": "base" | "union" | "cut" | "intersect",
-              "parameters": { ...matches the primitive's library schema... },
-              "position": [x, y, z], "orientation": [rx, ry, rz],
-              "pattern": { "type": "polar"|"linear", "count": N, ... }  ← optional
-            }
-        ]
-    }
+    "part_name": "target_part",
+    "steps": [
+        { "id": str, "primitive": <catalog key>,
+          "operation": "base" | "union" | "cut" | "intersect",
+          "parameters": { ...matches the primitive's library schema... },
+          "position": [x, y, z], "orientation": [rx, ry, rz],
+          "pattern": { "type": "polar"|"linear", "count": N, ... }  ← optional
+        }
+    ]
 })
 ```
 
-If asking clarifying questions instead of emitting a plan:
-```python
-FINAL({
-    "action": "ask_user",
-    "question": "Clarifying question here...",
-    "suggested_options": ["Option A", "Option B"]
-})
-```
-
-Your output is validated by `parse_planner_result` before any geometry tool runs.
+Your output is validated against this schema before any geometry tool runs —
+if it doesn't validate (e.g. more than one `base` step), you'll be asked to
+correct it, so get the invariants in §3 and §4 right the first time.
 
 ---
 
