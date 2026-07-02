@@ -438,6 +438,11 @@ chore(deps): upgrade SQLAlchemy to 2.0.35
 - Debug `print()` statements
 - Hardcoded credentials or localhost URLs
 
+### Commit Attribution
+- Never mention Claude, Claude Code, or any AI tool as author/co-author of a commit.
+- No `Co-Authored-By: Claude` trailers, no "Generated with Claude Code" footers.
+- Commit messages read as authored by the human dev, plain and simple.
+
 ---
 
 ## 📋 DOCUMENTATION STANDARDS

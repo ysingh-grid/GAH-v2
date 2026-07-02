@@ -59,7 +59,13 @@ _INSPECT_TIMEOUT = timedelta(minutes=2)
 _REPAIR_TIMEOUT = timedelta(minutes=3)
 _RENDER_TIMEOUT = timedelta(minutes=2)
 _VERIFY_TIMEOUT = timedelta(minutes=3)
-_REPLAN_TIMEOUT = timedelta(minutes=3)
+# Effectively uncapped: the 3min budget killed replans mid-flight even after a
+# valid plan was produced (subprocess.communicate() got CancelledError while the
+# underlying fast-rlm process had already finished). replan_activity now runs the
+# scoped, no-fork run_replanner_turn (runtime/planner.py) which is bounded by
+# design (single-block FINAL, no delegate_features) — the outer cap here is a
+# safety ceiling, not the real constraint.
+_REPLAN_TIMEOUT = timedelta(hours=1)
 _TRACE_TIMEOUT = timedelta(seconds=30)
 
 # No Temporal-level retries: the workflow itself is the bounded retry loop. Letting
@@ -211,21 +217,6 @@ class DesignWorkflow:
                 inner += 1
                 attempt_for_stage = inner
 
-            # A verifier transport/parse/config failure is not a geometry problem,
-            # so do not spend replan attempts changing a plan that was not judged.
-            if failure_stage == "verifier_error":
-                self._stage = DesignStage.FAILED
-                await self._record(inp, plan_dict, code, execution_result, mesh_report,
-                                   renders, verdict, status="failed", attempts=inner + outer,
-                                   failure_stage=failure_stage, failure_detail=failure_detail)
-                return DesignResult(
-                    status="failed",
-                    final_plan=plan_dict,
-                    run_id=inp.run_id,
-                    failure_category=category_for_stage(failure_stage).value,
-                    message="visual verifier failed",
-                )
-
             # ── EXHAUSTED: give up, tag the canonical failure category ────────
             if is_exhausted(failure_stage, attempt_for_stage):
                 self._stage = DesignStage.FAILED
@@ -241,7 +232,9 @@ class DesignWorkflow:
                 )
 
             # ── REPLAN ────────────────────────────────────────────────────────
-            # Full-tool planner fixes the plan from the failure message, or asks the user.
+            # Scoped replanner fixes the plan from the failure message. It always
+            # attempts a fix — no ask_user escalation; rep.ok=False means it
+            # genuinely couldn't (exception/exhaustion), which we tag "failed".
             # Distinct REPLANNING stage (not PLANNING) so the chat UI shows the loop-back.
             self._stage = DesignStage.REPLANNING
             rep = await workflow.execute_activity(
@@ -257,16 +250,17 @@ class DesignWorkflow:
                 schedule_to_close_timeout=_REPLAN_TIMEOUT,
                 retry_policy=_NO_RETRY,
             )
-            if rep.action == "ask_user":
-                self._stage = DesignStage.NEEDS_USER
+            if not rep.ok:
+                self._stage = DesignStage.FAILED
                 await self._record(inp, plan_dict, code, execution_result, mesh_report,
-                                   renders, verdict, status="needs_user", attempts=inner + outer,
-                                   failure_stage=failure_stage, failure_detail=failure_detail)
+                                   renders, verdict, status="failed", attempts=inner + outer,
+                                   failure_stage="replan_error", failure_detail=rep.error)
                 return DesignResult(
-                    status="needs_user",
+                    status="failed",
                     final_plan=plan_dict,
                     run_id=inp.run_id,
-                    question=rep.question,
+                    failure_category=category_for_stage("replan_error").value,
+                    message=rep.error or "replanner failed to produce a corrected plan",
                 )
             plan_dict = rep.plan_dict  # corrected plan → next attempt
 

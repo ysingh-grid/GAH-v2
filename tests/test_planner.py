@@ -9,11 +9,11 @@ import pytest
 from pydantic import ValidationError
 
 from runtime.planner import (
-    PlannerOutput,
     build_planner_query,
     parse_planner_result,
     run_planner_turn,
 )
+from runtime.schema import PrimitivePlan
 
 _CUBE_PLAN = {
     "part_name": "cube",
@@ -31,52 +31,37 @@ _CUBE_PLAN = {
 # ── output contract ──────────────────────────────────────────────────────────
 
 
-def test_ask_user_output_is_valid():
-    out = PlannerOutput.model_validate(
-        {
-            "action": "ask_user",
-            "question": "What wall thickness do you want?",
-            "suggested_options": ["1.5 mm", "2 mm", "3 mm"],
-        }
-    )
-    assert out.action == "ask_user"
-    assert out.plan is None
-
-
-def test_ask_user_without_question_raises():
-    with pytest.raises(ValidationError, match="requires a non-empty 'question'"):
-        PlannerOutput.model_validate({"action": "ask_user"})
-
-
-def test_plan_ready_output_carries_validated_plan():
-    out = parse_planner_result({"action": "plan_ready", "plan": _CUBE_PLAN})
-    assert out.action == "plan_ready"
-    assert out.plan is not None
-    assert out.plan.part_name == "cube"
-    assert out.plan.steps[0].primitive == "box"
+def test_plan_result_carries_validated_plan():
+    out = parse_planner_result(_CUBE_PLAN)
+    assert out.part_name == "cube"
+    assert out.steps[0].primitive == "box"
 
 
 def test_parse_planner_result_accepts_already_validated_model():
-    expected = PlannerOutput.model_validate(
-        {"action": "plan_ready", "plan": _CUBE_PLAN}
-    )
+    expected = PrimitivePlan.model_validate(_CUBE_PLAN)
     assert parse_planner_result(expected) is expected
 
 
-def test_plan_ready_without_plan_raises():
-    with pytest.raises(ValidationError, match="requires a 'plan'"):
-        PlannerOutput.model_validate({"action": "plan_ready"})
-
-
-def test_plan_ready_with_structurally_invalid_plan_raises():
-    bad = {"action": "plan_ready", "plan": {"part_name": "x", "steps": []}}
+def test_plan_with_no_steps_raises():
     with pytest.raises(ValidationError):
-        PlannerOutput.model_validate(bad)
+        parse_planner_result({"part_name": "x", "steps": []})
+
+
+def test_plan_with_two_base_steps_raises():
+    bad = {
+        "part_name": "x",
+        "steps": [
+            {"id": "a", "primitive": "box", "operation": "base"},
+            {"id": "b", "primitive": "box", "operation": "base"},
+        ],
+    }
+    with pytest.raises(ValidationError, match="exactly one 'base'"):
+        parse_planner_result(bad)
 
 
 def test_extra_fields_forbidden():
     with pytest.raises(ValidationError):
-        PlannerOutput.model_validate({"action": "ask_user", "question": "q", "bogus": 1})
+        parse_planner_result({**_CUBE_PLAN, "bogus": 1})
 
 
 # ── query assembly ───────────────────────────────────────────────────────────
@@ -96,7 +81,7 @@ def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
 
     def fake_run(*args, **kwargs):
         captured.update(kwargs)
-        return {"results": {"action": "plan_ready", "plan": _CUBE_PLAN}}
+        return {"results": _CUBE_PLAN}
 
     monkeypatch.setattr(fast_rlm, "run", fake_run)
     monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box"])
@@ -109,9 +94,26 @@ def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
         config={},
     )
 
-    assert out.action == "plan_ready"
-    assert captured["output_schema"] is PlannerOutput
+    assert out.part_name == "cube"
+    assert captured["output_schema"] is PrimitivePlan
     assert captured["env_variables"]["DTCM_BACKEND_URL"] == "http://backend.test"
+
+
+def test_run_planner_turn_propagates_exception(monkeypatch):
+    """No ask_user fallback — an unrecoverable RLM failure must raise, not be masked."""
+    import fast_rlm
+
+    def fake_run(*args, **kwargs):
+        raise RuntimeError("budget exhausted")
+
+    monkeypatch.setattr(fast_rlm, "run", fake_run)
+    monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box"])
+    monkeypatch.setattr("runtime.planner.list_kb_index", lambda: {})
+
+    with pytest.raises(RuntimeError, match="budget exhausted"):
+        run_planner_turn(
+            "make a 60mm cube", [], backend_url="http://backend.test", config={}
+        )
 
 
 # ── live turn (opt-in) ───────────────────────────────────────────────────────
@@ -127,4 +129,4 @@ def test_live_planner_turn_returns_typed_output():
         chat_history=[],
         backend_url=backend_url,
     )
-    assert out.action in ("ask_user", "plan_ready")
+    assert out.part_name

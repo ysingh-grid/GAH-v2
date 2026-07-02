@@ -81,11 +81,18 @@ anchors first (shared radii, planes, bolt-circle positions, overlap amounts),
 then hand each solid off to be planned separately, and flatten the results
 into your `steps` before `FINAL`. See `decompose_and_select` for Case A/B rules.
 
+**EXACTLY ONE `base` step, always — even for disjoint bodies.** A plan is one
+tree with one root. If the design has multiple physically separate bodies
+(a hinge's base plate + top plate + pin, a bolt + nut), only the FIRST one you
+place is `operation: "base"`. Every other body — even one that doesn't touch
+anything yet — is still `operation: "union"`, never a second `base`. A union
+of disjoint solids is legal; it produces one multi-component compound. Two
+`base` steps is always a validation error, no exceptions.
+
 ```repl
-FINAL({"action": "plan_ready",
-       "plan": {"part_name": "block",
-                "steps": [{"id": "body", "primitive": "box", "operation": "base",
-                           "parameters": {"length": 50.0, "width": 30.0, "height": 20.0}}]}})
+FINAL({"part_name": "block",
+       "steps": [{"id": "body", "primitive": "box", "operation": "base",
+                  "parameters": {"length": 50.0, "width": 30.0, "height": 20.0}}]})
 ```
 
 **Re-planning after failure** (`prior_feedback` present): load `refine_from_feedback`,
@@ -133,18 +140,15 @@ reason over the feedback inline, change the broken parameter(s), re-emit.
 
 ```python
 FINAL({
-    "action": "plan_ready",
-    "plan": {
-        "part_name": "target_part",
-        "steps": [
-            { "id": str, "primitive": <catalog key>,
-              "operation": "base" | "union" | "cut" | "intersect",
-              "parameters": { ...matches the primitive's library schema... },
-              "position": [x, y, z], "orientation": [rx, ry, rz],
-              "pattern": { "type": "polar"|"linear", "count": N, ... }  ← optional
-            }
-        ]
-    }
+    "part_name": "target_part",
+    "steps": [
+        { "id": str, "primitive": <catalog key>,
+          "operation": "base" | "union" | "cut" | "intersect",
+          "parameters": { ...matches the primitive's library schema... },
+          "position": [x, y, z], "orientation": [rx, ry, rz],
+          "pattern": { "type": "polar"|"linear", "count": N, ... }  ← optional
+        }
+    ]
 })
 ```
 

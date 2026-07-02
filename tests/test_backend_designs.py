@@ -135,53 +135,21 @@ def test_ws_non_message_event_ignored(client):
     """Sending an event with type != 'message' should not crash the handler."""
     design_id = client.post("/designs").json()["design_id"]
 
-    with patch("backend.designs.runner.run_planner_turn") as mock_planner:
-        mock_planner.return_value = _ask_user_output("What size?")
+    with (
+        patch("backend.designs.runner.run_planner_turn") as mock_planner,
+        patch("backend.designs.runner.run_geometry_loop") as mock_loop,
+    ):
+        mock_planner.return_value = _plan_ready_output()
+        mock_loop.return_value = _loop_result("success")
         with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
             ws.send_json({"type": "ping"})  # ignored
             ws.send_json({"type": "message", "text": "make a box"})
             evt1 = ws.receive_json()  # thinking
-            evt2 = ws.receive_json()  # ask_user
+            evt2 = ws.receive_json()  # generating
             # exit context → server gets WebSocketDisconnect, exits cleanly
 
     assert evt1["type"] == "thinking"
-    assert evt2["type"] == "ask_user"
-
-
-def test_ws_ask_user_flow(client):
-    """Planner returns ask_user → client receives thinking then ask_user event."""
-    design_id = client.post("/designs").json()["design_id"]
-
-    with patch("backend.designs.runner.run_planner_turn") as mock_planner:
-        mock_planner.return_value = _ask_user_output(
-            "What material?", options=["steel", "aluminium"]
-        )
-        with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
-            ws.send_json({"type": "message", "text": "I need a bracket"})
-            evt1 = ws.receive_json()  # thinking
-            evt2 = ws.receive_json()  # ask_user
-
-    assert evt1["type"] == "thinking"
-    assert evt2["type"] == "ask_user"
-    assert evt2["question"] == "What material?"
-    assert "steel" in evt2["options"]
-
-
-def test_ws_history_grows_after_ask_user(client):
-    """History must record user message AND planner question after ask_user."""
-    design_id = client.post("/designs").json()["design_id"]
-
-    with patch("backend.designs.runner.run_planner_turn") as mock_planner:
-        mock_planner.return_value = _ask_user_output("What width?")
-        with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
-            ws.send_json({"type": "message", "text": "make a plate"})
-            ws.receive_json()  # thinking
-            ws.receive_json()  # ask_user
-
-    session = design_store.get_session(design_id)
-    roles = [h["role"] for h in session.history]
-    assert "user" in roles
-    assert "planner" in roles
+    assert evt2["type"] == "generating"
 
 
 def test_ws_image_attachment_hits_intake_before_planner(client):
@@ -349,23 +317,24 @@ def test_ws_plan_ready_failed_flow(mock_planner, mock_loop, client):
 
 @patch("backend.designs.runner.run_geometry_loop")
 @patch("backend.designs.runner.run_planner_turn")
-def test_ws_plan_ready_needs_user_flow(mock_planner, mock_loop, client):
-    """loop returns needs_user → needs_user event, session status = needs_user."""
+def test_ws_plan_ready_replan_failure_flow(mock_planner, mock_loop, client):
+    """loop can no longer escalate to needs_user — a replan failure is just 'failed'."""
     mock_planner.return_value = _plan_ready_output()
-    mock_loop.return_value = _loop_result("needs_user", question="Which axis to extrude?")
+    mock_loop.return_value = _loop_result(
+        "failed", category="geometry_invalidity", message="replanner failed to produce a corrected plan"
+    )
 
     design_id = client.post("/designs").json()["design_id"]
     with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
         ws.send_json({"type": "message", "text": "make a flange"})
-        ws.receive_json()   # thinking
-        ws.receive_json()   # generating
-        nu_evt = ws.receive_json()  # needs_user
+        events = _collect_ws_events(ws)
 
-    assert nu_evt["type"] == "needs_user"
-    assert "axis" in nu_evt["question"]
+    types = [e["type"] for e in events]
+    assert "failed" in types
+    assert "needs_user" not in types
 
     session = design_store.get_session(design_id)
-    assert session.status == "needs_user"
+    assert session.status == "failed"
 
 
 @patch("backend.designs.runner.run_planner_turn")
@@ -385,19 +354,9 @@ def test_ws_planner_exception_sends_error_event(mock_planner, client):
 
 # ── Helpers (build typed return values for mocks) ────────────────────────────
 
-def _ask_user_output(question: str, options: list[str] | None = None):
-    from runtime.planner import PlannerOutput
-    return PlannerOutput(
-        action="ask_user",
-        question=question,
-        suggested_options=options or [],
-    )
-
-
 def _plan_ready_output(plan=None):
-    from runtime.planner import PlannerOutput
     from runtime.schema import Operation, PrimitivePlan, PrimitiveStep
-    plan = plan or PrimitivePlan(
+    return plan or PrimitivePlan(
         part_name="box_test",
         steps=[
             PrimitiveStep(
@@ -408,13 +367,12 @@ def _plan_ready_output(plan=None):
             )
         ],
     )
-    return PlannerOutput(action="plan_ready", plan=plan)
 
 
 def _loop_result(
     status: str,
     category: str | None = None,
-    question: str | None = None,
+    message: str | None = None,
 ) -> MagicMock:
     from runtime.loop import LoopResult
     return LoopResult(
@@ -424,8 +382,7 @@ def _loop_result(
         attempts=1,
         final_plan={"part_name": "box_test", "steps": []},
         failure_category=category,
-        message=f"loop {status}",
-        question=question,
+        message=message or f"loop {status}",
     )
 
 

@@ -11,7 +11,7 @@ activity does exactly ONE coarse stage and returns a typed result:
   generate_activity  — compile CadQuery + .forge.js (parallel), execute, inspect,
                        repair, render  -> GenerateOutput
   verify_activity    — multimodal verify against intent                -> VerifyOutput
-  replan_activity    — full-tool planner fixes the plan from a failure -> ReplanOutput
+  replan_activity    — scoped replanner fixes the plan from a failure  -> ReplanOutput
   record_trace_activity — write the auditable trace.json (artifact store)
 
 Timeouts and retry policy live on the workflow side, not here.
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Pure single-attempt helpers shared with the in-process loop (runtime is the
 # canonical, Temporal-free home of stage logic; temporal/ depends on runtime/).
 from runtime.loop import _Artifacts, _run_geometry, _run_verify
-from runtime.planner import run_planner_turn
+from runtime.planner import run_replanner_turn
 from runtime.replan import replan_with_feedback
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from runtime.trace import build_trace, category_for_stage, write_trace
@@ -179,12 +179,13 @@ def verify_activity(inp: VerifyInput) -> VerifyOutput:
 
 @activity.defn
 def replan_activity(inp: ReplanInput) -> ReplanOutput:
-    """REPLANNING: fix the plan from the failure message via the FULL planner.
+    """REPLANNING: fix the plan from the failure message via the scoped replanner.
 
     Reuses runtime.replan.replan_with_feedback (which appends the stage-tagged
-    feedback to history) with the full run_planner_turn injected — so a replan has
-    all the planner's pull tools (list_primitives / lookup_primitive / KB /
-    design_reference) and can fix wrong-primitive/approach errors, not just dims.
+    feedback to history) with run_replanner_turn injected — a scoped agent with
+    the planner's read-only pull tools (list_primitives / lookup_primitive / KB /
+    design_reference) but WITHOUT delegate_features (no forking; a replan edits
+    one existing plan, it never decomposes a new assembly).
 
     The pull tools are HTTP clients to the backend; this activity runs in the
     WORKER container, so we resolve the backend URL from the worker's own
@@ -198,7 +199,7 @@ def replan_activity(inp: ReplanInput) -> ReplanOutput:
         backend_url = os.environ.get("BACKEND_URL") or inp.backend_url
 
         def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
-            return run_planner_turn(original_prompt, history, backend_url=backend_url)
+            return run_replanner_turn(original_prompt, history, backend_url=backend_url)
 
         out = replan_with_feedback(
             original_prompt=inp.original_prompt,
@@ -208,23 +209,15 @@ def replan_activity(inp: ReplanInput) -> ReplanOutput:
             prior_history=inp.history,
             planner_fn=planner_fn,
         )
-
-        if out.action == "ask_user":
-            return ReplanOutput(action="ask_user", question=out.question or "")
-        return ReplanOutput(action="plan_ready", plan_dict=plan_to_dict(out.plan))
-    except Exception:
-        # CONTAINMENT: run_planner_turn already returns gracefully (Phase 1), but
-        # replan_with_feedback or plan_to_dict can still raise. Never let an
-        # uncaught exception here crash the Temporal workflow — return ask_user so
-        # the workflow surfaces a clean needs_user result instead of dying.
-        logger.exception("replan_activity failed; returning ask_user fallback")
-        return ReplanOutput(
-            action="ask_user",
-            question=(
-                "I hit an internal error while trying to fix the plan. "
-                "Could you restate or simplify your request?"
-            ),
-        )
+        return ReplanOutput(ok=True, plan_dict=plan_to_dict(out))
+    except Exception as exc:
+        # run_replanner_turn no longer catches its own failures (no ask_user
+        # fallback) — budget exhaustion, no FINAL emitted, or a schema mismatch
+        # fast-rlm's retry loop couldn't resolve all land here. Never let an
+        # uncaught exception crash the Temporal workflow — return ok=False so
+        # the workflow surfaces a clean categorized "failed" result instead.
+        logger.exception("replan_activity failed")
+        return ReplanOutput(ok=False, error=str(exc))
 
 
 @activity.defn

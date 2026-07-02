@@ -3,8 +3,7 @@
 Runs each prompt in dataset_v2/{t1,t2,t3}.jsonl through the FULL agent pipeline
 (planner -> geometry loop) in tier order, logging per test:
 
-  - planner decision (plan_ready / ask_user)
-  - last stage reached + status (success / failed / needs_user / exception)
+  - last stage reached + status (success / failed / plan_error / exception)
   - WHERE it broke: failure_category + failure_detail (or exception traceback)
   - the produced STL path "all the way" (outputs/<id>/solid.stl[_repaired]) + size
   - the trace.json path (full last state) and attempt count
@@ -156,12 +155,10 @@ def _run_one(test: dict[str, Any], *, backend_url: str, verify: bool, out_dir: P
         "tier": test.get("tier"),
         "prompt": prompt,
         "ts": datetime.now(UTC).isoformat(),
-        "planner_action": None,
         "status": None,
         "last_stage": "planning",
         "failure_category": None,
         "failure_detail": None,
-        "question": None,
         "attempts": 0,
         "run_id": test_id,
         "stl_path": None,
@@ -176,24 +173,14 @@ def _run_one(test: dict[str, Any], *, backend_url: str, verify: bool, out_dir: P
         "error": None,
     }
     try:
-        decision = run_planner_turn(prompt, [], backend_url=backend_url)
-        rec["planner_action"] = decision.action
-        if decision.action == "ask_user":
-            rec["status"] = "needs_user"
-            rec["last_stage"] = "planning"
-            rec["question"] = decision.question
-            return rec
-        if decision.plan is None:
-            rec["status"] = "plan_error"
-            rec["failure_detail"] = "planner returned plan_ready without a plan"
-            return rec
+        plan = run_planner_turn(prompt, [], backend_url=backend_url)
 
         def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
-            return run_replanner_turn(original_prompt, history)
+            return run_replanner_turn(original_prompt, history, backend_url=backend_url)
 
         result = run_geometry_loop(
             original_prompt=prompt,
-            initial_plan=decision.plan,
+            initial_plan=plan,
             planner_fn=planner_fn,
             library=load_library(),
             run_id=test_id,
@@ -204,7 +191,6 @@ def _run_one(test: dict[str, Any], *, backend_url: str, verify: bool, out_dir: P
             attempts=result.attempts,
             failure_category=result.failure_category,
             failure_detail=result.message,
-            question=result.question,
             trace_path=result.trace_path,
             forge_js_bytes=len(result.forge_js or ""),
             last_stage="done" if result.status == "success" else "geometry/verify",
@@ -231,8 +217,8 @@ def _run_one(test: dict[str, Any], *, backend_url: str, verify: bool, out_dir: P
 
 def _fmt_line(rec: dict[str, Any]) -> str:
     """One human-readable log line summarising a test outcome."""
-    flag = {"success": "PASS", "failed": "FAIL", "needs_user": "ASK",
-            "exception": "ERR ", "plan_error": "PLAN"}.get(rec["status"] or "", "????")
+    flag = {"success": "PASS", "failed": "FAIL",
+            "exception": "ERR "}.get(rec["status"] or "", "????")
     stl = f"stl={rec['stl_bytes']}B" if rec["stl_exists"] else "stl=NONE"
     where = rec["failure_category"] or rec["last_stage"]
     cmp = rec.get("cq_compare") or {}
@@ -241,7 +227,7 @@ def _fmt_line(rec: dict[str, Any]) -> str:
     else:
         comp = "vsREF=n/a"
     return (f"[{flag}] {rec['id']:<7} {rec['elapsed_s']:>5}s  {stl:<11} {comp:<22} "
-            f"stage={where:<18} {(rec['failure_detail'] or rec['question'] or '')[:70]}")
+            f"stage={where:<18} {(rec['failure_detail'] or '')[:70]}")
 
 
 def main() -> None:

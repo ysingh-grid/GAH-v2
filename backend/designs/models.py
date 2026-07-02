@@ -6,7 +6,6 @@ events. Status transitions:
 
   chatting → generating → done
                        ↘ failed
-                       ↘ needs_user → (user answers) → generating → ...
 """
 
 from __future__ import annotations
