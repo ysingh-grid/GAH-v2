@@ -17,8 +17,11 @@ from backend.kb_read.routes import router as kb_router
 from backend.primitives_read.routes import router as primitives_router
 from backend.skills_read.routes import router as skills_router
 from backend.web_search.routes import router as web_search_router
+import json
+import time
 
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+_OUTPUTS_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
 
 def create_app() -> FastAPI:
@@ -48,6 +51,41 @@ def create_app() -> FastAPI:
         return {
             "forgecad_studio_url": os.environ.get("FORGECAD_STUDIO_URL", ""),
             "backend_url": os.environ.get("BACKEND_URL", ""),
+        }
+
+    @app.get("/api/runs")
+    def list_runs() -> dict:
+        """List all runs from the outputs directory."""
+        runs = []
+        if _OUTPUTS_DIR.exists():
+            for d in _OUTPUTS_DIR.iterdir():
+                if d.is_dir():
+                    created_at = d.stat().st_ctime
+                    status = "success" if (d / "solid.stl").exists() else "failed"
+                    runs.append({
+                        "run_id": d.name,
+                        "created_at": created_at,
+                        "status": status,
+                    })
+        runs.sort(key=lambda x: x["created_at"], reverse=True)
+        return {"runs": runs}
+
+    @app.get("/api/analytics")
+    def get_analytics() -> dict:
+        """Aggregate analytics from the outputs directory."""
+        total = 0
+        success = 0
+        if _OUTPUTS_DIR.exists():
+            for d in _OUTPUTS_DIR.iterdir():
+                if d.is_dir():
+                    total += 1
+                    if (d / "solid.stl").exists():
+                        success += 1
+        return {
+            "total_runs": total,
+            "success_rate": f"{(success/total*100):.1f}%" if total > 0 else "0.0%",
+            "successful_runs": success,
+            "failed_runs": total - success
         }
 
     app.include_router(primitives_router)

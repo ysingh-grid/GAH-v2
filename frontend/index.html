@@ -4,30 +4,29 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GAH — Text-to-CAD</title>
-  <!--
-    Override before app.js loads:
-      window.BACKEND_URL         = 'http://localhost:8001';
-      window.FORGECAD_STUDIO_URL = 'http://localhost:4000';
-  -->
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+  <!-- Top Navigation Bar (Glassmorphic) -->
+  <div class="ga-nav">
+    <a class="ga-nav-btn" href="#" onclick="window.__gah.reset(); return false;">New run</a>
+    <a class="ga-nav-btn" href="#" onclick="window.__gah.showView('runs'); return false;">Runs</a>
+    <a class="ga-nav-btn" href="#" onclick="window.__gah.showView('analytics'); return false;">Analytics</a>
+    <a class="ga-nav-btn" href="#" id="ga-temporal-link" onclick="window.__gah.openTemporal(); return false;">
+      <span id="ga-temporal-dot" class="ga-status-dot ga-dot-unknown"></span> Temporal ↗
+    </a>
+    <span class="ga-spacer"></span>
+    <a class="ga-nav-btn ga-handoff-btn" href="#" id="ga-handoff-link" onclick="window.__gah.openForgeCAD(); return false;">
+      <span id="ga-forgecad-dot" class="ga-status-dot ga-dot-unknown"></span> 🚀 Open in ForgeCAD Studio ↗
+    </a>
+  </div>
+
   <!-- Full-viewport main area -->
   <div id="ga-main">
 
-    <!-- Hero — until first design -->
-    <div id="ga-hero">
-      <div class="ga-hero-inner">
-        <div class="ga-hero-logo">✦</div>
-        <h1>Text to <span class="ga-grad">CAD</span></h1>
-        <p>Describe a part — AI clarifies dimensions, geometry checks it, ForgeCAD renders it.</p>
-        <div class="ga-hero-hint">Click <span class="ga-hint-key">✦</span> to start</div>
-      </div>
-    </div>
-
-    <!-- ForgeCAD Studio iframe (visible when FORGECAD_STUDIO_URL is set) -->
-    <div id="ga-studio" style="display:none; width:100%; height:100%;">
+    <!-- ForgeCAD Studio iframe (visible on success) -->
+    <div id="ga-studio-view" class="ga-view" style="display:none; padding: 0;">
       <iframe
         id="ga-iframe"
         src="about:blank"
@@ -37,99 +36,70 @@
       ></iframe>
     </div>
 
-    <!-- .forge.js code view (fallback when studio not configured) -->
-    <div id="ga-code" style="display:none;">
-      <div class="ga-code-bar">
-        <div class="ga-dots-row">
-          <span class="ga-tdot red"></span>
-          <span class="ga-tdot amber"></span>
-          <span class="ga-tdot green"></span>
+    <!-- Form View -->
+    <div id="ga-form-view" class="ga-view">
+      <div class="ga-form-container">
+        <h2>Design prompt</h2>
+        <textarea id="ga-input" placeholder="e.g. design a centrifugal compressor impeller" aria-label="Design prompt"></textarea>
+        
+        <h2>Reference image (optional)</h2>
+        <div class="ga-file-upload">
+          <button class="ga-btn-secondary" onclick="document.getElementById('ga-file').click()">Choose file</button>
+          <span id="ga-file-name">No file chosen</span>
+          <input type="file" id="ga-file" style="display:none;" accept="image/*" onchange="document.getElementById('ga-file-name').textContent = this.files[0] ? this.files[0].name : 'No file chosen'">
         </div>
-        <span class="ga-code-label">generated_part.forge.js</span>
-        <button id="ga-copy-btn" onclick="window.__gah.copyCode()">Copy</button>
+        
+        <div class="ga-form-actions">
+          <button id="ga-send" class="ga-btn-primary" onclick="window.__gah.send()">Get clarifying questions →</button>
+        </div>
+
+        <!-- Assistant Questions / Progress UI injected here -->
+        <div id="ga-assistant-area"></div>
       </div>
-      <div class="ga-code-scroll"><pre id="ga-code-pre"></pre></div>
+    </div>
+
+    <!-- Runs View -->
+    <div id="ga-runs-view" class="ga-view" style="display: none;">
+      <div class="ga-container">
+        <h1>Run History</h1>
+        <div class="ga-table-container">
+          <table class="ga-table" id="ga-runs-table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics View -->
+    <div id="ga-analytics-view" class="ga-view" style="display: none;">
+      <div class="ga-container">
+        <h1>Analytics Dashboard</h1>
+        <div class="ga-metric-cards" id="ga-analytics-cards">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Service Unavailable View (shown when user clicks a dead link) -->
+    <div id="ga-unavailable-view" class="ga-view" style="display: none;">
+      <div class="ga-container" style="text-align:center;">
+        <div style="font-size:48px; margin-bottom:16px;" id="ga-unavail-icon">🔌</div>
+        <h1 id="ga-unavail-title">Service Not Running</h1>
+        <p id="ga-unavail-msg" style="color:var(--fa-text2); margin:16px 0 24px; line-height:1.6;"></p>
+        <button class="ga-btn-primary" onclick="window.__gah.showView('form'); return false;">← Back to Design</button>
+      </div>
     </div>
 
   </div><!-- #ga-main -->
-
-  <!-- FAB -->
-  <button id="ga-fab" onclick="window.__gah.toggle()" title="AI Design Assistant" aria-label="AI Design Assistant">
-    <span id="ga-fab-icon">✦</span>
-    <span id="ga-notif"></span>
-  </button>
-
-  <!-- Sliding panel (forge-assistant.js style) -->
-  <div id="ga-panel" role="complementary" aria-label="Design assistant">
-
-    <!-- Header -->
-    <div id="ga-header">
-      <div class="ga-header-left">
-        <div class="ga-title">🔬 Measurement Assistant <span class="ga-badge">AI</span></div>
-        <div class="ga-sub">Clarifies dimensions before CAD generation</div>
-      </div>
-      <div class="ga-header-right">
-        <span id="ga-conn-dot" class="ga-conn-dot" title="Disconnected"></span>
-        <button id="ga-close" onclick="window.__gah.toggle()" aria-label="Close">✕</button>
-      </div>
-    </div>
-
-    <!-- Params strip -->
-    <div id="ga-params">
-      <div class="ga-params-title">✓ Captured measurements</div>
-      <div id="ga-chips" class="ga-chips"></div>
-    </div>
-
-    <!-- Message body -->
-    <div id="ga-body" role="log" aria-live="polite">
-      <div class="ga-msg assistant">
-        <div class="ga-bubble">
-          👋 Hi! I'm your <strong>measurement assistant</strong>.<br><br>
-          Tell me what part you want to design and I'll ask the right questions to nail down every dimension — then generate it directly in ForgeCAD.
-        </div>
-        <div class="ga-time">Just now</div>
-      </div>
-    </div>
-
-    <!-- Suggestion chips -->
-    <div id="ga-suggestions">
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A mounting bracket with 4 bolt holes</button>
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A hexagonal knob, M6 through-hole</button>
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A flanged cylinder, DN25 pipe</button>
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">An enclosure box with lid</button>
-    </div>
-
-    <!-- Progress panel (visible during generating) -->
-    <div id="ga-progress">
-      <div class="ga-prog-header">
-        <span>Generating…</span>
-        <span id="ga-prog-stage"></span>
-      </div>
-      <div id="ga-stage-row" class="ga-stage-row"></div>
-      <div id="ga-prog-msg"></div>
-    </div>
-
-    <!-- Done banner -->
-    <div id="ga-done">
-      <div class="ga-done-title">✅ Design complete!</div>
-      <div class="ga-done-sub">ForgeCAD is updating your viewport…</div>
-      <div class="ga-done-file" id="ga-done-file"></div>
-    </div>
-
-    <!-- Input row -->
-    <div id="ga-input-row">
-      <textarea
-        id="ga-input"
-        rows="1"
-        placeholder="Describe your part or answer a question…"
-        oninput="window.__gah.resize(this)"
-        onkeydown="window.__gah.key(event)"
-        aria-label="Message input"
-      ></textarea>
-      <button id="ga-send" onclick="window.__gah.send()" aria-label="Send">➤</button>
-    </div>
-
-  </div><!-- #ga-panel -->
 
   <script src="app.js"></script>
 </body>
