@@ -1,30 +1,29 @@
 from typing import Any
 
 
-def inspect_mesh(stl_path: str) -> dict:
-    """
-    Inspects the mesh geometry from an STL file using MeshLib.
-    Checks for watertightness, manifold quality, open edges, and volume.
+def inspect_mesh(stl_path: str) -> dict[str, Any]:
+    """Inspect an STL mesh with MeshLib (the canonical mesh authority).
 
-    NOTE on singularities: CadQuery exports sharp-tipped cones with 1 open boundary
-    edge at the apex point. This is expected OCCT tessellation behaviour and is NOT
-    a mesh defect. We allow up to 1 singular (zero-length) open edge before failing.
+    Reports watertightness (boundary holes), self-intersections, connected
+    components, volume, bounding box, and face/vertex counts. A mesh "passes"
+    when it is a single watertight component with no self-intersections — the
+    geometric-validity gate before visual verification.
+
+    MeshLib is the only backend (no trimesh fallback, per design): a MeshLib
+    load/inspect failure returns success=False so the loop routes it back to the
+    RLM as a mesh failure rather than silently degrading.
 
     Args:
-        stl_path: Absolute path to the STL file.
+        stl_path: Path to the STL file.
 
     Returns:
-        A dictionary containing:
-        - success: bool
-        - is_watertight: bool
-        - open_edges: int         (count of true boundary edges)
-        - singular_edges: int     (count of zero-length degenerate edges, e.g. cone apex)
-        - volume_mm3: float
-        - is_manifold: bool
-        - face_count: int         (number of triangular faces in the mesh)
-        - vertex_count: int       (number of mesh vertices)
-        - passes: bool            (overall quality — True if watertight OR only singular apex edges)
-        - error: str              (optional, only present if success=False)
+        On success:
+          {"success": True, "is_watertight": bool, "open_holes": int,
+           "self_intersections": int, "num_components": int, "passes": bool,
+           "volume_mm3": float, "faces_count": int, "vertex_count": int,
+           "bbox": {"xmin"..."zmax"}}
+        On failure:
+          {"success": False, "error": str, "traceback": str}
     """
     import os
     import traceback
@@ -33,43 +32,44 @@ def inspect_mesh(stl_path: str) -> dict:
         return {"success": False, "error": f"STL file not found at {stl_path}"}
 
     try:
-        from meshlib import mrmeshpy as mr
+        import meshlib.mrmeshpy as mr
 
         mesh = mr.loadMesh(stl_path)
+        topology = mesh.topology
 
-        # Watertightness — no open boundary loops
-        topo = mesh.topology
-        is_watertight = bool(topo.isClosed())
+        open_holes = len(topology.findHoleRepresentiveEdges())
+        is_watertight = open_holes == 0
+        self_intersections = len(mr.findSelfCollidingTriangles(mesh))
+        num_components = mr.MeshComponents.getNumComponents(mesh)
 
-        # Volume (can be negative if normals are inverted)
-        volume = abs(float(mesh.volume()))
+        box = mesh.computeBoundingBox()
+        bbox = {
+            "xmin": box.min.x,
+            "ymin": box.min.y,
+            "zmin": box.min.z,
+            "xmax": box.max.x,
+            "ymax": box.max.y,
+            "zmax": box.max.z,
+        }
 
-        # Manifold structure validity
-        is_manifold = bool(topo.checkValidity())
-
-        # Count true boundary vs singular degenerate edges
-        true_open_count, singular_count = _count_boundary_edges(mesh)
-
-        # PASSES if:
-        #   - no true open boundary edges (only allowed to have singular apex edges)
-        #   - positive volume
-        passes = bool(true_open_count == 0 and volume > 0.0)
+        passes = is_watertight and self_intersections == 0 and num_components == 1
 
         return {
             "success": True,
             "is_watertight": is_watertight,
-            "open_edges": true_open_count,
-            "singular_edges": singular_count,
-            "volume_mm3": volume,
-            "is_manifold": is_manifold,
-            "face_count": topo.numValidFaces(),
-            "vertex_count": topo.numValidVerts(),
+            "open_holes": open_holes,
+            "self_intersections": self_intersections,
+            "num_components": num_components,
             "passes": passes,
+            "volume_mm3": abs(mesh.volume()),
+            "faces_count": topology.numValidFaces(),
+            "vertex_count": topology.numValidVerts(),
+            "bbox": bbox,
         }
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to inspect STL mesh: {str(e)}",
+            "error": f"MeshLib failed to inspect STL mesh: {e}",
             "traceback": traceback.format_exc(),
         }
 

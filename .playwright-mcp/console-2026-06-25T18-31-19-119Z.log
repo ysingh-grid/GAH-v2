@@ -1,0 +1,20 @@
+[      81ms] [WARNING] An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing. @ about:blank:0
+[     139ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8001/favicon.ico:0
+[   35234ms] [LOG] %c[perf] Startup breakdown font-weight:bold 
+  solver:import: 2ms
+  solver:total: 14ms
+  app:kernelInit: 190ms
+  solver:init: 12ms
+  meshopt:total: 15ms
+  manifold:import: 9ms
+  manifold:total: 130ms
+  manifold:init: 120ms @ http://localhost:4000/assets/EditorApp-CYBDvSyT.js:16761
+[   35234ms] [INFO] [evalWorkerClient] Superseded eval run — replacing worker @ http://localhost:4000/assets/app-BKjogwIZ.js:16154
+[   37849ms] [WARNING] [.WebGL-0x11400452600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://localhost:4000/app/p/workspace#main.forge.js:0
+[   37849ms] [WARNING] [.WebGL-0x11400452600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://localhost:4000/app/p/workspace#main.forge.js:0
+[   37849ms] [WARNING] [.WebGL-0x11400452600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://localhost:4000/app/p/workspace#main.forge.js:0
+[   37849ms] [WARNING] [.WebGL-0x11400452600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat) @ http://localhost:4000/app/p/workspace#main.forge.js:0
+[   37923ms] [LOG] [serialize] 1 obj | getMesh=1ms copy=0ms bb=0ms geomArrays=8ms sketch=0ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:321970
+[   37923ms] [LOG] [worker] seq=2 kernelInit=26ms  run=38ms  serialize=10ms  total=73ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:322332
+[   38549ms] [LOG] window.__forgecadSolver.lastRun {stats: Object, lastExchange: null, lastSolveExchange: null, lastExchangeBundleJson: null, lastSolveExchangeBundleJson: null} @ http://localhost:4000/assets/backendInit-6a9-ilom.js:93627
+[   38549ms] [LOG] [main]   workerRoundTrip=3315ms  deserialize=0ms @ http://localhost:4000/assets/app-BKjogwIZ.js:18462

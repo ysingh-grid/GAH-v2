@@ -1,0 +1,39 @@
+- generic [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: ✦
+    - heading "Text to CAD" [level=1] [ref=e6]
+    - paragraph [ref=e7]: Describe a part — AI clarifies dimensions, geometry checks it, ForgeCAD renders it.
+    - generic [ref=e8]:
+      - text: Click
+      - generic [ref=e9]: ✦
+      - text: to start
+  - button "AI Design Assistant" [ref=e10] [cursor=pointer]:
+    - generic [ref=e11]: ✦
+  - complementary "Design assistant" [ref=e12]:
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - text: 🔬 Measurement Assistant
+          - generic [ref=e16]: AI
+        - generic [ref=e17]: Clarifies dimensions before CAD generation
+      - generic [ref=e18]:
+        - generic "Disconnected" [ref=e19]
+        - button "Close" [ref=e20] [cursor=pointer]: ✕
+    - log [ref=e21]:
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - text: 👋 Hi! I'm your
+          - strong [ref=e24]: measurement assistant
+          - text: .
+          - text: Tell me what part you want to design and I'll ask the right questions to nail down every dimension — then generate it directly in ForgeCAD.
+        - generic [ref=e25]: Just now
+    - generic [ref=e26]:
+      - button "A mounting bracket with 4 bolt holes" [ref=e27] [cursor=pointer]
+      - button "A hexagonal knob, M6 through-hole" [ref=e28] [cursor=pointer]
+      - button "A flanged cylinder, DN25 pipe" [ref=e29] [cursor=pointer]
+      - button "An enclosure box with lid" [ref=e30] [cursor=pointer]
+    - generic [ref=e31]:
+      - textbox "Message input" [active] [ref=e32]:
+        - /placeholder: Describe your part or answer a question…
+        - text: "A wheel: a 30mm diameter central hub joined to an 80mm outer ring by 5 thin radial spokes, all 8mm thick."
+      - button "Send" [ref=e33] [cursor=pointer]: ➤

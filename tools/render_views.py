@@ -19,17 +19,113 @@ def render_views(stl_path: str, run_id: str) -> dict:
            "renders": {"composite": png_path}}
         On failure:
           {"success": False, "error": str}
+
+    Implementation note:
+        VTK's offscreen renderer makes Cocoa/OpenGL calls that must run on the
+        OS main thread. When invoked from a uvicorn thread-pool worker (a
+        background thread), this causes a silent segfault that kills the whole
+        server process. To avoid this, the actual VTK work is performed inside
+        a fresh subprocess — which always starts with its own main thread —
+        and the result is returned as JSON. This is the same pattern used by
+        execute_cadquery.py for CadQuery isolation.
+    """
+    import json
+    import os
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+
+    if not os.path.exists(stl_path):
+        return {"success": False, "error": f"STL file not found at {stl_path}"}
+
+    # Build the Python snippet the subprocess will run.
+    # It imports the private _do_render from this same module and calls it,
+    # then prints the JSON result to stdout so we can capture it.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    wrapper = f"""
+import sys, json, os
+sys.path.insert(0, {repr(repo_root)})
+from tools.render_views import _do_render
+result = _do_render({repr(stl_path)}, {repr(run_id)})
+print(json.dumps(result))
+"""
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w", encoding="utf-8"
+        ) as tmp:
+            tmp.write(wrapper)
+            tmp_path = tmp.name
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
+
+        # The pip VTK wheel uses a GLX/X OpenGL backend that needs a live X
+        # display even with SetOffScreenRendering(1). In a headless container
+        # there is none, so wrap the render in a throwaway virtual framebuffer
+        # via xvfb-run (-a picks a free display number). On macOS dev there is
+        # no xvfb-run and VTK renders offscreen via Cocoa, so fall back to plain.
+        cmd = [sys.executable, tmp_path]
+        if shutil.which("xvfb-run"):
+            cmd = ["xvfb-run", "-a", *cmd]
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,  # generous: VTK startup can be slow on first call
+            env=env,
+        )
+
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+        if proc.returncode != 0:
+            return {
+                "success": False,
+                "error": (
+                    f"render subprocess exited with code {proc.returncode}. "
+                    f"stderr: {proc.stderr[:2000]}"
+                ),
+            }
+
+        output = proc.stdout.strip()
+        if not output:
+            return {
+                "success": False,
+                "error": f"render subprocess produced no output. stderr: {proc.stderr[:2000]}",
+            }
+
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            return {
+                "success": False,
+                "error": f"render subprocess output is not valid JSON: {output[:500]}",
+            }
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "render subprocess timed out after 120 s"}
+    except Exception as exc:
+        return {"success": False, "error": f"render subprocess launch failed: {exc}"}
+
+
+def _do_render(stl_path: str, run_id: str) -> dict:
+    """
+    Execute the VTK three-view render in the *current* process.
+
+    This must only be called from a process whose main thread is available for
+    Cocoa/OpenGL (i.e. NOT from a uvicorn thread-pool worker). Call render_views()
+    instead — it guarantees isolation via a subprocess.
     """
     import os
     import traceback
 
-    from .artifacts import run_dir
+    from tools.artifacts import run_dir
 
     outputs_dir = str(run_dir(run_id))
     out_png = os.path.join(outputs_dir, "threeview.png")
-
-    if not os.path.exists(stl_path):
-        return {"success": False, "error": f"STL file not found at {stl_path}"}
 
     try:
         import numpy as np

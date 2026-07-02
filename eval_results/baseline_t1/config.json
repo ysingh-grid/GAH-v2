@@ -1,0 +1,11 @@
+{
+  "experiment_name": "baseline_t1",
+  "dataset": "dataset_v2",
+  "tiers": [
+    "T1"
+  ],
+  "limit_per_tier": 0,
+  "dry_run": false,
+  "timestamp": "2026-06-22 00:18:41",
+  "mode": "direct"
+}

@@ -19,11 +19,6 @@
         "default": 10.0
       }
     },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height"
-    ],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height})"
   },
   "cylinder": {
@@ -41,10 +36,6 @@
         "default": 10.0
       }
     },
-    "verification": [
-      "measure_radius",
-      "measure_height"
-    ],
     "template": "cq.Workplane(\"XY\").cylinder({height}, {radius})"
   },
   "cone": {
@@ -67,11 +58,6 @@
         "default": 10.0
       }
     },
-    "verification": [
-      "measure_base_diameter",
-      "measure_top_diameter",
-      "measure_height"
-    ],
     "template": "cq.Workplane(\"XY\").add(cq.Solid.makeCone({base_diameter}/2.0, {top_diameter}/2.0, {height}))"
   },
   "sphere": {
@@ -84,9 +70,6 @@
         "default": 5.0
       }
     },
-    "verification": [
-      "measure_radius"
-    ],
     "template": "cq.Workplane(\"XY\").sphere({radius})"
   },
   "torus": {
@@ -104,10 +87,6 @@
         "default": 2.0
       }
     },
-    "verification": [
-      "measure_ring_radius",
-      "measure_tube_radius"
-    ],
     "template": "cq.Workplane(\"XY\").add(cq.Solid.makeTorus({ring_radius}, {tube_radius}))"
   },
   "wedge": {
@@ -150,16 +129,11 @@
         "default": 5.0
       }
     },
-    "verification": [
-      "measure_dx",
-      "measure_dy",
-      "measure_dz"
-    ],
     "template": "cq.Workplane(\"XY\").wedge({dx}, {dy}, {dz}, {xmin}, {ymin}, {xmax}, {ymax})"
   },
   "pyramid": {
     "name": "pyramid",
-    "description": "A pyramid built by extruding a rectangular base with a taper angle.",
+    "description": "A pyramid: rectangular base lofted to an apex point at the given height.",
     "parameters": {
       "length": {
         "type": "float",
@@ -178,16 +152,11 @@
       },
       "taper_angle": {
         "type": "float",
-        "description": "Taper angle in degrees",
+        "description": "Unused (kept for schema compat); apex is a point",
         "default": 30.0
       }
     },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height"
-    ],
-    "template": "cq.Workplane(\"XY\").rect({length}, {width}).extrude({height}, taper={taper_angle})"
+    "template": "cq.Workplane(\"XY\").rect({length}, {width}).workplane(offset={height}).rect(0.001, 0.001).loft(combine=True)"
   },
   "prism": {
     "name": "prism",
@@ -209,11 +178,6 @@
         "default": 10.0
       }
     },
-    "verification": [
-      "measure_sides",
-      "measure_radius",
-      "measure_height"
-    ],
     "template": "cq.Workplane(\"XY\").polygon({sides}, {radius}*2.0).extrude({height})"
   },
   "hexagon_prism": {
@@ -231,10 +195,6 @@
         "default": 10.0
       }
     },
-    "verification": [
-      "measure_flat_to_flat",
-      "measure_height"
-    ],
     "template": "cq.Workplane(\"XY\").polygon(6, {flat_to_flat}, circumscribed=True).extrude({height})"
   },
   "octagonal_prism": {
@@ -252,10 +212,6 @@
         "default": 10.0
       }
     },
-    "verification": [
-      "measure_flat_to_flat",
-      "measure_height"
-    ],
     "template": "cq.Workplane(\"XY\").polygon(8, {flat_to_flat}, circumscribed=True).extrude({height})"
   },
   "hollow_cylinder": {
@@ -278,11 +234,6 @@
         "default": 10.0
       }
     },
-    "verification": [
-      "measure_outer_radius",
-      "measure_inner_radius",
-      "measure_height"
-    ],
     "template": "cq.Workplane(\"XY\").circle({outer_radius}).circle({inner_radius}).extrude({height})"
   },
   "hollow_box": {
@@ -310,21 +261,15 @@
         "default": 1.0
       }
     },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height",
-      "measure_wall_thickness"
-    ],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).faces(\">Z\").shell(-{wall_thickness})"
   },
   "ellipsoid": {
     "name": "ellipsoid",
-    "description": "An ellipsoid defined by revolving a half ellipse profile around the active Y-axis.",
+    "description": "A true ellipsoid: unit sphere scaled to x_radius (X,Y) and z_radius (Z).",
     "parameters": {
       "x_radius": {
         "type": "float",
-        "description": "Radius along X axis",
+        "description": "Radius along X and Y axes",
         "default": 5.0
       },
       "z_radius": {
@@ -333,11 +278,7 @@
         "default": 3.0
       }
     },
-    "verification": [
-      "measure_x_radius",
-      "measure_z_radius"
-    ],
-    "template": "cq.Workplane(\"XY\").ellipseArc({x_radius}, {z_radius}, 0, 180).close().revolve()"
+    "template": "cq.Workplane(\"XY\").add(cq.Workplane(\"XY\").sphere(1.0).val().transformGeometry(cq.Matrix([[{x_radius}, 0, 0, 0], [0, {x_radius}, 0, 0], [0, 0, {z_radius}, 0]])))"
   },
   "capsule": {
     "name": "capsule",
@@ -354,10 +295,6 @@
         "default": 8.0
       }
     },
-    "verification": [
-      "measure_radius",
-      "measure_length"
-    ],
     "template": "cq.Workplane(\"XY\").cylinder({length}, {radius}).union(cq.Workplane(\"XY\").workplane(offset={length}/2.0).sphere({radius})).union(cq.Workplane(\"XY\").workplane(offset=-{length}/2.0).sphere({radius}))"
   },
   "chamfered_box": {
@@ -385,12 +322,6 @@
         "default": 1.0
       }
     },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height",
-      "measure_chamfer"
-    ],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).chamfer({chamfer_val})"
   },
   "filleted_box": {
@@ -418,12 +349,6 @@
         "default": 1.0
       }
     },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height",
-      "measure_fillet"
-    ],
     "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).fillet({fillet_val})"
   },
   "rounded_cylinder": {
@@ -446,11 +371,6 @@
         "default": 0.5
       }
     },
-    "verification": [
-      "measure_radius",
-      "measure_height",
-      "measure_fillet"
-    ],
     "template": "cq.Workplane(\"XY\").cylinder({height}, {radius}).edges().fillet({fillet_val})"
   },
   "ring": {
@@ -473,617 +393,70 @@
         "default": 2.0
       }
     },
-    "verification": [
-      "measure_outer_radius",
-      "measure_inner_radius",
-      "measure_thickness"
-    ],
     "template": "cq.Workplane(\"XY\").circle({outer_radius}).circle({inner_radius}).extrude({thickness})"
   },
-  "triangular_prism": {
-    "name": "triangular_prism",
-    "description": "A prism with a triangular base defined by base_width, base_height, and extrusion height.",
+  "profile_extrude": {
+    "name": "profile_extrude",
+    "description": "Extrude an arbitrary closed 2D polygon profile (list of [x, y] points in mm) to a given height along +Z. Force-multiplier for brackets, cams, gears, and other prismatic parts the fixed primitives can't express.",
     "parameters": {
-      "base_width": {
-        "type": "float",
-        "description": "Width of the triangular base",
-        "default": 10.0
-      },
-      "base_height": {
-        "type": "float",
-        "description": "Height of the triangular base profile",
-        "default": 8.0
+      "profile": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) forming the closed cross-section; do not repeat the first point",
+        "default": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            10.0,
+            0.0
+          ],
+          [
+            0.0,
+            10.0
+          ]
+        ]
       },
       "height": {
         "type": "float",
-        "description": "Extrusion height of the prism",
-        "default": 10.0
-      }
-    },
-    "verification": [
-      "measure_base_width",
-      "measure_base_height",
-      "measure_height"
-    ],
-    "template": "cq.Workplane(\"XY\").moveTo(-{base_width}/2.0, -{base_height}/2.0).lineTo({base_width}/2.0, -{base_height}/2.0).lineTo(0, {base_height}/2.0).close().extrude({height})"
-  },
-  "slot_prism": {
-    "name": "slot_prism",
-    "description": "A prism extruded from a 2D obround/slot profile.",
-    "parameters": {
-      "length": {
-        "type": "float",
-        "description": "Overall length of the slot profile",
-        "default": 15.0
-      },
-      "width": {
-        "type": "float",
-        "description": "Overall width of the slot profile",
-        "default": 5.0
-      },
-      "height": {
-        "type": "float",
-        "description": "Extrusion height of the prism",
-        "default": 10.0
-      }
-    },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height"
-    ],
-    "template": "cq.Workplane(\"XY\").slot2D({length}, {width}).extrude({height})"
-  },
-  "elliptical_cylinder": {
-    "name": "elliptical_cylinder",
-    "description": "A cylinder with an elliptical cross-section.",
-    "parameters": {
-      "x_radius": {
-        "type": "float",
-        "description": "Radius along X axis",
-        "default": 5.0
-      },
-      "y_radius": {
-        "type": "float",
-        "description": "Radius along Y axis",
-        "default": 3.0
-      },
-      "height": {
-        "type": "float",
-        "description": "Extrusion height along Z axis",
-        "default": 10.0
-      }
-    },
-    "verification": [
-      "measure_x_radius",
-      "measure_y_radius",
-      "measure_height"
-    ],
-    "template": "cq.Workplane(\"XY\").ellipse({x_radius}, {y_radius}).extrude({height})"
-  },
-  "elliptical_ring": {
-    "name": "elliptical_ring",
-    "description": "A flat concentric elliptical ring profile extruded to a thickness.",
-    "parameters": {
-      "outer_x_radius": {
-        "type": "float",
-        "description": "Outer radius along X axis",
-        "default": 10.0
-      },
-      "outer_y_radius": {
-        "type": "float",
-        "description": "Outer radius along Y axis",
-        "default": 7.0
-      },
-      "inner_x_radius": {
-        "type": "float",
-        "description": "Inner radius along X axis",
-        "default": 5.0
-      },
-      "inner_y_radius": {
-        "type": "float",
-        "description": "Inner radius along Y axis",
-        "default": 3.0
-      },
-      "thickness": {
-        "type": "float",
-        "description": "Extrusion thickness",
-        "default": 2.0
-      }
-    },
-    "verification": [
-      "measure_outer_x_radius",
-      "measure_outer_y_radius",
-      "measure_inner_x_radius",
-      "measure_inner_y_radius",
-      "measure_thickness"
-    ],
-    "template": "cq.Workplane(\"XY\").ellipse({outer_x_radius}, {outer_y_radius}).ellipse({inner_x_radius}, {inner_y_radius}).extrude({thickness})"
-  },
-  "t_prism": {
-    "name": "t_prism",
-    "description": "A T-shaped prism (T-beam) extruded profile.",
-    "parameters": {
-      "flange_width": {
-        "type": "float",
-        "description": "Width of the top flange",
-        "default": 10.0
-      },
-      "flange_thickness": {
-        "type": "float",
-        "description": "Thickness of the top flange",
-        "default": 2.0
-      },
-      "web_height": {
-        "type": "float",
-        "description": "Height of the web beneath the flange",
-        "default": 8.0
-      },
-      "web_thickness": {
-        "type": "float",
-        "description": "Thickness of the web",
-        "default": 2.0
-      },
-      "length": {
-        "type": "float",
-        "description": "Extrusion length",
-        "default": 20.0
-      }
-    },
-    "verification": [
-      "measure_flange_width",
-      "measure_flange_thickness",
-      "measure_web_height",
-      "measure_web_thickness",
-      "measure_length"
-    ],
-    "template": "cq.Workplane(\"XY\").moveTo(-{flange_width}/2.0, {web_height}/2.0+{flange_thickness}).lineTo({flange_width}/2.0, {web_height}/2.0+{flange_thickness}).lineTo({flange_width}/2.0, {web_height}/2.0).lineTo({web_thickness}/2.0, {web_height}/2.0).lineTo({web_thickness}/2.0, -{web_height}/2.0).lineTo(-{web_thickness}/2.0, -{web_height}/2.0).lineTo(-{web_thickness}/2.0, {web_height}/2.0).lineTo(-{flange_width}/2.0, {web_height}/2.0).close().extrude({length})"
-  },
-  "i_beam": {
-    "name": "i_beam",
-    "description": "An I-shaped beam extruded profile.",
-    "parameters": {
-      "flange_width": {
-        "type": "float",
-        "description": "Width of the flanges",
-        "default": 10.0
-      },
-      "flange_thickness": {
-        "type": "float",
-        "description": "Thickness of the flanges",
-        "default": 2.0
-      },
-      "web_height": {
-        "type": "float",
-        "description": "Distance between the two flanges",
-        "default": 8.0
-      },
-      "web_thickness": {
-        "type": "float",
-        "description": "Thickness of the vertical web",
-        "default": 2.0
-      },
-      "length": {
-        "type": "float",
-        "description": "Extrusion length",
-        "default": 20.0
-      }
-    },
-    "verification": [
-      "measure_flange_width",
-      "measure_flange_thickness",
-      "measure_web_height",
-      "measure_web_thickness",
-      "measure_length"
-    ],
-    "template": "cq.Workplane(\"XY\").moveTo(-{flange_width}/2.0, {web_height}/2.0+{flange_thickness}).lineTo({flange_width}/2.0, {web_height}/2.0+{flange_thickness}).lineTo({flange_width}/2.0, {web_height}/2.0).lineTo({web_thickness}/2.0, {web_height}/2.0).lineTo({web_thickness}/2.0, -{web_height}/2.0).lineTo({flange_width}/2.0, -{web_height}/2.0).lineTo({flange_width}/2.0, -({web_height}/2.0+{flange_thickness})).lineTo(-{flange_width}/2.0, -({web_height}/2.0+{flange_thickness})).lineTo(-{flange_width}/2.0, -{web_height}/2.0).lineTo(-{web_thickness}/2.0, -{web_height}/2.0).lineTo(-{web_thickness}/2.0, {web_height}/2.0).lineTo(-{flange_width}/2.0, {web_height}/2.0).close().extrude({length})"
-  },
-  "l_prism": {
-    "name": "l_prism",
-    "description": "An L-shaped prism (Angle iron) extruded profile.",
-    "parameters": {
-      "flange_x": {
-        "type": "float",
-        "description": "Length of horizontal leg",
-        "default": 10.0
-      },
-      "flange_y": {
-        "type": "float",
-        "description": "Length of vertical leg",
-        "default": 10.0
-      },
-      "thickness": {
-        "type": "float",
-        "description": "Thickness of the legs",
-        "default": 2.0
-      },
-      "length": {
-        "type": "float",
-        "description": "Extrusion length",
-        "default": 20.0
-      }
-    },
-    "verification": [
-      "measure_flange_x",
-      "measure_flange_y",
-      "measure_thickness",
-      "measure_length"
-    ],
-    "template": "cq.Workplane(\"XY\").moveTo(-{flange_x}/2.0, -{flange_y}/2.0).lineTo({flange_x}/2.0, -{flange_y}/2.0).lineTo({flange_x}/2.0, -{flange_y}/2.0 + {thickness}).lineTo(-{flange_x}/2.0 + {thickness}, -{flange_y}/2.0 + {thickness}).lineTo(-{flange_x}/2.0 + {thickness}, {flange_y}/2.0).lineTo(-{flange_x}/2.0, {flange_y}/2.0).close().extrude({length})"
-  },
-  "trapezoidal_prism": {
-    "name": "trapezoidal_prism",
-    "description": "A prism with a trapezoidal profile base.",
-    "parameters": {
-      "base_large": {
-        "type": "float",
-        "description": "Width of the larger parallel side",
-        "default": 10.0
-      },
-      "base_small": {
-        "type": "float",
-        "description": "Width of the smaller parallel side",
-        "default": 6.0
-      },
-      "height_trapezoid": {
-        "type": "float",
-        "description": "Height of the trapezoid profile",
-        "default": 5.0
-      },
-      "length": {
-        "type": "float",
-        "description": "Extrusion length of the prism",
-        "default": 10.0
-      }
-    },
-    "verification": [
-      "measure_base_large",
-      "measure_base_small",
-      "measure_height_trapezoid",
-      "measure_length"
-    ],
-    "template": "cq.Workplane(\"XY\").moveTo(-{base_large}/2.0, -{height_trapezoid}/2.0).lineTo({base_large}/2.0, -{height_trapezoid}/2.0).lineTo({base_small}/2.0, {height_trapezoid}/2.0).lineTo(-{base_small}/2.0, {height_trapezoid}/2.0).close().extrude({length})"
-  },
-  "dome": {
-    "name": "dome",
-    "description": "A dome or hemisphere defined by its radius.",
-    "parameters": {
-      "radius": {
-        "type": "float",
-        "description": "Radius of the dome",
+        "description": "Extrusion height along Z",
         "default": 5.0
       }
     },
-    "verification": [
-      "measure_radius"
-    ],
-    "template": "cq.Workplane(\"XY\").sphere({radius}).cut(cq.Workplane(\"XY\").rect({radius}*3.0, {radius}*3.0).extrude(-{radius}))"
+    "template": "cq.Workplane(\"XY\").polyline({profile}).close().extrude({height})"
   },
-  "pipe": {
-    "name": "pipe",
-    "description": "A hollow cylinder defined by outer diameter and wall thickness.",
+  "revolve": {
+    "name": "revolve",
+    "description": "Revolve a closed 2D profile (list of [x, y] points, all x >= 0) about the Y axis to sweep a solid of revolution. Force-multiplier for bottles, nozzles, flanges, and turned parts.",
     "parameters": {
-      "outer_diameter": {
-        "type": "float",
-        "description": "Outer diameter of the pipe",
-        "default": 10.0
+      "profile": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) with x >= 0; revolved about the line x = 0 (the Y axis)",
+        "default": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            5.0,
+            0.0
+          ],
+          [
+            5.0,
+            10.0
+          ],
+          [
+            0.0,
+            10.0
+          ]
+        ]
       },
-      "wall_thickness": {
+      "angle": {
         "type": "float",
-        "description": "Thickness of the pipe wall",
-        "default": 1.0
-      },
-      "length": {
-        "type": "float",
-        "description": "Length of the pipe",
-        "default": 20.0
+        "description": "Sweep angle in degrees (360 for a full solid of revolution)",
+        "default": 360.0
       }
     },
-    "verification": [
-      "measure_outer_diameter",
-      "measure_wall_thickness",
-      "measure_length"
-    ],
-    "template": "cq.Workplane(\"XY\").circle({outer_diameter}/2.0).circle({outer_diameter}/2.0 - {wall_thickness}).extrude({length})"
-  },
-  "hex_nut_blank": {
-    "name": "hex_nut_blank",
-    "description": "A hexagonal prism with a central clearance hole.",
-    "parameters": {
-      "flat_to_flat": {
-        "type": "float",
-        "description": "Distance between parallel flat faces",
-        "default": 10.0
-      },
-      "hole_diameter": {
-        "type": "float",
-        "description": "Diameter of central clearance hole",
-        "default": 5.0
-      },
-      "height": {
-        "type": "float",
-        "description": "Height of the nut",
-        "default": 5.0
-      }
-    },
-    "verification": [
-      "measure_flat_to_flat",
-      "measure_hole_diameter",
-      "measure_height"
-    ],
-    "template": "cq.Workplane(\"XY\").polygon(6, {flat_to_flat}, circumscribed=True).circle({hole_diameter}/2.0).extrude({height})"
-  },
-  "hex_bolt_blank": {
-    "name": "hex_bolt_blank",
-    "description": "A bolt shape consisting of a hexagonal head and a cylindrical shank.",
-    "parameters": {
-      "head_flat_to_flat": {
-        "type": "float",
-        "description": "Hexagonal head flat-to-flat distance",
-        "default": 10.0
-      },
-      "head_height": {
-        "type": "float",
-        "description": "Height/thickness of the hexagonal head",
-        "default": 4.0
-      },
-      "shank_diameter": {
-        "type": "float",
-        "description": "Diameter of cylindrical shank",
-        "default": 5.0
-      },
-      "shank_length": {
-        "type": "float",
-        "description": "Length of cylindrical shank",
-        "default": 15.0
-      }
-    },
-    "verification": [
-      "measure_head_flat_to_flat",
-      "measure_head_height",
-      "measure_shank_diameter",
-      "measure_shank_length"
-    ],
-    "template": "cq.Workplane(\"XY\").polygon(6, {head_flat_to_flat}, circumscribed=True).extrude({head_height}).faces(\">Z\").workplane().circle({shank_diameter}/2.0).extrude({shank_length})"
-  },
-  "cross_prism": {
-    "name": "cross_prism",
-    "description": "A cross-shaped prism defined by overall length, width, arm thickness, and height.",
-    "parameters": {
-      "length": {
-        "type": "float",
-        "description": "Total length along X axis",
-        "default": 10.0
-      },
-      "width": {
-        "type": "float",
-        "description": "Total width along Y axis",
-        "default": 10.0
-      },
-      "thickness": {
-        "type": "float",
-        "description": "Thickness of the cross arms",
-        "default": 3.0
-      },
-      "height": {
-        "type": "float",
-        "description": "Height along Z axis",
-        "default": 10.0
-      }
-    },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_thickness",
-      "measure_height"
-    ],
-    "template": "cq.Workplane(\"XY\").rect({length}, {thickness}).rect({thickness}, {width}).extrude({height})"
-  },
-  "c_channel": {
-    "name": "c_channel",
-    "description": "A C-channel structural profile defined by overall width, height, thickness, and length.",
-    "parameters": {
-      "width": {
-        "type": "float",
-        "description": "Overall width of the channel",
-        "default": 10.0
-      },
-      "height": {
-        "type": "float",
-        "description": "Overall height of the channel profile",
-        "default": 10.0
-      },
-      "thickness": {
-        "type": "float",
-        "description": "Thickness of the channel walls",
-        "default": 2.0
-      },
-      "length": {
-        "type": "float",
-        "description": "Extrusion length of the channel",
-        "default": 20.0
-      }
-    },
-    "verification": [
-      "measure_width",
-      "measure_height",
-      "measure_thickness",
-      "measure_length"
-    ],
-    "template": "cq.Workplane(\"XY\").moveTo(-{width}/2.0, -{height}/2.0).lineTo({width}/2.0, -{height}/2.0).lineTo({width}/2.0, -{height}/2.0+{thickness}).lineTo(-{width}/2.0+{thickness}, -{height}/2.0+{thickness}).lineTo(-{width}/2.0+{thickness}, {height}/2.0-{thickness}).lineTo({width}/2.0, {height}/2.0-{thickness}).lineTo({width}/2.0, {height}/2.0).lineTo(-{width}/2.0, {height}/2.0).close().extrude({length})"
-  },
-  "counterbore_hole_block": {
-    "name": "counterbore_hole_block",
-    "description": "A rectangular block with a center counterbore hole.",
-    "parameters": {
-      "length": {
-        "type": "float",
-        "description": "Overall length of the block",
-        "default": 15.0
-      },
-      "width": {
-        "type": "float",
-        "description": "Overall width of the block",
-        "default": 15.0
-      },
-      "height": {
-        "type": "float",
-        "description": "Overall height of the block",
-        "default": 10.0
-      },
-      "hole_diameter": {
-        "type": "float",
-        "description": "Pilot hole diameter",
-        "default": 5.0
-      },
-      "cbore_diameter": {
-        "type": "float",
-        "description": "Counterbore diameter",
-        "default": 9.0
-      },
-      "cbore_depth": {
-        "type": "float",
-        "description": "Counterbore depth",
-        "default": 4.0
-      }
-    },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height",
-      "measure_hole_diameter",
-      "measure_cbore_diameter",
-      "measure_cbore_depth"
-    ],
-    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).faces(\">Z\").workplane().cboreHole({hole_diameter}, {cbore_diameter}, {cbore_depth}, depth={height})"
-  },
-  "countersink_hole_block": {
-    "name": "countersink_hole_block",
-    "description": "A rectangular block with a center countersink hole.",
-    "parameters": {
-      "length": {
-        "type": "float",
-        "description": "Overall length of the block",
-        "default": 15.0
-      },
-      "width": {
-        "type": "float",
-        "description": "Overall width of the block",
-        "default": 15.0
-      },
-      "height": {
-        "type": "float",
-        "description": "Overall height of the block",
-        "default": 10.0
-      },
-      "hole_diameter": {
-        "type": "float",
-        "description": "Pilot hole diameter",
-        "default": 5.0
-      },
-      "csink_diameter": {
-        "type": "float",
-        "description": "Countersink diameter",
-        "default": 9.0
-      },
-      "csink_angle": {
-        "type": "float",
-        "description": "Countersink angle in degrees",
-        "default": 82.0
-      }
-    },
-    "verification": [
-      "measure_length",
-      "measure_width",
-      "measure_height",
-      "measure_hole_diameter",
-      "measure_csink_diameter",
-      "measure_csink_angle"
-    ],
-    "template": "cq.Workplane(\"XY\").box({length}, {width}, {height}).faces(\">Z\").workplane().cskHole({hole_diameter}, {csink_diameter}, {csink_angle}, depth={height})"
-  },
-  "shaft_with_keyway": {
-    "name": "shaft_with_keyway",
-    "description": "A cylindrical shaft with a rectangular keyway cut along its side.",
-    "parameters": {
-      "diameter": {
-        "type": "float",
-        "description": "Diameter of the shaft",
-        "default": 10.0
-      },
-      "length": {
-        "type": "float",
-        "description": "Length of the shaft",
-        "default": 30.0
-      },
-      "key_width": {
-        "type": "float",
-        "description": "Width of the keyway",
-        "default": 3.0
-      },
-      "key_depth": {
-        "type": "float",
-        "description": "Depth of the keyway",
-        "default": 1.5
-      },
-      "key_length": {
-        "type": "float",
-        "description": "Length of the keyway from one end",
-        "default": 20.0
-      }
-    },
-    "verification": [
-      "measure_diameter",
-      "measure_length",
-      "measure_key_width",
-      "measure_key_depth",
-      "measure_key_length"
-    ],
-    "template": "cq.Workplane(\"XY\").cylinder({length}, {diameter}/2.0).faces(\">Z\").workplane().center(0, {diameter}/2.0 - {key_depth}/2.0).rect({key_width}, {key_depth}).extrude(-{key_length}, combine=\"cut\")"
-  },
-  "circular_flange": {
-    "name": "circular_flange",
-    "description": "A circular flange pipe connector with a circular pattern of bolt holes.",
-    "parameters": {
-      "outer_diameter": {
-        "type": "float",
-        "description": "Outer diameter of flange disc",
-        "default": 25.0
-      },
-      "thickness": {
-        "type": "float",
-        "description": "Thickness of the flange disc",
-        "default": 4.0
-      },
-      "pipe_diameter": {
-        "type": "float",
-        "description": "Central pipe inner diameter",
-        "default": 10.0
-      },
-      "bolt_circle_diameter": {
-        "type": "float",
-        "description": "Diameter of bolt circle pattern",
-        "default": 18.0
-      },
-      "bolt_hole_diameter": {
-        "type": "float",
-        "description": "Diameter of bolt holes",
-        "default": 3.0
-      },
-      "num_bolt_holes": {
-        "type": "int",
-        "description": "Number of bolt holes in pattern",
-        "default": 6
-      }
-    },
-    "verification": [
-      "measure_outer_diameter",
-      "measure_thickness",
-      "measure_pipe_diameter",
-      "measure_bolt_circle_diameter",
-      "measure_bolt_hole_diameter",
-      "measure_num_bolt_holes"
-    ],
-    "template": "cq.Workplane(\"XY\").circle({outer_diameter}/2.0).circle({pipe_diameter}/2.0).extrude({thickness}).faces(\">Z\").workplane().polarArray({bolt_circle_diameter}/2.0, 0.0, 360.0, {num_bolt_holes}).hole({bolt_hole_diameter})"
+    "template": "cq.Workplane(\"XY\").polyline({profile}).close().revolve({angle}, (0, 0, 0), (0, 1, 0))"
   }
 }

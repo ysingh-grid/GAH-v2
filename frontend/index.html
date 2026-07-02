@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GAH-v2 — Geometry Agent Harness</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <div class="ga-layout">
+
+    <!-- Sidebar -->
+    <aside class="ga-sidebar">
+      <div class="ga-brand">
+        <div class="ga-logo">🤖</div>
+        <div class="ga-title">
+          <h1>GAH-v2</h1>
+          <span>Geometry Agent</span>
+        </div>
+      </div>
+
+      <nav class="ga-nav-menu">
+        <button class="ga-nav-btn active" onclick="window.__gah.showView('new-run')">
+          <span class="icon">✏️</span> New Run
+        </button>
+        <button class="ga-nav-btn" onclick="window.__gah.showView('runs')">
+          <span class="icon">📜</span> Run History
+        </button>
+      </nav>
+
+      <div class="ga-sidebar-divider"></div>
+
+      <!-- ---- ENGINE TOGGLES (replaces the old "External Tools" section) ---- -->
+      <div class="ga-toggle-section">
+        <h3>Pipeline Engine</h3>
+
+        <!-- Temporal Toggle -->
+        <label class="ga-toggle-row" id="ga-temporal-toggle-row">
+          <div class="ga-toggle-info">
+            <span class="ga-toggle-label">Temporal Pipeline</span>
+            <span class="ga-toggle-desc" id="ga-temporal-desc">Off — in-process executor</span>
+          </div>
+          <div class="ga-toggle-switch">
+            <input type="checkbox" id="ga-temporal-check" onchange="window.__gah.toggleTemporal(this.checked)">
+            <span class="ga-toggle-slider"></span>
+          </div>
+        </label>
+
+        <!-- ForgeCAD Toggle -->
+        <label class="ga-toggle-row" id="ga-forgecad-toggle-row">
+          <div class="ga-toggle-info">
+            <span class="ga-toggle-label">ForgeCAD Preview</span>
+            <span class="ga-toggle-desc" id="ga-forgecad-desc">Off — download only</span>
+          </div>
+          <div class="ga-toggle-switch">
+            <input type="checkbox" id="ga-forgecad-check" onchange="window.__gah.toggleForgeCAD(this.checked)">
+            <span class="ga-toggle-slider"></span>
+          </div>
+        </label>
+      </div>
+
+      <!-- ---- SERVICE STATUS (real health checks, not no-cors) ---- -->
+      <div class="ga-toggle-section">
+        <h3>Service Status</h3>
+        <div class="ga-status-row" id="ga-temporal-status">
+          <span class="ga-status-dot offline"></span>
+          <span class="ga-status-text">Temporal</span>
+          <a class="ga-status-link" href="#" onclick="window.__gah.openTemporal(); return false;" title="Open Temporal Dashboard">↗</a>
+        </div>
+        <div class="ga-status-row" id="ga-forgecad-status">
+          <span class="ga-status-dot offline"></span>
+          <span class="ga-status-text">ForgeCAD</span>
+          <a class="ga-status-link" href="#" onclick="window.__gah.openForgeCAD(); return false;" title="Open ForgeCAD Studio">↗</a>
+        </div>
+        <div class="ga-status-row" id="ga-backend-status">
+          <span class="ga-status-dot offline"></span>
+          <span class="ga-status-text">Backend API</span>
+        </div>
+      </div>
+
+      <div class="ga-sidebar-footer">
+        <p>v0.2.0 — AI-Powered CAD</p>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="ga-content">
+
+      <!-- New Run View -->
+      <section id="ga-new-run-view" class="ga-view ga-dashboard">
+
+        <!-- Left: Prompt + Controls -->
+        <div class="ga-panel ga-panel-form">
+          <div class="ga-panel-header">
+            <h2>Design Prompt</h2>
+            <button class="ga-btn-secondary ga-btn-sm" onclick="window.__gah.reset()">New Run</button>
+          </div>
+
+          <textarea id="ga-input" placeholder="Describe your 3D part in plain language...&#10;&#10;e.g., A mounting bracket 100mm x 80mm x 5mm thick with four M4 clearance holes at the corners and 3mm filleted edges."></textarea>
+
+          <div class="ga-file-row">
+            <button class="ga-btn-secondary ga-btn-sm" onclick="document.getElementById('ga-file').click()">📎 Attach Image</button>
+            <span id="ga-file-name">No file chosen</span>
+            <input type="file" id="ga-file" style="display:none;" accept="image/*" onchange="document.getElementById('ga-file-name').textContent = this.files[0] ? this.files[0].name : 'No file chosen'">
+          </div>
+
+          <button id="ga-send" class="ga-btn-primary ga-btn-block" onclick="window.__gah.send()">🚀 Generate 3D Model</button>
+
+          <!-- Inline assistant area (clarifications) -->
+          <div id="ga-assistant-box" class="ga-assistant-box" style="display:none;">
+            <div id="ga-assistant-content"></div>
+          </div>
+        </div>
+
+        <!-- Right: Live Trace Console -->
+        <div class="ga-panel ga-panel-trace">
+          <div class="ga-panel-header">
+            <h2>🧠 Live Agent Trace</h2>
+            <span id="ga-status-badge" class="ga-status-badge idle">Idle</span>
+          </div>
+          <div class="ga-trace-body" id="ga-trace-output">
+            <div class="ga-trace-line ga-trace-meta">System ready. Enter a design prompt to start.</div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Run History View -->
+      <section id="ga-runs-view" class="ga-view" style="display:none;">
+        <div class="ga-panel" style="max-width:1000px; margin:0 auto;">
+          <div class="ga-panel-header">
+            <h2>Run History</h2>
+            <span id="ga-runs-count" class="ga-text-muted"></span>
+          </div>
+          <div class="ga-table-wrap">
+            <table class="ga-table">
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Prompt</th>
+                  <th>Status</th>
+                  <th>Time</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="ga-runs-tbody"></tbody>
+            </table>
+          </div>
+          <div id="ga-runs-empty" style="display:none; text-align:center; padding:40px; color:var(--text-muted);">
+            No runs yet. Create one from the New Run tab.
+          </div>
+        </div>
+      </section>
+
+      <!-- ForgeCAD Studio View -->
+      <section id="ga-studio-view" class="ga-view" style="display:none; padding:0; height:100%;">
+        <div class="ga-studio-toolbar">
+          <button class="ga-btn-secondary ga-btn-sm" onclick="window.__gah.showView('new-run')">← Back</button>
+          <span class="ga-studio-title" id="ga-studio-run-label">Live Preview</span>
+          <div class="ga-studio-actions">
+            <button class="ga-btn-secondary ga-btn-sm" id="ga-btn-dl-stl">⬇ STL</button>
+            <button class="ga-btn-secondary ga-btn-sm" id="ga-btn-dl-step">⬇ STEP</button>
+            <button class="ga-btn-secondary ga-btn-sm" id="ga-btn-view-trace">📋 Trace</button>
+          </div>
+        </div>
+        <div class="ga-iframe-wrap">
+          <iframe id="ga-studio-iframe" src="about:blank" title="ForgeCAD Studio" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+        </div>
+      </section>
+
+      <!-- Trace Viewer Modal -->
+      <div id="ga-trace-modal" class="ga-modal" style="display:none;">
+        <div class="ga-modal-overlay" onclick="window.__gah.closeTrace()"></div>
+        <div class="ga-modal-body">
+          <div class="ga-modal-header">
+            <h3>Run Trace</h3>
+            <button class="ga-btn-secondary ga-btn-sm" onclick="window.__gah.closeTrace()">✕</button>
+          </div>
+          <div id="ga-trace-content" class="ga-trace-content"></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

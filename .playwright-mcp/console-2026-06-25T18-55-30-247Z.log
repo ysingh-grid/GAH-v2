@@ -1,0 +1,47 @@
+[     250ms] [WARNING] An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing. @ about:blank:0
+[    9754ms] [LOG] %c[perf] Startup breakdown font-weight:bold 
+  solver:import: 1ms
+  solver:total: 6ms
+  app:kernelInit: 49ms
+  solver:init: 5ms
+  meshopt:total: 5ms
+  manifold:import: 6ms
+  manifold:total: 36ms
+  manifold:init: 30ms @ http://localhost:4000/assets/EditorApp-CYBDvSyT.js:16761
+[   13251ms] [LOG] [serialize] 1 obj | getMesh=0ms copy=0ms bb=0ms geomArrays=0ms sketch=0ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:321970
+[   13252ms] [LOG] [worker] seq=1 kernelInit=27ms  run=24ms  serialize=1ms  total=52ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:322332
+[   14347ms] [LOG] window.__forgecadSolver.lastRun {stats: Object, lastExchange: null, lastSolveExchange: null, lastExchangeBundleJson: null, lastSolveExchangeBundleJson: null} @ http://localhost:4000/assets/backendInit-6a9-ilom.js:93627
+[   14347ms] [LOG] [main]   workerRoundTrip=4576ms  deserialize=0ms @ http://localhost:4000/assets/app-BKjogwIZ.js:18462
+[   24361ms] [WARNING] An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing. @ about:blank:0
+[   26704ms] [LOG] %c[perf] Startup breakdown font-weight:bold 
+  solver:import: 0ms
+  solver:total: 5ms
+  app:kernelInit: 14ms
+  solver:init: 4ms
+  meshopt:total: 3ms
+  manifold:import: 3ms
+  manifold:total: 7ms
+  manifold:init: 4ms @ http://localhost:4000/assets/EditorApp-CYBDvSyT.js:16761
+[   29547ms] [LOG] [serialize] 1 obj | getMesh=1ms copy=0ms bb=0ms geomArrays=0ms sketch=0ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:321970
+[   29547ms] [LOG] [worker] seq=1 kernelInit=24ms  run=19ms  serialize=1ms  total=44ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:322332
+[   30457ms] [LOG] window.__forgecadSolver.lastRun {stats: Object, lastExchange: null, lastSolveExchange: null, lastExchangeBundleJson: null, lastSolveExchangeBundleJson: null} @ http://localhost:4000/assets/backendInit-6a9-ilom.js:93627
+[   30457ms] [LOG] [main]   workerRoundTrip=3743ms  deserialize=0ms @ http://localhost:4000/assets/app-BKjogwIZ.js:18462
+[  146252ms] [ERROR] Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING @ http://localhost:4000/api/sse/projects/workspace/watch:0
+[  146685ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:4000/api/compute/health:0
+[  149254ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:4000/api/sse/projects/workspace/watch:0
+[  151681ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:4000/api/compute/health:0
+[  152258ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:4000/api/sse/projects/workspace/watch:0
+[  156333ms] [WARNING] An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing. @ about:blank:0
+[  158436ms] [LOG] %c[perf] Startup breakdown font-weight:bold 
+  app:kernelInit: 15ms
+  solver:import: 0ms
+  solver:total: 4ms
+  solver:init: 4ms
+  meshopt:total: 3ms
+  manifold:import: 5ms
+  manifold:total: 10ms
+  manifold:init: 5ms @ http://localhost:4000/assets/EditorApp-CYBDvSyT.js:16761
+[  161582ms] [LOG] [serialize] 1 obj | getMesh=1ms copy=0ms bb=0ms geomArrays=0ms sketch=0ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:321970
+[  161582ms] [LOG] [worker] seq=1 kernelInit=24ms  run=20ms  serialize=1ms  total=46ms @ http://localhost:4000/assets/evalWorker-DQ82ueGu.js:322332
+[  162655ms] [LOG] window.__forgecadSolver.lastRun {stats: Object, lastExchange: null, lastSolveExchange: null, lastExchangeBundleJson: null, lastSolveExchangeBundleJson: null} @ http://localhost:4000/assets/backendInit-6a9-ilom.js:93627
+[  162655ms] [LOG] [main]   workerRoundTrip=4208ms  deserialize=0ms @ http://localhost:4000/assets/app-BKjogwIZ.js:18462
