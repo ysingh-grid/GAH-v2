@@ -96,6 +96,7 @@ def list_skills() -> list[str]:
     NEXT: Pass any returned name to read_skill(name) to load it.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -136,6 +137,7 @@ def read_skill(name: str) -> str:
     RETURNS: Memory pointer string — do NOT print the full skill text.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]

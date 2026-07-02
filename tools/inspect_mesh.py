@@ -72,3 +72,26 @@ def inspect_mesh(stl_path: str) -> dict[str, Any]:
             "error": f"MeshLib failed to inspect STL mesh: {e}",
             "traceback": traceback.format_exc(),
         }
+
+
+def _count_boundary_edges(mesh: Any) -> tuple[int, int]:
+    """Helper to classify and count boundary edges into true open and singular ones."""
+    topo = mesh.topology
+    bd_edges = topo.findLeftBdEdges()
+
+    true_open_count = 0
+    singular_count = 0
+
+    for edge_id in bd_edges:
+        org_id = topo.org(edge_id)
+        dest_id = topo.dest(edge_id)
+        p0 = mesh.points[org_id]
+        p1 = mesh.points[dest_id]
+        edge_length = (p1 - p0).length()
+
+        if edge_length < 1e-6:
+            singular_count += 1
+        else:
+            true_open_count += 1
+
+    return true_open_count, singular_count

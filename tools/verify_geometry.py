@@ -7,7 +7,6 @@ from tools.vlm_judge import judge_geometry_render
 
 def verify_geometry(
     prompt: str,
-    code: str,
     metrics: dict,
     render_png: str,
     prior_feedback: list | None = None,
