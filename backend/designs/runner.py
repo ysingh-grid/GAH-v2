@@ -45,7 +45,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _FORGECAD_WORKSPACE = _REPO_ROOT / "artifacts" / "forgecad"
 
 _BACKEND_URL_DEFAULT = os.environ.get("BACKEND_URL", "http://localhost:8001")
-_USE_TEMPORAL = bool(os.environ.get("TEMPORAL_HOST"))
 
 # Callable the routes layer passes so we can swap WebSocket.send_json for tests.
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
@@ -142,9 +141,14 @@ async def run_chat_turn(
     run_id = new_run_id(f"design_{session.id[:8]}")
     session.run_id = run_id
 
+    await send({"type": "plan", "plan": plan_to_dict(plan)})
     await send({"type": "generating", "stage": "cadquery_compile"})
 
-    if _USE_TEMPORAL:
+    # Read the toggle from the session object — set by the UI via POST /config.
+    # Falls back to the TEMPORAL_HOST env var so docker-compose still works.
+    use_temporal = session.use_temporal or bool(os.environ.get("TEMPORAL_HOST"))
+
+    if use_temporal:
         await _run_via_temporal(
             session,
             plan,

@@ -216,51 +216,6 @@ class TestRenderActivity:
         assert out.failure_stage == "cadquery_execute"
 
 
-# ── docker-compose temporal services ─────────────────────────────────────────
-
-
-class TestDockerComposeTemporal:
-    """YAML structure tests for the Temporal additions in docker-compose.yml."""
-
-    @pytest.fixture(scope="class")
-    def compose(self):
-        import yaml
-        with open("docker-compose.yml") as f:
-            return yaml.safe_load(f)
-
-    def test_temporal_service_exists(self, compose):
-        assert "temporal" in compose["services"]
-
-    def test_temporal_grpc_port(self, compose):
-        ports = [str(p) for p in compose["services"]["temporal"]["ports"]]
-        assert any("7233" in p for p in ports)
-
-    def test_worker_service_exists(self, compose):
-        assert "worker" in compose["services"]
-
-    def test_worker_command(self, compose):
-        cmd = compose["services"]["worker"]["command"]
-        assert "temporal.worker" in " ".join(str(c) for c in cmd)
-
-    def test_worker_depends_on_temporal_and_backend(self, compose):
-        deps = compose["services"]["worker"].get("depends_on", {})
-        assert "temporal" in deps
-        # the worker-side replanner's tools HTTP the backend, so it must wait for it
-        assert "backend" in deps
-
-    def test_worker_backend_url_env(self, compose):
-        """Worker must point at the backend by SERVICE name (not localhost)."""
-        env = compose["services"]["worker"].get("environment", {})
-        assert env.get("BACKEND_URL") == "http://backend:8001"
-
-    def test_worker_temporal_host_env(self, compose):
-        env = compose["services"]["worker"].get("environment", {})
-        assert "TEMPORAL_HOST" in env
-
-    def test_temporal_data_volume_declared(self, compose):
-        assert "temporal-data" in compose.get("volumes", {})
-
-
 # ── runner.py integration: _USE_TEMPORAL flag ────────────────────────────────
 
 

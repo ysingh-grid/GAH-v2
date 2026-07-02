@@ -1,41 +1,17 @@
-.PHONY: dev up down rebuild logs ps
+.PHONY: dev test clean help
 
-# ── Dev (live reload — use this daily) ───────────────────────────────────────
-# Source dirs are mounted directly into the container.
-# Python changes → uvicorn --reload picks them up automatically.
-# Skills / KB .md changes → visible immediately (read from disk at request time).
-# Only run `make build` if pyproject.toml or uv.lock changed.
 dev:
-	docker compose --profile dev up
+	uv run uvicorn backend.server:app --host 0.0.0.0 --port 8001 --reload
 
-dev-temporal:
-	docker compose --profile dev --profile temporal up
+test:
+	uv run pytest
 
-# ── Prod-like (full rebuild + restart) ────────────────────────────────────────
-# Rebuilds the image from scratch and restarts all containers.
-# Use when deps change or to verify the prod image is correct.
-up:
-	docker compose up --build
+clean:
+	rm -rf .pytest_cache .ruff_cache
+	uv sync
 
-up-temporal:
-	docker compose --profile temporal up --build
-
-# ── Force full rebuild (no layer cache) ───────────────────────────────────────
-rebuild:
-	docker compose build --no-cache
-	docker compose up -d
-
-rebuild-temporal:
-	docker compose --profile temporal build --no-cache
-	docker compose --profile temporal up -d
-
-# ── Stop everything ───────────────────────────────────────────────────────────
-down:
-	docker compose --profile temporal --profile dev --profile studio down --remove-orphans
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-logs:
-	docker compose logs -f backend
-
-ps:
-	docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" | grep -E "NAME|gah"
+help:
+	@echo "Available commands:"
+	@echo "  make dev    - Start the local FastAPI development server on port 8001 with hot-reload"
+	@echo "  make test   - Run the full pytest test suite"
+	@echo "  make clean  - Clear local caches and re-sync the python virtual environment"

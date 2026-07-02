@@ -17,7 +17,7 @@ def test_ui_serves_index_html(client):
     resp = client.get("/ui/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "ga-panel" in resp.text
+    assert "ga-layout" in resp.text
 
 
 def test_ui_serves_css(client):
@@ -39,19 +39,19 @@ def test_ui_html_references_style_and_script(client):
     assert "app.js" in body
 
 
-def test_ui_html_has_fab(client):
+def test_ui_html_has_form_view(client):
     resp = client.get("/ui/")
-    assert 'id="ga-fab"' in resp.text
+    assert 'id="ga-form-view"' in resp.text
 
 
-def test_ui_html_has_panel(client):
+def test_ui_html_has_runs_view(client):
     resp = client.get("/ui/")
-    assert 'id="ga-panel"' in resp.text
+    assert 'id="ga-runs-view"' in resp.text
 
 
-def test_ui_html_has_hero(client):
+def test_ui_html_has_analytics_view(client):
     resp = client.get("/ui/")
-    assert 'id="ga-hero"' in resp.text
+    assert 'id="ga-analytics-view"' in resp.text
 
 
 def test_frontend_dir_exists():

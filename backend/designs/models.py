@@ -32,6 +32,10 @@ class DesignSession:
     intake_context: str = ""
     last_plan: dict[str, Any] | None = None
     run_id: str | None = None
+    # Runtime toggles — controlled by the UI toggle switches in the sidebar.
+    # These take effect on the NEXT run (you can't switch engines mid-pipeline).
+    use_temporal: bool = False
+    use_forgecad: bool = False
     created_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat()
     )
@@ -46,6 +50,8 @@ class DesignSession:
             "intake_context": self.intake_context,
             "last_plan": self.last_plan,
             "run_id": self.run_id,
+            "use_temporal": self.use_temporal,
+            "use_forgecad": self.use_forgecad,
             "created_at": self.created_at,
         }
 

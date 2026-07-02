@@ -145,11 +145,13 @@ def test_ws_non_message_event_ignored(client):
             ws.send_json({"type": "ping"})  # ignored
             ws.send_json({"type": "message", "text": "make a box"})
             evt1 = ws.receive_json()  # thinking
-            evt2 = ws.receive_json()  # generating
+            evt2 = ws.receive_json()  # plan
+            evt3 = ws.receive_json()  # generating
             # exit context → server gets WebSocketDisconnect, exits cleanly
 
     assert evt1["type"] == "thinking"
-    assert evt2["type"] == "generating"
+    assert evt2["type"] == "plan"
+    assert evt3["type"] == "generating"
 
 
 def test_ws_image_attachment_hits_intake_before_planner(client):
@@ -388,3 +390,32 @@ def _loop_result(
 
 def _intake_ready() -> IntakeOutcome:
     return IntakeOutcome(status="ready", intake_context="")
+
+
+# ── /config endpoint ──────────────────────────────────────────────────────────
+
+def test_config_endpoint_returns_200(client):
+    resp = client.get("/config")
+    assert resp.status_code == 200
+
+
+def test_config_endpoint_has_forgecad_studio_url_key(client):
+    body = client.get("/config").json()
+    assert "forgecad_studio_url" in body
+
+
+def test_config_endpoint_has_backend_url_key(client):
+    body = client.get("/config").json()
+    assert "backend_url" in body
+
+
+def test_config_endpoint_forgecad_url_from_env(client, monkeypatch):
+    monkeypatch.setenv("FORGECAD_STUDIO_URL", "http://studio.test:4000")
+    body = client.get("/config").json()
+    assert body["forgecad_studio_url"] == "http://studio.test:4000"
+
+
+def test_config_endpoint_empty_when_unset(client, monkeypatch):
+    monkeypatch.delenv("FORGECAD_STUDIO_URL", raising=False)
+    body = client.get("/config").json()
+    assert body["forgecad_studio_url"] == ""

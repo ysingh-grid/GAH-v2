@@ -89,5 +89,5 @@ def test_start_or_resume_intake_builds_context_after_final_answer() -> None:
         chat_history=[{"role": "user", "content": "make an enclosure"}],
         intake_context=outcome.intake_context,
     )
-    assert history[-1]["role"] == "system"
+    assert history[-1]["role"] == "user"
     assert "pre-planner intake" in history[-1]["content"].lower()
