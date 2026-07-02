@@ -39,9 +39,9 @@ def test_ui_html_references_style_and_script(client):
     assert "app.js" in body
 
 
-def test_ui_html_has_form_view(client):
+def test_ui_html_has_new_run_view(client):
     resp = client.get("/ui/")
-    assert 'id="ga-form-view"' in resp.text
+    assert 'id="ga-new-run-view"' in resp.text
 
 
 def test_ui_html_has_runs_view(client):
@@ -49,9 +49,9 @@ def test_ui_html_has_runs_view(client):
     assert 'id="ga-runs-view"' in resp.text
 
 
-def test_ui_html_has_analytics_view(client):
+def test_ui_html_has_studio_view(client):
     resp = client.get("/ui/")
-    assert 'id="ga-analytics-view"' in resp.text
+    assert 'id="ga-studio-view"' in resp.text
 
 
 def test_frontend_dir_exists():

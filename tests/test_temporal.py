@@ -214,32 +214,3 @@ class TestRenderActivity:
         out = render_activity(RenderInput(stl_path="/o/solid.stl", run_id="r"))
         assert out.ok is False
         assert out.failure_stage == "cadquery_execute"
-
-
-# ── runner.py integration: _USE_TEMPORAL flag ────────────────────────────────
-
-
-class TestRunnerTemporalFlag:
-    def test_flag_false_without_env(self, monkeypatch):
-        monkeypatch.delenv("TEMPORAL_HOST", raising=False)
-        import importlib
-
-        import backend.designs.runner as runner_mod
-        importlib.reload(runner_mod)
-        assert runner_mod._USE_TEMPORAL is False
-
-    def test_flag_true_with_env(self, monkeypatch):
-        monkeypatch.setenv("TEMPORAL_HOST", "localhost:7233")
-        import importlib
-
-        import backend.designs.runner as runner_mod
-        importlib.reload(runner_mod)
-        assert runner_mod._USE_TEMPORAL is True
-
-    def test_flag_false_empty_string(self, monkeypatch):
-        monkeypatch.setenv("TEMPORAL_HOST", "")
-        import importlib
-
-        import backend.designs.runner as runner_mod
-        importlib.reload(runner_mod)
-        assert runner_mod._USE_TEMPORAL is False

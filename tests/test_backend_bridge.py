@@ -23,12 +23,12 @@ def test_health():
 
 
 def test_read_skill():
-    response = client.post("/internal/read-skill", json={"skill_name": "intent_extraction"})
+    response = client.post("/internal/read-skill", json={"skill_name": "playbook"})
     assert response.status_code == 200
     payload = response.json()
     assert_contract(payload, "read_skill")
     assert payload["ok"] is True
-    assert payload["data"]["path"] == "skills/intent_extraction.md"
+    assert payload["data"]["path"] == "skills/playbook.md"
 
 
 def test_path_traversal_rejected():

@@ -277,7 +277,7 @@ def test_ws_plan_ready_runs_real_geometry_pipeline_with_mocked_models(mock_plann
 
     success_evt = next(e for e in events if e["type"] == "success")
     run_id = success_evt["run_id"]
-    trace_path = Path("outputs") / run_id / "trace.json"
+    trace_path = Path("artifacts") / run_id / "trace.json"
 
     try:
         assert success_evt["run_id"]
@@ -295,7 +295,7 @@ def test_ws_plan_ready_runs_real_geometry_pipeline_with_mocked_models(mock_plann
         assert session.status == "done"
         assert session.run_id == run_id
     finally:
-        shutil.rmtree(Path("outputs") / run_id, ignore_errors=True)
+        shutil.rmtree(Path("artifacts") / run_id, ignore_errors=True)
 
 
 @patch("backend.designs.runner.run_geometry_loop")
