@@ -1,1 +1,0 @@
-{"timestamp": "2026-07-01T16:55:55.545251+00:00", "step": 1, "event_type": "smoke_test", "tool_name": "rlm_backend_smoke", "input": {"backend_url": "http://localhost:8001"}, "output": {"status": "complete"}}

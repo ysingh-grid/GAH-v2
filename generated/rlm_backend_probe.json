@@ -1,7 +1,0 @@
-{
-  "run_id": "rlm_backend_smoke",
-  "source": "rlm/tools.py",
-  "timestamp": "2026-07-01T16:55:55.538291+00:00",
-  "observed_skill_count": 9,
-  "observed_repo_file_count": 73
-}

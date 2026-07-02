@@ -56,49 +56,42 @@ A multi-milestone AI-powered CAD design system: natural language → design plan
 ### 1. Prerequisites
 
 ```bash
-# Ensure Python 3.12+ is installed
+# Python 3.12+
 uv sync
 
-# Set your Gemini API key for the planner
+# Optional: Gemini API key for planner
 # https://aistudio.google.com/app/apikeys
 echo 'GEMINI_API_KEY=your_key_here' > .env
 ```
 
-### 2. Running Natively (Recommended for quick dev)
+### 2. Backend only (in-process geometry)
 
-To run the whole project with the UI without Docker, you can start the backend and ForgeCAD studio in two separate terminals.
-
-**Terminal 1: Start the Backend (API + UI)**
 ```bash
+# Terminal 1: Backend
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8001
+
+# Visit http://localhost:8001/ui/
+# Geometry loop runs in-process (no Temporal)
 ```
 
-**Terminal 2: Start ForgeCAD Studio**
-```bash
-# Install ForgeCAD CLI (requires Node.js)
-npm install -g forgecad
-
-# Start the studio, pointing to the artifacts directory
-npx --yes forgecad studio ./artifacts/forgecad --port 4000 --host 0.0.0.0
-```
-
-🎉 **Visit http://localhost:8001/ui/ in your browser.** 
-The UI will automatically detect that ForgeCAD is running and enable the 3D preview handoff.
-
-### 3. Running with Docker Compose (Full stack)
-
-If you have Docker installed and want the full stack (including Temporal durability):
+### 3. With Temporal durability (crash-safe geometry)
 
 ```bash
-# Start all services with Temporal and ForgeCAD Studio profiles
-FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile temporal --profile studio up -d
+docker compose --profile temporal up
 ```
 
-- **GAH UI:** http://localhost:8001/ui/
-- **ForgeCAD Studio:** http://localhost:4000
-- **Temporal UI:** http://localhost:8088
+Check Temporal Web UI: http://localhost:8088
 
-> **Tip:** You can also use the included `./restart.sh` script to stop, build, and restart all Docker services for this project automatically.
+### 4. With ForgeCAD Studio live preview
+
+```bash
+# Start all services with profiles
+FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile temporal --profile studio up
+```
+
+> **Tip:** You can also use the included `./restart.sh` script to stop, build, and restart all Docker services for this project in the background automatically.
+
+Frontend auto-discovers Studio URL via `/config` endpoint.
 
 ## Environment Variables
 

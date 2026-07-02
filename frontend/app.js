@@ -1,388 +1,481 @@
 /**
- * GAH frontend — Form-based UI + APIs.
+ * GAH frontend — forge-assistant.js visual design + M8 WebSocket API.
  *
- * Every button in the nav bar is functional:
- *   - New run:      resets the form and clears the chat
- *   - Runs:         fetches /api/runs, renders a table
- *   - Analytics:    fetches /api/analytics, renders metric cards
- *   - Temporal:     opens the Temporal Web UI (if running)
- *   - ForgeCAD:     opens ForgeCAD Studio (if running)
- *   - Send:         creates a design session + opens a WebSocket
+ * WS protocol (server → client):
+ *   thinking   — planner running; show typing dots
+ *   ask_user   — question + options; assistant bubble
+ *   generating — geometry loop started; show progress panel
+ *   stage      — {stage}; live coarse-stage progress from the Temporal workflow
+ *                (DesignStage.*: planning|generating|inspecting|repairing|verifying|done)
+ *   success    — {forge_js, plan, run_id}; done banner + main view
+ *   needs_user — mid-generation question; assistant bubble
+ *   failed     — {category, message}; error stage chip
+ *   error      — unexpected server exception
  */
 
 (function () {
   'use strict';
 
-  /* ─── Constants ────────────────────────────────────────────────────────── */
   var BACKEND = window.BACKEND_URL || 'http://localhost:8001';
-  var TEMPORAL_URL = 'http://localhost:8088';
-  var FORGECAD_URL = 'http://localhost:4000';
 
-  /* Service availability flags (set by healthCheck) */
-  var temporalAvailable = false;
-  var forgecadAvailable = false;
+  // Pipeline stage labels (matches Capstone visual design)
+  var STAGES = ['PLANNING', 'GENERATING', 'VERIFYING', 'DONE'];
+  var STAGE_ICONS = { PLANNING: '🧠', GENERATING: '⌨️', VERIFYING: '🔍', DONE: '✅', FAILED: '❌' };
 
-  /* ─── State ────────────────────────────────────────────────────────────── */
+  // Backend DesignStage (Temporal workflow) → the 4 UI chips above.
+  // The fine geometry sub-stages (inspecting/repairing) live inside the GENERATING
+  // coarse activity, so they collapse onto the GENERATING chip.
+  var STAGE_MAP = {
+    planning:   'PLANNING',
+    generating: 'GENERATING',
+    inspecting: 'GENERATING',
+    repairing:  'GENERATING',
+    verifying:  'VERIFYING',
+    replanning: 'PLANNING',   // loop-back: bar returns to PLANNING; labeled below
+    done:       'DONE',
+  };
+
+  // ── State ─────────────────────────────────────────────────────────────────
   var S = {
-    designId: null,
-    ws: null,
-    sending: false,
+    designId:    null,
+    ws:          null,
+    panelOpen:   false,
+    booted:      false,    // first open triggered boot
+    sending:     false,
+    params:      {},       // accumulated params from plan steps
     currentStage: null,
   };
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function now() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmt(t) {
+    return String(t || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\n/g, '<br>');
+  }
+
   function el(id) { return document.getElementById(id); }
 
-  /* ─── Boot ─────────────────────────────────────────────────────────────── */
+  function setConn(state) {
+    var dot = el('ga-conn-dot');
+    if (!dot) return;
+    dot.className = 'ga-conn-dot ' + state;
+    dot.title = state.charAt(0).toUpperCase() + state.slice(1);
+  }
+
+  function setInput(enabled) {
+    var inp = el('ga-input');
+    var btn = el('ga-send');
+    if (inp) inp.disabled = !enabled;
+    if (btn) btn.disabled = !enabled;
+  }
+
+  // ── Boot: POST /designs + WS connect ─────────────────────────────────────
 
   function boot() {
-    // 1. Fetch runtime config from backend (sets ForgeCAD URL if configured)
+    setConn('connecting');
+    setInput(false);
+
+    // Fetch runtime config first (sets window.FORGECAD_STUDIO_URL from docker-compose env).
+    // Failure is non-fatal — continue to session creation regardless.
     fetch(BACKEND + '/config')
       .then(function (r) { return r.ok ? r.json() : {}; })
       .catch(function () { return {}; })
       .then(function (cfg) {
         if (cfg && cfg.forgecad_studio_url) {
-          FORGECAD_URL = cfg.forgecad_studio_url;
+          window.FORGECAD_STUDIO_URL = cfg.forgecad_studio_url;
+          // Show studio as background immediately — don't wait for a design
+          el('ga-hero').style.display = 'none';
+          el('ga-studio').style.display = 'block';
+          el('ga-iframe').src = cfg.forgecad_studio_url;
         }
-        // After config is loaded, probe external services
-        probeService(FORGECAD_URL, 'forgecad');
-        probeService(TEMPORAL_URL, 'temporal');
-      });
-  }
-
-  /**
-   * Probe whether an external service is reachable.
-   * Updates the status-dot indicator in the nav bar.
-   */
-  function probeService(url, serviceId) {
-    if (!url) {
-      setDot(serviceId, false);
-      return;
-    }
-    fetch(url, { mode: 'no-cors', cache: 'no-store' })
-      .then(function () {
-        // mode: no-cors → opaque response. If we get here, the server answered.
-        setDot(serviceId, true);
-        if (serviceId === 'forgecad') forgecadAvailable = true;
-        if (serviceId === 'temporal') temporalAvailable = true;
+        return fetch(BACKEND + '/designs', { method: 'POST' });
       })
-      .catch(function () {
-        setDot(serviceId, false);
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        S.designId = data.design_id;
+        connectWs();
+      })
+      .catch(function (e) {
+        setConn('error');
+        appendMsg('system', '⚠️ Cannot reach backend at ' + BACKEND + ' — ' + e.message);
       });
   }
 
-  function setDot(serviceId, isUp) {
-    var dotId = serviceId === 'forgecad' ? 'ga-forgecad-dot' : 'ga-temporal-dot';
-    var dot = el(dotId);
-    if (!dot) return;
-    dot.classList.remove('ga-dot-unknown', 'ga-dot-up', 'ga-dot-down');
-    dot.classList.add(isUp ? 'ga-dot-up' : 'ga-dot-down');
-  }
-
-  /* ─── Navigation ───────────────────────────────────────────────────────── */
-
-  function showView(viewId) {
-    document.querySelectorAll('.ga-view').forEach(function (v) {
-      v.style.display = 'none';
-    });
-    var v = el('ga-' + viewId + '-view');
-    if (v) v.style.display = viewId === 'studio' ? 'block' : 'flex';
-
-    if (viewId === 'runs') fetchRuns();
-    if (viewId === 'analytics') fetchAnalytics();
-  }
-
-  function openTemporal() {
-    if (temporalAvailable) {
-      window.open(TEMPORAL_URL, '_blank', 'noopener');
-    } else {
-      showUnavailable(
-        'Temporal UI',
-        'The Temporal Web UI is not running at <code>' + TEMPORAL_URL + '</code>.<br><br>' +
-        'To start it, run:<br><code>docker compose --profile temporal up</code>'
-      );
-    }
-  }
-
-  function openForgeCAD() {
-    if (forgecadAvailable) {
-      window.open(FORGECAD_URL, '_blank', 'noopener');
-    } else {
-      showUnavailable(
-        'ForgeCAD Studio',
-        'ForgeCAD Studio is not running at <code>' + FORGECAD_URL + '</code>.<br><br>' +
-        'To start it, run:<br><code>FORGECAD_STUDIO_URL=' + FORGECAD_URL + ' docker compose --profile studio up</code>'
-      );
-    }
-  }
-
-  function showUnavailable(title, msg) {
-    showView('unavailable');
-    var t = el('ga-unavail-title');
-    var m = el('ga-unavail-msg');
-    if (t) t.textContent = title + ' — Not Running';
-    if (m) m.innerHTML = msg;
-  }
-
-  /* ─── Reset UI (New Run) ───────────────────────────────────────────────── */
-
-  function resetUI() {
-    var inp = el('ga-input');
-    if (inp) { inp.value = ''; inp.disabled = false; }
-    var fileName = el('ga-file-name');
-    if (fileName) fileName.textContent = 'No file chosen';
-    var area = el('ga-assistant-area');
-    if (area) area.innerHTML = '';
-
-    S.designId = null;
-    if (S.ws) {
-      try { S.ws.close(); } catch (_) { /* ignore */ }
-      S.ws = null;
-    }
-    S.sending = false;
-
-    var sendBtn = el('ga-send');
-    if (sendBtn) sendBtn.disabled = false;
-    showView('form');
-  }
-
-  /* ─── WebSocket chat ───────────────────────────────────────────────────── */
-
-  function connectWs(textToSend, callback) {
+  function connectWs() {
     var wsBase = BACKEND.replace(/^http/, 'ws');
     S.ws = new WebSocket(wsBase + '/designs/' + S.designId + '/chat');
 
     S.ws.onopen = function () {
-      S.ws.send(JSON.stringify({ type: 'message', text: textToSend }));
-      if (callback) callback();
+      setConn('connected');
+      setInput(true);
     };
 
     S.ws.onmessage = function (e) {
-      try { handleEvent(JSON.parse(e.data)); } catch (_) { /* ignore parse errors */ }
+      try { handleEvent(JSON.parse(e.data)); } catch (_) {}
     };
 
     S.ws.onerror = function () {
-      appendAssistantMessage('⚠️ WebSocket error — check backend logs.');
-      unlockSend();
+      setConn('error');
+      appendMsg('system', '⚠️ WebSocket error — check backend logs.');
     };
 
-    S.ws.onclose = function () {
-      // Allow new submissions after WS closes
-      if (S.sending) unlockSend();
+    S.ws.onclose = function (ev) {
+      if (ev.code !== 1000 && ev.code !== 1005 && S.currentStage !== 'DONE') {
+        setConn('error');
+        appendMsg('system', '⚠️ Connection closed. Refresh to reconnect.');
+      }
     };
   }
+
+  // ── Outgoing ──────────────────────────────────────────────────────────────
+
+  function sendMsg() {
+    var inp = el('ga-input');
+    var txt = inp ? inp.value.trim() : '';
+    if (!txt) return;
+    if (!S.ws || S.ws.readyState !== WebSocket.OPEN) return;
+    if (S.sending) return;
+
+    S.ws.send(JSON.stringify({ type: 'message', text: txt }));
+    appendMsg('user', txt);
+    inp.value = '';
+    inp.style.height = 'auto';
+    setInput(false);
+    hideSuggestions();
+    showTyping();
+  }
+
+  // ── Incoming events ───────────────────────────────────────────────────────
 
   function handleEvent(evt) {
     switch (evt.type) {
+
       case 'thinking':
-        appendAssistantMessage('🧠 Thinking…');
+        showTyping();
         break;
+
       case 'ask_user':
-        appendAssistantMessage(evt.question || 'Please provide more details.', true);
-        unlockSend();
+        hideTyping();
+        appendMsg('assistant', evt.question || '');
+        if (evt.options && evt.options.length) appendOptions(evt.options);
+        setInput(true);
         break;
+
       case 'generating':
-        appendAssistantMessage('⚙️ Generating 3D Model… Please wait.');
+        hideTyping();
+        showProgress('PLANNING');
+        // don't re-enable input — auto-generating
         break;
-      case 'stage':
-        var m = el('ga-stage-msg');
-        if (m) m.textContent = 'Stage: ' + evt.stage;
-        break;
-      case 'success':
-        appendAssistantMessage('✅ Model generated successfully! Run: ' + (evt.run_id || ''));
-        if (forgecadAvailable) {
-          // Load the ForgeCAD studio in the iframe
-          var iframe = el('ga-iframe');
-          if (iframe) iframe.src = FORGECAD_URL;
-          showView('studio');
+
+      case 'stage': {
+        // Live coarse-stage progress from the Temporal workflow.
+        var chip = STAGE_MAP[evt.stage];
+        if (chip) {
+          if (el('ga-progress').classList.contains('visible')) {
+            advanceProgress(chip);
+          } else {
+            showProgress(chip);
+          }
+          // Replan maps onto the PLANNING chip (loop-back). Label it so the user
+          // sees a distinct "fixing geometry" step instead of an unexplained reset.
+          if (evt.stage === 'replanning') {
+            var pmsg = el('ga-prog-msg');
+            if (pmsg) pmsg.textContent = '↻ Replanning — fixing the geometry…';
+          }
         }
-        unlockSend();
         break;
-      case 'needs_user':
-        appendAssistantMessage(evt.question || 'I need more information to continue.', true);
-        unlockSend();
-        break;
-      case 'failed':
-        appendAssistantMessage('❌ Generation failed [' + (evt.category || 'unknown') + ']: ' + (evt.message || ''));
-        unlockSend();
-        break;
-      case 'error':
-        appendAssistantMessage('⚠️ Server error: ' + (evt.message || 'unknown'));
-        unlockSend();
-        break;
-    }
-  }
-
-  function unlockSend() {
-    S.sending = false;
-    var sendBtn = el('ga-send');
-    if (sendBtn) sendBtn.disabled = false;
-    var inp = el('ga-input');
-    if (inp) inp.disabled = false;
-  }
-
-  function sendMsg(text) {
-    if (!text) {
-      appendAssistantMessage('⚠️ Please enter a design prompt first.');
-      return;
-    }
-    if (S.sending) return;
-    S.sending = true;
-
-    var sendBtn = el('ga-send');
-    if (sendBtn) sendBtn.disabled = true;
-    var inp = el('ga-input');
-    if (inp) inp.disabled = true;
-
-    if (!S.designId) {
-      // First message — create a design session, then connect WebSocket
-      fetch(BACKEND + '/designs', { method: 'POST' })
-        .then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        })
-        .then(function (data) {
-          S.designId = data.design_id;
-          connectWs(text, function () {
-            appendAssistantMessage('📤 Submitting prompt…');
-          });
-        })
-        .catch(function (e) {
-          appendAssistantMessage('❌ Error connecting to backend: ' + e.message);
-          unlockSend();
-        });
-    } else {
-      // Follow-up message on an open WebSocket
-      if (S.ws && S.ws.readyState === WebSocket.OPEN) {
-        S.ws.send(JSON.stringify({ type: 'message', text: text }));
-      } else {
-        appendAssistantMessage('⚠️ Connection lost. Click "New run" to start fresh.');
-        unlockSend();
       }
+
+      case 'success':
+        hideTyping();
+        advanceProgress('DONE');
+        showOutput(evt);
+        el('ga-fab').classList.add('has-notif');
+        break;
+
+      case 'needs_user':
+        hideTyping();
+        hideProgress();
+        appendMsg('assistant', evt.question || 'I need more information to continue.');
+        if (evt.options && evt.options.length) appendOptions(evt.options);
+        setInput(true);
+        break;
+
+      case 'failed':
+        hideTyping();
+        failProgress(evt.category || 'unknown');
+        appendMsg('system', 'Generation failed [' + (evt.category || 'unknown') + ']: ' + (evt.message || ''));
+        setInput(true);
+        break;
+
+      case 'error':
+        hideTyping();
+        hideProgress();
+        appendMsg('system', '⚠️ Server error: ' + (evt.message || 'unknown'));
+        setInput(true);
+        break;
     }
   }
 
-  /* ─── Assistant message rendering ──────────────────────────────────────── */
+  // ── DOM: messages ─────────────────────────────────────────────────────────
 
-  function appendAssistantMessage(text, requiresInput) {
-    var area = el('ga-assistant-area');
-    if (!area) return;
+  function appendMsg(role, text) {
+    var body = el('ga-body');
+    if (!body) return;
+    var row = document.createElement('div');
+    row.className = 'ga-msg ' + role;
+    row.innerHTML = '<div class="ga-bubble">' + fmt(text) + '</div>'
+      + '<div class="ga-time">' + now() + '</div>';
+    body.appendChild(row);
+    body.scrollTop = body.scrollHeight;
+  }
 
-    var div = document.createElement('div');
-    div.className = 'ga-assistant-msg';
-
-    var msg = document.createElement('p');
-    msg.style.marginBottom = requiresInput ? '12px' : '0';
-    msg.innerHTML = text.replace(/\\n/g, '<br>');
-    div.appendChild(msg);
-
-    if (requiresInput) {
-      var ta = document.createElement('textarea');
-      ta.className = 'ga-reply-textarea';
-      ta.placeholder = 'Your answer…';
-
+  function appendOptions(options) {
+    var body = el('ga-body');
+    if (!body) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'ga-options';
+    options.forEach(function (opt) {
       var btn = document.createElement('button');
-      btn.textContent = 'Reply →';
-      btn.className = 'ga-btn-primary';
-      btn.onclick = function () {
-        if (!ta.value.trim()) return;
-        ta.disabled = true;
-        btn.disabled = true;
-        sendMsg(ta.value.trim());
-      };
+      btn.className = 'ga-opt';
+      btn.textContent = opt;
+      btn.addEventListener('click', function () {
+        var inp = el('ga-input');
+        if (inp) inp.value = opt;
+        sendMsg();
+      });
+      wrap.appendChild(btn);
+    });
+    body.appendChild(wrap);
+    body.scrollTop = body.scrollHeight;
+  }
 
-      div.appendChild(ta);
-      div.appendChild(btn);
+  function showTyping() {
+    if (el('ga-typing')) return;
+    var body = el('ga-body');
+    if (!body) return;
+    var d = document.createElement('div');
+    d.id = 'ga-typing';
+    d.className = 'ga-msg assistant';
+    d.innerHTML = '<div class="ga-typing-bubble"><div class="ga-dots"><span></span><span></span><span></span></div></div>';
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function hideTyping() {
+    var t = el('ga-typing');
+    if (t) t.remove();
+  }
+
+  // ── DOM: suggestions ──────────────────────────────────────────────────────
+
+  function hideSuggestions() {
+    var s = el('ga-suggestions');
+    if (s) s.style.display = 'none';
+  }
+
+  // ── DOM: params strip ─────────────────────────────────────────────────────
+
+  function updateParams(params) {
+    if (!params || !Object.keys(params).length) return;
+    Object.assign(S.params, params);
+    var strip = el('ga-params');
+    var chips = el('ga-chips');
+    if (!strip || !chips) return;
+    strip.classList.add('visible');
+    chips.innerHTML = Object.entries(S.params).map(function (kv) {
+      return '<span class="ga-chip">' + kv[0].replace(/_/g, ' ') + ': <strong>' + kv[1] + '</strong></span>';
+    }).join('');
+  }
+
+  // ── DOM: progress panel ───────────────────────────────────────────────────
+
+  function renderStages(currentStage) {
+    var row = el('ga-stage-row');
+    if (!row) return;
+    var curIdx = STAGES.indexOf(currentStage);
+    row.innerHTML = STAGES.map(function (s, i) {
+      var cls = 'ga-stage-chip';
+      if (currentStage === 'FAILED' && s === 'DONE') {
+        cls += ' error';
+      } else if (i < curIdx) {
+        cls += ' done';
+      } else if (s === currentStage) {
+        cls += ' active';
+      }
+      return '<span class="' + cls + '">' + (STAGE_ICONS[s] || '') + ' ' + s + '</span>';
+    }).join('');
+    var stageEl = el('ga-prog-stage');
+    if (stageEl) stageEl.textContent = currentStage;
+  }
+
+  function showProgress(stage) {
+    S.currentStage = stage;
+    el('ga-progress').classList.add('visible');
+    el('ga-done').classList.remove('visible');
+    renderStages(stage);
+    var msg = el('ga-prog-msg');
+    if (msg) msg.textContent = '';
+  }
+
+  function advanceProgress(stage) {
+    S.currentStage = stage;
+    renderStages(stage);
+    var msg = el('ga-prog-msg');
+    if (msg) msg.textContent = stage === 'DONE' ? 'Design ready.' : '';
+  }
+
+  function failProgress(category) {
+    S.currentStage = 'FAILED';
+    var row = el('ga-stage-row');
+    if (row) {
+      // mark all chips as muted except last as error
+      Array.from(row.querySelectorAll('.ga-stage-chip')).forEach(function (c) {
+        c.className = 'ga-stage-chip';
+      });
+      var last = row.querySelector('.ga-stage-chip:last-child');
+      if (last) last.className = 'ga-stage-chip error';
+    }
+    var msg = el('ga-prog-msg');
+    if (msg) msg.textContent = '✗ ' + category;
+  }
+
+  function hideProgress() {
+    el('ga-progress').classList.remove('visible');
+  }
+
+  // ── DOM: output in main area ──────────────────────────────────────────────
+
+  function showOutput(evt) {
+    var studioUrl = window.FORGECAD_STUDIO_URL;
+
+    if (studioUrl) {
+      el('ga-hero').style.display = 'none';
+      el('ga-studio').style.display = 'block';
+      // ForgeCAD Studio runs its own internal file-watcher (chokidar) on the
+      // /workspace directory. Once the backend writes main.forge.js to disk,
+      // the Studio live-reloads the 3D viewport automatically — no iframe
+      // navigation needed. Just make sure the iframe is pointed at the Studio.
+      var iframe = el('ga-iframe');
+      if (!iframe.src || iframe.src === 'about:blank') {
+        iframe.src = studioUrl;
+      }
     } else {
-      var stageMsg = document.createElement('div');
-      stageMsg.id = 'ga-stage-msg';
-      stageMsg.style.fontSize = '12px';
-      stageMsg.style.marginTop = '8px';
-      div.appendChild(stageMsg);
+      el('ga-hero').style.display = 'none';
+      el('ga-code').style.display = 'flex';
+      el('ga-code-pre').textContent = evt.forge_js || '// (no forge script returned)';
     }
 
-    area.appendChild(div);
-    // Auto-scroll to the latest message
-    area.scrollTop = area.scrollHeight;
-  }
-
-  /* ─── Runs ─────────────────────────────────────────────────────────────── */
-
-  function fetchRuns() {
-    var tb = document.querySelector('#ga-runs-table tbody');
-    if (!tb) return;
-    tb.innerHTML = '<tr><td colspan="3" class="ga-loading">Loading runs…</td></tr>';
-
-    fetch(BACKEND + '/api/runs')
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        if (!data.runs || data.runs.length === 0) {
-          tb.innerHTML = '<tr><td colspan="3" class="ga-empty">No runs found. Submit a design prompt to get started!</td></tr>';
-          return;
-        }
-        tb.innerHTML = data.runs.map(function (run) {
-          var date = new Date(run.created_at * 1000).toLocaleString();
-          var sClass = run.status === 'success' ? 'status-success' : 'status-failed';
-          var icon = run.status === 'success' ? '✅' : '❌';
-          return '<tr><td>' + run.run_id + '</td><td>' + date + '</td><td class="' + sClass + '">' + icon + ' ' + run.status + '</td></tr>';
-        }).join('');
-      })
-      .catch(function (e) {
-        tb.innerHTML = '<tr><td colspan="3" class="ga-error">Failed to load runs: ' + e.message + '</td></tr>';
+    // Extract params from plan steps
+    var plan = evt.plan;
+    if (plan && plan.steps && plan.steps.length) {
+      var extracted = {};
+      plan.steps.forEach(function (step) {
+        Object.assign(extracted, step.parameters || {});
       });
+      updateParams(extracted);
+    }
+
+    // Done banner
+    var done = el('ga-done');
+    done.classList.add('visible');
+    var doneFile = el('ga-done-file');
+    if (doneFile) doneFile.textContent = 'run_id: ' + (evt.run_id || '—');
+
+    // Hide progress, show done
+    el('ga-progress').classList.remove('visible');
+
+    // Assistant message
+    appendMsg('assistant', '✅ Design ready! Check the viewport — or copy the .forge.js code.');
   }
 
-  /* ─── Analytics ────────────────────────────────────────────────────────── */
+  // ── Toggle panel ──────────────────────────────────────────────────────────
 
-  function fetchAnalytics() {
-    var container = el('ga-analytics-cards');
-    if (!container) return;
-    container.innerHTML = '<p class="ga-loading">Loading analytics…</p>';
+  function toggle() {
+    S.panelOpen = !S.panelOpen;
+    el('ga-panel').classList.toggle('open', S.panelOpen);
+    el('ga-fab').classList.toggle('open', S.panelOpen);
 
-    fetch(BACKEND + '/api/analytics')
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        container.innerHTML =
-          '<div class="ga-metric-card">' +
-            '<h3>Total Runs</h3>' +
-            '<div class="value">' + data.total_runs + '</div>' +
-          '</div>' +
-          '<div class="ga-metric-card">' +
-            '<h3>Success Rate</h3>' +
-            '<div class="value">' + data.success_rate + '</div>' +
-          '</div>' +
-          '<div class="ga-metric-card ga-card-success">' +
-            '<h3>Successful Runs</h3>' +
-            '<div class="value">' + data.successful_runs + '</div>' +
-          '</div>' +
-          '<div class="ga-metric-card ga-card-fail">' +
-            '<h3>Failed Runs</h3>' +
-            '<div class="value">' + data.failed_runs + '</div>' +
-          '</div>';
-      })
-      .catch(function (e) {
-        container.innerHTML = '<p class="ga-error">Failed to load analytics: ' + e.message + '</p>';
-      });
+    if (S.panelOpen) {
+      if (!S.booted) {
+        S.booted = true;
+        boot();
+      }
+      // Check if suggestions should be hidden (messages exist beyond greeting)
+      var body = el('ga-body');
+      if (body && body.childElementCount > 1) hideSuggestions();
+
+      setTimeout(function () {
+        var inp = el('ga-input');
+        if (inp && !inp.disabled) inp.focus();
+      }, 370);
+    }
   }
 
-  /* ─── Public API ───────────────────────────────────────────────────────── */
+  // ── Public API (window.__gah) ─────────────────────────────────────────────
 
   window.__gah = {
-    send: function () {
-      var inp = el('ga-input');
-      sendMsg(inp ? inp.value.trim() : '');
-    },
-    showView: showView,
-    reset: resetUI,
-    openTemporal: openTemporal,
-    openForgeCAD: openForgeCAD,
-  };
+    toggle: toggle,
 
-  document.addEventListener('DOMContentLoaded', boot);
+    send: sendMsg,
+
+    suggest: function (btn) {
+      var inp = el('ga-input');
+      if (!inp) return;
+      inp.value = btn.textContent.trim();
+      hideSuggestions();
+
+      if (!S.panelOpen) {
+        toggle();
+        // Wait for boot + WS connect then send
+        var tries = 0;
+        var check = setInterval(function () {
+          tries++;
+          if (S.ws && S.ws.readyState === WebSocket.OPEN) {
+            clearInterval(check);
+            sendMsg();
+          } else if (tries > 50) {
+            clearInterval(check);
+          }
+        }, 100);
+      } else {
+        sendMsg();
+      }
+    },
+
+    resize: function (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 96) + 'px';
+    },
+
+    key: function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMsg();
+      }
+    },
+
+    copyCode: function () {
+      var pre = el('ga-code-pre');
+      if (!pre || !pre.textContent) return;
+      navigator.clipboard.writeText(pre.textContent).then(function () {
+        var btn = el('ga-copy-btn');
+        if (!btn) return;
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = orig; }, 1500);
+      });
+    },
+  };
 
 })();
