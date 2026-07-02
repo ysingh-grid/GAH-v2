@@ -8,10 +8,19 @@
 
 
 def list_primitives() -> list[str]:
-    """Return the keys of every primitive in the catalog.
+    """Return every primitive key available in the shape catalog.
 
-    Tool the RLM calls to discover what shapes it's allowed to plan with.
-    DTCM_BACKEND_URL is injected via fast-rlm's env_variables, not hardcoded.
+    WHEN: Call this as your FIRST data-gathering action (step 1), before any
+    planning. You cannot select primitives without knowing the vocabulary.
+
+    WHY: The catalog defines your vocabulary — the set of shapes you're
+    allowed to plan with. Planning with a shape not in this list causes
+    a downstream compile failure (unknown primitive key).
+
+    OUTPUT: list[str] — e.g. ["box", "cone", "cylinder", "sphere", ...]
+    NEXT: After listing, call lookup_primitive(key) on the 1-3 shapes that
+    match your construction tree to get their exact parameter schemas.
+    Do NOT call lookup_primitive on every key — only what you plan to use.
     """
     import os
     import requests
@@ -33,10 +42,26 @@ def list_primitives() -> list[str]:
 
 
 def lookup_primitive(key: str) -> dict:
-    """Return the full spec of one primitive: params, verification, template.
+    """Return the full specification of one primitive: description, parameter
+    schema with types and constraints, verification formulas, and template.
 
-    The RLM calls this once it has picked a shape and needs its real
-    parameter names and constraints to fill the plan correctly.
+    WHEN: Call AFTER list_primitives(). Once you've matched a shape from the
+    vocabulary to a step in your construction tree, pull its exact spec to
+    fill the plan correctly.
+
+    WHY: The catalog menu only shows keys and one-line descriptions —
+    insufficient to build a valid step. You need the real parameter names,
+    types, and required fields to avoid guessing (which causes compile
+    failures downstream).
+
+    ARGS:
+        key: Exact catalog key from list_primitives(), e.g. "cone", "box"
+
+    RETURNS: {description, parameters: {name: {type, required, default,
+    constraints}}, verification: {volume_formula, min_faces}, template: str}
+
+    ERRORS: ValueError means the key is not in the catalog — pick a different
+    key from list_primitives().
     """
     import os
     import requests
@@ -57,11 +82,18 @@ def lookup_primitive(key: str) -> dict:
 
 
 def list_skills() -> list[str]:
-    """Return the names of every reasoning-guide skill available.
+    """Return the names of every reasoning skill available for loading.
 
-    The RLM's live catalog of guides. Playbook names the core read-order, but
-    this reads the skills dir directly — so newly-added guides are discoverable
-    even before the playbook mentions them.
+    WHEN: Rarely needed — the playbook already lists the core read-order.
+    Call only if you suspect a skill exists that's not in playbook, or if
+    you're debugging and need to know what's available.
+
+    WHY: Skills are loaded by name via read_skill(). This lists the menu
+    so you can discover newly-added or optional skills not referenced in
+    the playbook's read-order table.
+
+    OUTPUT: list[str] — e.g. ["playbook", "decompose_and_select", ...]
+    NEXT: Pass any returned name to read_skill(name) to load it.
     """
     import os
     import requests
@@ -82,11 +114,26 @@ def list_skills() -> list[str]:
 
 
 def read_skill(name: str) -> str:
-    """Load one skill guide into REPL memory `_SKILLS[name]` (and `context['skills'][name]`).
+    """Load one skill guide into REPL memory and return a memory pointer.
 
-    ALWAYS call read_skill('playbook') as your FIRST action — it contains your
-    operating instructions, tool list, skill read order, and output contract.
-    After reading the playbook, follow its skill read order for subsequent reads.
+    WHEN: Your FIRST action MUST be read_skill('playbook'). After that,
+    follow the skill read-order the playbook gives you. Load on-demand
+    skills (debug_cadquery, refine_from_feedback) only when their trigger
+    condition is met (code failure, prior_feedback present).
+
+    WHY: Skills teach REASONING PATTERNS, not pipeline steps. Each skill is
+    a self-contained module that teaches you HOW to think about one aspect
+    of geometry (decomposition, dimensions, verification, debugging). Don't
+    dump skills into your context window — pull only what you need, one at
+    a time.
+
+    ARGS:
+        name: Skill name without extension, e.g. "playbook", "compute_dimensions"
+
+    SIDE EFFECTS: Stores content in `_SKILLS[name]` and `context['skills'][name]`.
+    Query with Python for specific sections instead of printing the whole content.
+
+    RETURNS: Memory pointer string — do NOT print the full skill text.
     """
     import os
     import requests
@@ -155,21 +202,20 @@ def web_search(query: str) -> dict:
 
 
 def list_kb_index() -> dict:
-    """Return the compact index of what is available in both KBs.
+    """Return the compact section menu of available knowledge-base content.
 
-    Call this ONCE in Step 1 alongside list_primitives(). It returns a menu
-    of section slugs and one-line descriptions — NOT the content itself.
-    Use the slugs to decide which sections to fetch with fetch_kb_sections().
+    WHEN: Call ONCE in Step 1 alongside list_primitives(). This gives you
+    the table of contents — NOT the full content.
 
-    This mirrors list_primitives() → lookup_primitive() for the KB:
-      list_kb_index()   →  see the menu
-      fetch_kb_sections() →  read what you need
+    WHY: Mirrors list_primitives()→lookup_primitive() for the KB. See the
+    menu first (cheap, ~200 tokens), then fetch only the sections relevant
+    to the current design task. Fetching all sections would waste tokens
+    on CAD concepts you don't need for this specific shape.
 
-    Returns:
-        {
-          "cadquery": {slug: description, ...},   # CadQuery API categories
-          "forgecad": {slug: description, ...},   # ForgeCAD API sections
-        }
+    RETURNS: {"cadquery": {slug: description, ...},
+              "forgecad": {slug: description, ...}}
+    NEXT: Pick ≤5 relevant slugs and call fetch_kb_sections(slugs) to load
+    their content into `_KB[slug]`.
     """
     import os
     import requests
@@ -190,19 +236,22 @@ def list_kb_index() -> dict:
 
 
 def fetch_kb_sections(keys: list[str]) -> dict:
-    """Fetch specific KB sections by slug keys from list_kb_index().
+    """Fetch specific KB sections by slug and store them in REPL memory.
 
-    Call this in Step 1 AFTER list_kb_index() — pick only the slugs that are
-    relevant to the current request. Each fetched section is ≤800 chars.
+    WHEN: Call AFTER list_kb_index(). Pick ≤5 slugs relevant to your current
+    design task. This is the "read what you need" step after seeing the menu.
 
-    Args:
-        keys: List of slug strings from list_kb_index(), e.g.
-              ["3d-operations", "revolve", "sweep"].
-              Mix of cadquery and forgecad slugs is fine.
-              Fetch ≤5 sections to keep token cost bounded.
+    WHY: Each section is ≤800 chars of focused CadQuery/ForgeCAD API reference.
+    Fetching them selectively keeps your context window small. Never fetch
+    sections you won't use for this specific shape.
 
-    Returns:
-        {slug: memory_handle} pointing to stored content in `_KB[slug]`.
+    ARGS:
+        keys: List of slug strings, e.g. ["3d-operations", "revolve"].
+              Mix cadquery and forgecad slugs freely. Max 5 recommended.
+
+    SIDE EFFECTS: Stores content in `_KB[slug]` and `context['kb_cache'][slug]`.
+
+    RETURNS: {slug: memory_pointer} — query `_KB['slug']` in Python to read.
     """
     import os
 
@@ -240,13 +289,24 @@ def fetch_kb_sections(keys: list[str]) -> dict:
 
 
 def lookup_design_reference(query: str) -> dict:
-    """Look up standard dimensions + adaptable CSG recipes for a design task.
+    """Look up standard engineering dimensions and CSG recipes for a design.
 
-    Call this BEFORE inventing geometry or web-searching. It stores in REPL memory:
-      - `_REF['fastener_dims']` (metric clearance tables)
-      - `_REF['recipes']` (adaptable CSG step templates)
+    WHEN: Call BEFORE inventing dimensions or web-searching. If the user
+    mentions fasteners (M3, M6, etc.), fits, or standard mechanical
+    interfaces, pull the reference data FIRST rather than guessing.
 
-    Returns dict of memory pointers. Query `_REF['recipes']` or `_REF['fastener_dims']` in Python.
+    WHY: Metric clearance tables and proven CSG templates are authoritative.
+    Guessing a bolt-hole diameter wastes a full loop cycle when the verifier
+    catches it. This tool gives you the ground truth in one call.
+
+    ARGS:
+        query: Free-form string, e.g. "m6 clearance", "flange recipe", "bearing seat"
+
+    SIDE EFFECTS: Stores data in `_REF['fastener_dims']` and `_REF['recipes']`.
+    Query `_REF['fastener_dims']` for metric clearance tables; query
+    `_REF['recipes']` for adaptable CSG step templates.
+
+    RETURNS: Dict of memory pointers — query the stored values in Python.
     """
     import os
 
@@ -290,26 +350,26 @@ def lookup_design_reference(query: str) -> dict:
 
 
 async def delegate_features(features: list[dict], shared_frame: dict) -> list[list[dict]]:
-    """Delegate independent solids or body features to parallel child agents.
+    """Spawn parallel child agents for independent solids in a multi-solid assembly.
 
-    Call this tool when planning compound parts (e.g. box + lid, hub + spokes + rim).
-    It spawns parallel child sub-agents with clean context windows, runs them
-    simultaneously, and returns their generated CSG step lists.
+    WHEN: Call ONLY for Case A (genuinely independent solids — see
+    decompose_and_select skill). Examples: box+lid, bolt+nut, blade+handle.
+    Never call for features of a single connected body — plan those inline.
 
-    Args:
-        features: List of feature specifications. Each dictionary should contain:
-                  - "name": str (e.g. "lid", "spoke")
-                  - "operation": str ("base", "union", "cut", or "intersect")
-                  - "placement": list[float] (absolute [x, y, z] position)
-                  - "candidate_primitives": list[str] (2-4 catalog keys to consider)
-                  - "notes": str (optional overlap or sizing details)
-        shared_frame: Dictionary defining shared skeleton dimensions (radii, planes,
-                      bolt circles) so child parts align correctly. Pass {} if parts
-                      are completely independent solids.
+    WHY: Independent solids need their own clean context to avoid cross-
+    contamination (lid parameters leaking into box parameters). Parallel
+    children run simultaneously, saving turns vs. sequential planning.
+    The shared_frame enforces interface consistency (same bolt circle,
+    same mating plane) across independently-designed parts.
 
-    Returns:
-        A list of step-lists (one list of CSG step dicts per feature), in the exact
-        order requested. Flatten these into your main steps array.
+    ARGS:
+        features: [{name, operation, placement: [x,y,z],
+                   candidate_primitives: [2-4 keys], notes?}, ...]
+        shared_frame: {shared radii, planes, bolt positions} or {} for
+                      completely independent parts.
+
+    RETURNS: List of step-lists — one per feature in input order.
+    Flatten these into your main plan's steps array before FINAL.
     """
     _llm_query = globals()["llm_query"]
     _batch_query = globals()["batch_llm_query"]

@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 
 from backend.app import create_app
 from backend.designs import store as design_store
+from backend.designs.intake import IntakeOutcome, IntakeState
 from backend.designs.models import new_session
 from tests.real_world_scenarios import mounting_plate_with_four_holes
 
@@ -25,6 +26,13 @@ def _reset_store():
     design_store._clear_for_testing()
     yield
     design_store._clear_for_testing()
+
+
+@pytest.fixture(autouse=True)
+def _default_intake_passthrough():
+    """Keep the legacy websocket tests focused on the planner unless they override intake."""
+    with patch("backend.designs.runner.run_intake_turn", return_value=_intake_ready()):
+        yield
 
 
 @pytest.fixture()
@@ -65,6 +73,8 @@ def test_session_to_dict_fields():
     assert d["status"] == "chatting"
     assert d["original_prompt"] == ""
     assert d["history"] == []
+    assert d["intake_state"] is None
+    assert d["intake_context"] == ""
     assert d["run_id"] is None
     assert "forge_js" not in d  # forge path removed in the scope reduction
 
@@ -172,6 +182,51 @@ def test_ws_history_grows_after_ask_user(client):
     roles = [h["role"] for h in session.history]
     assert "user" in roles
     assert "planner" in roles
+
+
+def test_ws_image_attachment_hits_intake_before_planner(client):
+    """An image attachment should go through intake first, before planner runs."""
+    design_id = client.post("/designs").json()["design_id"]
+    captured: dict[str, list] = {}
+
+    def fake_intake(*, session, user_text, attachments):  # noqa: ANN001
+        captured["attachments"] = attachments
+        return IntakeOutcome(
+            status="need_user",
+            question="How large should the bracket be?",
+            state=IntakeState(
+                source="image",
+                visual_summary="A bracket-like shape.",
+                question_queue=["How large should the bracket be?"],
+                attachment_names=[str(attachment.get("filename")) for attachment in attachments],
+            ),
+        )
+
+    with (
+        patch("backend.designs.runner.run_intake_turn", side_effect=fake_intake),
+        patch("backend.designs.runner.run_planner_turn") as mock_planner,
+    ):
+        mock_planner.side_effect = AssertionError("planner should not run before intake finishes")
+        with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
+            ws.send_json(
+                {
+                    "type": "message",
+                    "text": "make this",
+                    "attachments": [
+                        {
+                            "filename": "reference.png",
+                            "mime_type": "image/png",
+                            "data": "ZmFrZQ==",
+                        }
+                    ],
+                }
+            )
+            evt1 = ws.receive_json()  # thinking
+            evt2 = ws.receive_json()  # ask_user
+
+    assert evt1["type"] == "thinking"
+    assert evt2["type"] == "ask_user"
+    assert captured["attachments"][0]["filename"] == "reference.png"
 
 
 @patch("backend.designs.runner.write_stl_to_studio", return_value=True)
@@ -372,3 +427,7 @@ def _loop_result(
         message=f"loop {status}",
         question=question,
     )
+
+
+def _intake_ready() -> IntakeOutcome:
+    return IntakeOutcome(status="ready", intake_context="")

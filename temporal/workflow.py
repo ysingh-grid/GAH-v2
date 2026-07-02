@@ -148,7 +148,8 @@ class DesignWorkflow:
                     if rep_mesh.mesh_report:
                         mesh_report = rep_mesh.mesh_report
                     if not rep_mesh.passes:
-                        failure_stage, failure_detail = rep_mesh.failure_stage, rep_mesh.failure_detail
+                        failure_stage = rep_mesh.failure_stage
+                        failure_detail = rep_mesh.failure_detail
                     else:
                         stl_path = rep_mesh.repaired_stl_path
 
@@ -250,6 +251,7 @@ class DesignWorkflow:
                     last_plan_dict=plan_dict,
                     failure_stage=failure_stage,
                     detail=failure_detail,
+                    history=inp.history,
                     backend_url=inp.backend_url,
                 ),
                 schedule_to_close_timeout=_REPLAN_TIMEOUT,

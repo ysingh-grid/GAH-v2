@@ -43,6 +43,7 @@
     booted:      false,    // first open triggered boot
     sending:     false,
     params:      {},       // accumulated params from plan steps
+    pendingFiles: [],
     currentStage: null,
   };
 
@@ -72,9 +73,70 @@
   function setInput(enabled) {
     var inp = el('ga-input');
     var btn = el('ga-send');
+    var att = el('ga-attach');
     if (inp) inp.disabled = !enabled;
     if (btn) btn.disabled = !enabled;
+    if (att) att.disabled = !enabled;
   }
+
+  function setAttachments(files) {
+    S.pendingFiles = files || [];
+    var input = el('ga-file');
+    if (input && !S.pendingFiles.length) {
+      input.value = '';
+    }
+    renderAttachmentBar();
+  }
+
+  function renderAttachmentBar() {
+    var bar = el('ga-attachment-bar');
+    if (!bar) return;
+    if (!S.pendingFiles.length) {
+      bar.style.display = 'none';
+      bar.textContent = '';
+      return;
+    }
+    bar.style.display = 'block';
+    bar.textContent = S.pendingFiles.map(function (file) {
+      return file.name;
+    }).join(', ');
+  }
+
+  function pickAttachments() {
+    var file = el('ga-file');
+    if (file) file.click();
+  }
+
+  function handleAttachmentPick(input) {
+    var files = Array.from((input && input.files) || []).filter(function (file) {
+      return /^image\//.test(file.type || '');
+    });
+    setAttachments(files);
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || '')); };
+      reader.onerror = function () { reject(new Error('Could not read ' + file.name)); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function encodeAttachments(files) {
+    return Promise.all(files.map(function (file) {
+      return readFileAsDataUrl(file).then(function (dataUrl) {
+        var payload = {
+          filename: file.name,
+          mime_type: file.type || 'image/png',
+          data: dataUrl,
+        };
+        return payload;
+      });
+    }));
+  }
+
+  renderAttachmentBar();
 
   // ── Boot: POST /designs + WS connect ─────────────────────────────────────
 
@@ -139,20 +201,40 @@
 
   // ── Outgoing ──────────────────────────────────────────────────────────────
 
-  function sendMsg() {
+  async function sendMsg() {
     var inp = el('ga-input');
     var txt = inp ? inp.value.trim() : '';
-    if (!txt) return;
+    if (!txt && !S.pendingFiles.length) return;
     if (!S.ws || S.ws.readyState !== WebSocket.OPEN) return;
     if (S.sending) return;
 
-    S.ws.send(JSON.stringify({ type: 'message', text: txt }));
-    appendMsg('user', txt);
-    inp.value = '';
-    inp.style.height = 'auto';
-    setInput(false);
-    hideSuggestions();
-    showTyping();
+    S.sending = true;
+    var files = S.pendingFiles.slice();
+    setAttachments([]);
+
+    try {
+      var payload = { type: 'message', text: txt };
+      if (files.length) {
+        payload.attachments = await encodeAttachments(files);
+      }
+      S.ws.send(JSON.stringify(payload));
+      appendMsg('user', txt || ('[image attached: ' + files.map(function (file) {
+        return file.name;
+      }).join(', ') + ']'));
+      if (inp) {
+        inp.value = '';
+        inp.style.height = 'auto';
+      }
+      setInput(false);
+      hideSuggestions();
+      showTyping();
+    } catch (e) {
+      appendMsg('system', '⚠️ Could not send attachment: ' + (e && e.message ? e.message : e));
+      setAttachments(files);
+      setInput(true);
+    } finally {
+      S.sending = false;
+    }
   }
 
   // ── Incoming events ───────────────────────────────────────────────────────
@@ -428,6 +510,10 @@
     toggle: toggle,
 
     send: sendMsg,
+
+    pick: pickAttachments,
+
+    files: handleAttachmentPick,
 
     suggest: function (btn) {
       var inp = el('ga-input');

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import patch
 
 import pytest
 
@@ -35,16 +34,19 @@ class TestDesignInput:
     def test_defaults(self):
         inp = DesignInput(original_prompt="sphere", plan_dict={}, run_id="r1")
         assert inp.backend_url == "http://localhost:8001"
+        assert inp.history == []
 
     def test_fields(self):
         inp = DesignInput(
             original_prompt="cube",
             plan_dict={"steps": [1, 2]},
             run_id="r2",
+            history=[{"role": "system", "content": "context"}],
             backend_url="http://test:9999",
         )
         assert inp.original_prompt == "cube"
         assert inp.plan_dict == {"steps": [1, 2]}
+        assert inp.history == [{"role": "system", "content": "context"}]
         assert inp.backend_url == "http://test:9999"
 
 

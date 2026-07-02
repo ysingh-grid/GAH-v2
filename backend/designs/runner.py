@@ -24,6 +24,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from backend.designs.intake import (
+    IntakeOutcome,
+    build_planner_history,
+    parse_incoming_attachments,
+    start_or_resume_intake,
+)
 from backend.designs.models import DesignSession
 from runtime.loop import LoopResult, run_geometry_loop
 from runtime.planner import PlannerOutput, run_planner_turn
@@ -75,6 +81,7 @@ async def run_chat_turn(
     user_text: str,
     send: SendFn,
     *,
+    attachments: list[dict[str, Any]] | None = None,
     backend_url: str = _BACKEND_URL_DEFAULT,
 ) -> None:
     """Process one user message: planner turn, then optionally the geometry loop.
@@ -90,12 +97,38 @@ async def run_chat_turn(
 
     ev_loop = asyncio.get_running_loop()
 
+    # Offload the blocking intake LLM call to a thread
+    intake = await ev_loop.run_in_executor(
+        None,
+        lambda: run_intake_turn(
+            session=session,
+            user_text=user_text,
+            attachments=attachments,
+        )
+    )
+    if intake.status == "need_user":
+        session.status = "needs_user"
+        session.intake_state = intake.state
+        session.history.append({"role": "planner", "content": intake.question})
+        await send({"type": "ask_user", "question": intake.question, "options": []})
+        return
+
+    if intake.intake_context:
+        session.intake_context = intake.intake_context
+    session.intake_state = None
+
+    planner_history = build_planner_history(
+        original_prompt=session.original_prompt,
+        chat_history=session.history,
+        intake_context=session.intake_context,
+    )
+
     # ── 1. Planner turn (blocking RLM call → thread) ──────────────────────────
     try:
         output = await ev_loop.run_in_executor(
             None,
             lambda: run_planner_turn(
-                session.original_prompt, session.history, backend_url=backend_url
+                session.original_prompt, planner_history, backend_url=backend_url
             ),
         )
     except Exception as exc:
@@ -126,9 +159,24 @@ async def run_chat_turn(
     await send({"type": "generating", "stage": "cadquery_compile"})
 
     if _USE_TEMPORAL:
-        await _run_via_temporal(session, plan, run_id, send, backend_url=backend_url)
+        await _run_via_temporal(
+            session,
+            plan,
+            run_id,
+            send,
+            backend_url=backend_url,
+            planner_history=planner_history,
+        )
     else:
-        await _run_in_process(session, plan, run_id, send, backend_url=backend_url, ev_loop=ev_loop)
+        await _run_in_process(
+            session,
+            plan,
+            run_id,
+            send,
+            backend_url=backend_url,
+            ev_loop=ev_loop,
+            planner_history=planner_history,
+        )
 
 
 async def _run_in_process(
@@ -139,6 +187,7 @@ async def _run_in_process(
     *,
     backend_url: str,
     ev_loop: asyncio.AbstractEventLoop,
+    planner_history: list[dict[str, str]],
 ) -> None:
     """Original path: geometry loop runs in a thread-pool executor."""
     library = load_library()
@@ -153,6 +202,7 @@ async def _run_in_process(
                 planner_fn=planner_fn,
                 library=library,
                 run_id=run_id,
+                history=planner_history,
             ),
         )
     except Exception as exc:
@@ -170,6 +220,7 @@ async def _run_via_temporal(
     send: SendFn,
     *,
     backend_url: str,
+    planner_history: list[dict[str, str]],
 ) -> None:
     """Temporal path: start the workflow, stream its coarse-stage progress, await result.
 
@@ -190,6 +241,7 @@ async def _run_via_temporal(
         plan_dict=plan_to_dict(plan),
         run_id=run_id,
         backend_url=backend_url,
+        history=planner_history,
     )
 
     try:
@@ -299,3 +351,19 @@ def _make_planner_fn(backend_url: str) -> Callable[..., PlannerOutput]:
         return run_planner_turn(original_prompt, history, backend_url=backend_url)
 
     return _fn
+
+
+def run_intake_turn(
+    *,
+    session: DesignSession,
+    user_text: str,
+    attachments: list[dict[str, Any]] | None = None,
+) -> IntakeOutcome:
+    """Run the pre-RLM intake step for one websocket message."""
+    parsed_attachments = parse_incoming_attachments(attachments)
+    return start_or_resume_intake(
+        user_prompt=session.original_prompt or user_text,
+        incoming_text=user_text,
+        attachments=parsed_attachments,
+        state=session.intake_state,
+    )

@@ -40,6 +40,7 @@ class DesignInput:
     # PrimitivePlan serialised via runtime.schema.plan_to_dict() — JSON-safe.
     plan_dict: dict[str, Any]
     run_id: str
+    history: list[dict[str, str]] = field(default_factory=list)
     backend_url: str = "http://localhost:8001"
 
 

@@ -559,6 +559,16 @@ html, body {
   margin-top: 6px;
 }
 
+/* ── Attachment status ──────────────────────────────────────────────────── */
+#ga-attachment-bar {
+  display: none;
+  padding: 0 12px 6px;
+  color: var(--fa-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
 /* ── Input row ───────────────────────────────────────────────────────────── */
 #ga-input-row {
   padding: 10px 12px 14px;
@@ -569,6 +579,28 @@ html, body {
   flex-shrink: 0;
   background: var(--fa-surface);
 }
+
+#ga-attach {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.05);
+  border: 1px solid var(--fa-border2);
+  color: var(--fa-text2);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 15px;
+  transition: var(--fa-t);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#ga-attach:hover:not(:disabled) {
+  background: rgba(255,255,255,.08);
+  color: var(--fa-text);
+  border-color: rgba(99,102,241,.45);
+}
+#ga-attach:disabled { opacity: .4; cursor: not-allowed; }
 
 #ga-input {
   flex: 1;

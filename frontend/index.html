@@ -116,8 +116,20 @@
       <div class="ga-done-file" id="ga-done-file"></div>
     </div>
 
+    <!-- Attachment status -->
+    <div id="ga-attachment-bar" aria-live="polite"></div>
+
     <!-- Input row -->
     <div id="ga-input-row">
+      <input
+        id="ga-file"
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onchange="window.__gah.files(this)"
+      >
+      <button id="ga-attach" onclick="window.__gah.pick()" aria-label="Attach image" title="Attach image">📎</button>
       <textarea
         id="ga-input"
         rows="1"
