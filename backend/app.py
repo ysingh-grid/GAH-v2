@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(web_search_router)
     app.include_router(designs_router)
     app.include_router(design_reference_router)
+    app.include_router(temporal_router)
 
     # Serve the Product UI at /ui — same origin as the API, no CORS needed locally.
     if _FRONTEND_DIR.exists():

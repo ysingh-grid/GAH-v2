@@ -128,8 +128,8 @@
   }
 
   function _syncConfig() {
-    if (!S.designId) return;
-    fetch(BACKEND + '/designs/' + S.designId + '/config', {
+    if (!S.designId) return Promise.resolve();
+    return fetch(BACKEND + '/designs/' + S.designId + '/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ use_temporal: S.useTemporal, use_forgecad: S.useForgeCAD }),
     }).catch(() => {});
@@ -354,7 +354,7 @@
       hideAssistant(); clearTrace(); traceLog('Creating session...','meta');
       fetch(BACKEND+'/designs',{method:'POST'}).then(r=>r.json()).then(async data=>{
         S.designId = data.design_id; traceLog('Session: '+S.designId.substring(0,12)+'…','meta');
-        _syncConfig();
+        await _syncConfig();
         const p = {type:'message',text}; if (files.length) { try { p.attachments = await encodeAttachments(files); } catch(e) { traceLog('Attachment error: '+e.message,'error'); } }
         traceLog('Connecting to WebSocket...','meta'); connectWs(p);
         if (fi) fi.value = ''; const fn = el('ga-file-name'); if (fn) fn.textContent = 'No file chosen';
