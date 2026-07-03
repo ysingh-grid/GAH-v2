@@ -54,6 +54,40 @@ def test_ui_html_has_studio_view(client):
     assert 'id="ga-studio-view"' in resp.text
 
 
+def test_ui_html_has_event_timeline(client):
+    resp = client.get("/ui/")
+    assert 'id="ga-event-timeline"' in resp.text
+    assert 'id="ga-raw-trace-output"' in resp.text
+
+
+def test_ui_html_labels_forgecad_as_preview(client):
+    resp = client.get("/ui/")
+    assert "STL Preview" in resp.text
+
+
+def test_ui_js_handles_trace_events(client):
+    resp = client.get("/ui/app.js")
+    assert "case 'trace_event'" in resp.text
+    assert "renderEventTimeline" in resp.text
+    assert "/events" in resp.text
+
+
+def test_ui_html_has_system_panel(client):
+    resp = client.get("/ui/")
+    assert 'id="ga-system-panel"' in resp.text
+    assert "Restart Worker" in resp.text
+    assert "System Logs" in resp.text
+
+
+def test_ui_js_handles_system_diagnostics(client):
+    resp = client.get("/ui/app.js")
+    body = resp.text
+    assert "/system/status" in body
+    assert "/system/logs" in body
+    assert "/system/restart-worker" in body
+    assert "loadSystemStatus" in body
+
+
 def test_frontend_dir_exists():
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     assert frontend.exists(), "frontend/ directory missing"

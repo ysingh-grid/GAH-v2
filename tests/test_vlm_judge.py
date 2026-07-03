@@ -1,3 +1,5 @@
+import importlib
+
 from tools.vlm_judge import _format_verdict, _read_json
 
 
@@ -41,3 +43,24 @@ def test_format_verdict_for_failure_adds_replan_classification():
     assert verdict["failure_type"] == "missing_feature"
     assert verdict["failure_stage"] == "visual_mismatch"
     assert verdict["feedback"].startswith("[visual_failure:missing_feature]")
+
+
+def test_verify_geometry_passes_latest_feedback_to_judge(monkeypatch):
+    verify_geometry_module = importlib.import_module("tools.verify_geometry")
+    calls = {}
+
+    def fake_judge_geometry_render(prompt, render_png, last_replan_feedback=None):
+        calls["args"] = (prompt, render_png, last_replan_feedback)
+        return {"passed": True, "feedback": "All constraints met.", "failure_stage": ""}
+
+    monkeypatch.setattr(verify_geometry_module, "judge_geometry_render", fake_judge_geometry_render)
+
+    verdict = verify_geometry_module.verify_geometry(
+        "make a bracket",
+        {"volume_mm3": 1000},
+        "render.png",
+        prior_feedback=["first issue", "latest issue"],
+    )
+
+    assert verdict["passed"] is True
+    assert calls["args"] == ("make a bracket", "render.png", "latest issue")

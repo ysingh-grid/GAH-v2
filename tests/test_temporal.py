@@ -15,8 +15,6 @@ from __future__ import annotations
 import sys
 import types
 
-import pytest
-
 from temporal.shared import (
     CompileInput,
     DesignInput,
@@ -25,6 +23,7 @@ from temporal.shared import (
     InspectInput,
     RenderInput,
     RepairInput,
+    VerifyInput,
 )
 
 # ── Unit tests: shared dataclasses ────────────────────────────────────────────
@@ -214,3 +213,60 @@ class TestRenderActivity:
         out = render_activity(RenderInput(stl_path="/o/solid.stl", run_id="r"))
         assert out.ok is False
         assert out.failure_stage == "cadquery_execute"
+
+
+class TestVerifyActivity:
+    def test_success_uses_verifier_without_code_argument(self, monkeypatch):
+        from temporal.activities import verify_activity
+
+        calls = {}
+
+        def fake_verify(prompt, metrics, render_png, prior_feedback=None):
+            calls["args"] = (prompt, metrics, render_png, prior_feedback)
+            return {
+                "passed": True,
+                "feedback": "All constraints met.",
+                "failure_stage": "",
+            }
+
+        fake = _fake_tool_module("tools.verify_geometry", "verify_geometry", fake_verify)
+        monkeypatch.setitem(sys.modules, "tools.verify_geometry", fake)
+
+        out = verify_activity(
+            VerifyInput(
+                prompt="make a cube",
+                code="result = cube",
+                execution_result={"volume": 1000, "bbox": {}, "faces_count": 6},
+                mesh_report={"passes": True, "is_watertight": True},
+                renders={"png_path": "/o/threeview.png"},
+                prior_feedback=["previous issue"],
+            )
+        )
+
+        assert out.passed is True
+        assert calls["args"][0] == "make a cube"
+        assert calls["args"][2] == "/o/threeview.png"
+        assert calls["args"][3] == ["previous issue"]
+
+    def test_verifier_exception_returns_typed_failure(self, monkeypatch):
+        from temporal.activities import verify_activity
+
+        def fake_verify(prompt, metrics, render_png, prior_feedback=None):
+            raise RuntimeError("judge transport failed")
+
+        fake = _fake_tool_module("tools.verify_geometry", "verify_geometry", fake_verify)
+        monkeypatch.setitem(sys.modules, "tools.verify_geometry", fake)
+
+        out = verify_activity(
+            VerifyInput(
+                prompt="make a cube",
+                code="result = cube",
+                execution_result={"volume": 1000, "bbox": {}, "faces_count": 6},
+                mesh_report={"passes": True, "is_watertight": True},
+                renders={"png_path": "/o/threeview.png"},
+            )
+        )
+
+        assert out.passed is False
+        assert out.verdict["failure_stage"] == "verifier_error"
+        assert "judge transport failed" in out.feedback

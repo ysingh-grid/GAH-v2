@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from backend.designs import store
 from backend.designs.runner import run_chat_turn
+from runtime.events import list_events
 
 router = APIRouter()
 
@@ -134,8 +135,29 @@ def list_runs() -> list[dict]:
     # 2. Completed traces from outputs/ (each folder with a trace.json)
     if _OUTPUTS_DIR.exists():
         for d in sorted(os.listdir(_OUTPUTS_DIR)):
-            trace_path = _OUTPUTS_DIR / d / "trace.json"
+            artifact_dir = _OUTPUTS_DIR / d
+            if not artifact_dir.is_dir():
+                continue
+            trace_path = artifact_dir / "trace.json"
             if not trace_path.exists():
+                has_stl = (artifact_dir / "solid.stl").exists()
+                has_step = (artifact_dir / "solid.step").exists()
+                has_render = (artifact_dir / "threeview.png").exists()
+                if not (has_stl or has_step or has_render):
+                    continue
+                runs.append({
+                    "run_id": d,
+                    "design_id": d,
+                    "prompt": "",
+                    "status": "incomplete",
+                    "timestamp": "",
+                    "has_stl": has_stl,
+                    "has_step": has_step,
+                    "has_render": has_render,
+                    "has_events": (artifact_dir / "events.jsonl").exists(),
+                    "has_trace": False,
+                    "source": "outputs",
+                })
                 continue
             try:
                 trace = json.loads(trace_path.read_text(encoding="utf-8"))
@@ -149,6 +171,7 @@ def list_runs() -> list[dict]:
                 "timestamp": trace.get("timestamp", ""),
                 "has_stl": (_OUTPUTS_DIR / d / "solid.stl").exists(),
                 "has_step": (_OUTPUTS_DIR / d / "solid.step").exists(),
+                "has_events": (_OUTPUTS_DIR / d / "events.jsonl").exists(),
                 "has_trace": True,
                 "source": "outputs",
             })
@@ -201,8 +224,32 @@ def get_run_trace(run_id: str) -> dict:
     return json.loads(trace_path.read_text(encoding="utf-8"))
 
 
+@router.get("/runs/{run_id}/events")
+def get_run_events(run_id: str) -> dict:
+    """Return the normalized timeline events for a run."""
+    return {"run_id": run_id, "events": list_events(run_id)}
+
+
+@router.get("/runs/{run_id}/artifacts")
+def get_run_artifacts(run_id: str) -> dict:
+    """Return artifact availability for a run without reading heavy files."""
+    artifact_dir = _OUTPUTS_DIR / run_id
+    if not artifact_dir.exists():
+        raise HTTPException(status_code=404, detail=f"no artifacts found for run_id {run_id!r}")
+    return {
+        "run_id": run_id,
+        "has_events": (artifact_dir / "events.jsonl").exists(),
+        "has_trace": (artifact_dir / "trace.json").exists(),
+        "has_stl": (artifact_dir / "solid.stl").exists()
+        or (artifact_dir / "solid_repaired.stl").exists(),
+        "has_step": (artifact_dir / "solid.step").exists(),
+        "has_render": (artifact_dir / "threeview.png").exists(),
+        "forgecad_preview": (_OUTPUTS_DIR / "forgecad" / "main.forge.js").exists(),
+    }
+
+
 @router.get("/runs/{run_id}/stl")
-def get_run_stl(run_id: str):
+def get_run_stl(run_id: str) -> FileResponse:
     """Download the STL file for a completed run."""
     stl_path = _OUTPUTS_DIR / run_id / "solid.stl"
     if not stl_path.exists():
@@ -219,7 +266,7 @@ def get_run_stl(run_id: str):
 
 
 @router.get("/runs/{run_id}/step")
-def get_run_step(run_id: str):
+def get_run_step(run_id: str) -> FileResponse:
     """Download the STEP file for a completed run."""
     step_path = _OUTPUTS_DIR / run_id / "solid.step"
     if not step_path.exists():

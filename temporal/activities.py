@@ -23,8 +23,6 @@ import logging
 
 from temporalio import activity
 
-logger = logging.getLogger(__name__)
-
 # Pure single-attempt helpers shared with the in-process loop (runtime is the
 # canonical, Temporal-free home of stage logic; temporal/ depends on runtime/).
 from runtime.loop import _Artifacts, _run_geometry, _run_verify
@@ -51,6 +49,8 @@ from temporal.shared import (
     VerifyInput,
     VerifyOutput,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @activity.defn
@@ -136,7 +136,11 @@ def repair_activity(inp: RepairInput) -> RepairOutput:
             failure_stage="mesh_repair",
             failure_detail=collect_feedback_detail("mesh_repair", repair),
         )
-    return RepairOutput(passes=True, mesh_report=after, repaired_stl_path=repair["repaired_stl_path"])
+    return RepairOutput(
+        passes=True,
+        mesh_report=after,
+        repaired_stl_path=repair["repaired_stl_path"],
+    )
 
 
 @activity.defn
@@ -168,7 +172,7 @@ def verify_activity(inp: VerifyInput) -> VerifyOutput:
         feedback_log=list(inp.prior_feedback),
     )
 
-    failure = _run_verify(inp.prompt, inp.code, art)
+    failure = _run_verify(inp.prompt, art, inp.run_id)
 
     return VerifyOutput(
         passed=failure is None,
@@ -199,7 +203,12 @@ def replan_activity(inp: ReplanInput) -> ReplanOutput:
         backend_url = os.environ.get("BACKEND_URL") or inp.backend_url
 
         def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
-            return run_replanner_turn(original_prompt, history, backend_url=backend_url)
+            return run_replanner_turn(
+                original_prompt,
+                history,
+                backend_url=backend_url,
+                run_id=inp.run_id or None,
+            )
 
         out = replan_with_feedback(
             original_prompt=inp.original_prompt,

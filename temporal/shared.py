@@ -176,6 +176,7 @@ class VerifyInput:
     mesh_report: dict[str, Any]
     renders: dict[str, Any]
     prior_feedback: list[str] = field(default_factory=list)
+    run_id: str = ""
 
 
 @dataclass
@@ -197,6 +198,7 @@ class ReplanInput:
     detail: str
     history: list[dict[str, str]] = field(default_factory=list)
     backend_url: str = ""  # so the worker-side replanner's pull tools can reach the backend
+    run_id: str = ""
 
 
 @dataclass

@@ -32,6 +32,7 @@ from backend.designs.intake import (
     start_or_resume_intake,
 )
 from backend.designs.models import DesignSession
+from runtime.events import append_event, list_events
 from runtime.loop import LoopResult, run_geometry_loop
 from runtime.planner import run_planner_turn, run_replanner_turn
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
@@ -122,26 +123,71 @@ async def run_chat_turn(
         chat_history=session.history,
         intake_context=session.intake_context,
     )
+    run_id = new_run_id(f"design_{session.id[:8]}")
+    session.run_id = run_id
+
+    planning_event = await _emit_trace_event(
+        run_id,
+        send,
+        source="backend",
+        stage="planning",
+        status="running",
+        title="Planning started",
+        summary="RLM planner is producing a PrimitivePlan.",
+    )
+    last_event_seq = int((planning_event or {}).get("seq") or 0)
 
     # ── 1. Planner turn (blocking RLM call → thread) ──────────────────────────
     try:
         plan = await ev_loop.run_in_executor(
             None,
             lambda: run_planner_turn(
-                session.original_prompt, planner_history, backend_url=backend_url
+                session.original_prompt,
+                planner_history,
+                backend_url=backend_url,
+                run_id=run_id,
             ),
         )
     except Exception as exc:
+        await _emit_trace_event(
+            run_id,
+            send,
+            source="backend",
+            stage="planning",
+            status="error",
+            title="Planning failed",
+            summary=str(exc),
+        )
         await send({"type": "error", "message": str(exc)})
         return
 
     # ── 2. plan → geometry loop ──────────────────────────────────────────────
     session.status = "generating"
     session.last_plan = plan_to_dict(plan)
-    run_id = new_run_id(f"design_{session.id[:8]}")
-    session.run_id = run_id
 
+    last_event_seq = await _emit_existing_events(run_id, send, after_seq=last_event_seq)
+    plan_event = await _emit_trace_event(
+        run_id,
+        send,
+        source="backend",
+        stage="planning",
+        status="ok",
+        title="Plan ready",
+        summary=plan.part_name,
+        payload={"plan": plan_to_dict(plan)},
+    )
+    last_event_seq = int((plan_event or {}).get("seq") or last_event_seq)
     await send({"type": "plan", "plan": plan_to_dict(plan)})
+    geometry_event = await _emit_trace_event(
+        run_id,
+        send,
+        source="runtime",
+        stage="generating",
+        status="running",
+        title="Geometry pipeline started",
+        summary="Compiling and executing the PrimitivePlan.",
+    )
+    last_event_seq = int((geometry_event or {}).get("seq") or last_event_seq)
     await send({"type": "generating", "stage": "cadquery_compile"})
 
     # Read the toggle from the session object — set by the UI via POST /config.
@@ -156,6 +202,7 @@ async def run_chat_turn(
             send,
             backend_url=backend_url,
             planner_history=planner_history,
+            last_event_seq=last_event_seq,
         )
     else:
         await _run_in_process(
@@ -166,6 +213,7 @@ async def run_chat_turn(
             backend_url=backend_url,
             ev_loop=ev_loop,
             planner_history=planner_history,
+            last_event_seq=last_event_seq,
         )
 
 
@@ -178,10 +226,11 @@ async def _run_in_process(
     backend_url: str,
     ev_loop: asyncio.AbstractEventLoop,
     planner_history: list[dict[str, str]],
+    last_event_seq: int,
 ) -> None:
     """Original path: geometry loop runs in a thread-pool executor."""
     library = load_library()
-    planner_fn = _make_planner_fn(backend_url)
+    planner_fn = _make_planner_fn(backend_url, run_id=run_id)
 
     try:
         result = await ev_loop.run_in_executor(
@@ -197,9 +246,19 @@ async def _run_in_process(
         )
     except Exception as exc:
         session.status = "failed"
+        await _emit_trace_event(
+            run_id,
+            send,
+            source="runtime",
+            stage="error",
+            status="error",
+            title="Geometry pipeline crashed",
+            summary=str(exc),
+        )
         await send({"type": "error", "message": str(exc)})
         return
 
+    await _emit_existing_events(run_id, send, after_seq=last_event_seq)
     await _emit_loop_result(session, result, run_id, send)
 
 
@@ -211,6 +270,7 @@ async def _run_via_temporal(
     *,
     backend_url: str,
     planner_history: list[dict[str, str]],
+    last_event_seq: int,
 ) -> None:
     """Temporal path: start the workflow, stream its coarse-stage progress, await result.
 
@@ -244,7 +304,12 @@ async def _run_via_temporal(
         )
     except Exception as exc:
         session.status = "failed"
-        await send({"type": "error", "message": f"Temporal error: {exc}"})
+        await send(
+            {
+                "type": "error",
+                "message": f"Temporal error for run {run_id}: {type(exc).__name__}: {exc}",
+            }
+        )
         return
 
     # ── Stream coarse-stage progress while the workflow runs ──────────────────
@@ -257,21 +322,56 @@ async def _run_via_temporal(
             stage = None  # query can briefly fail at task boundaries; just re-poll
         if stage and stage != last_stage:
             last_stage = stage
+            event = await _emit_trace_event(
+                run_id,
+                send,
+                source="temporal",
+                stage=stage,
+                status="running",
+                title=f"Temporal stage: {stage}",
+            )
+            last_event_seq = int((event or {}).get("seq") or last_event_seq)
             await send({"type": "stage", "stage": stage})
         # Wait up to 0.5s for completion, then loop to re-poll the stage.
         await asyncio.wait({result_fut}, timeout=0.5)
+        last_event_seq = await _emit_existing_events(run_id, send, after_seq=last_event_seq)
 
     try:
         result_dc = await result_fut
     except Exception as exc:
         session.status = "failed"
-        await send({"type": "error", "message": f"Temporal error: {exc}"})
+        await _emit_trace_event(
+            run_id,
+            send,
+            source="temporal",
+            stage="error",
+            status="error",
+            title="Temporal workflow failed",
+            summary=str(exc),
+        )
+        await send(
+            {
+                "type": "error",
+                "message": f"Temporal error for run {run_id}: {type(exc).__name__}: {exc}",
+            }
+        )
         return
+
+    await _emit_existing_events(run_id, send, after_seq=last_event_seq)
 
     # Map DesignResult dataclass → terminal WS event
     if result_dc.status == "success":
         session.status = "done"
         write_stl_to_studio(run_id)
+        await _emit_trace_event(
+            run_id,
+            send,
+            source="backend",
+            stage="outcome",
+            status="ok",
+            title="Run succeeded",
+            summary="Artifacts are ready.",
+        )
         await send(
             {
                 "type": "success",
@@ -281,6 +381,16 @@ async def _run_via_temporal(
         )
     else:
         session.status = "failed"
+        await _emit_trace_event(
+            run_id,
+            send,
+            source="backend",
+            stage="outcome",
+            status="error",
+            title="Run failed",
+            summary=result_dc.message,
+            payload={"failure_category": result_dc.failure_category or "unknown"},
+        )
         await send(
             {
                 "type": "failed",
@@ -300,6 +410,15 @@ async def _emit_loop_result(
     if result.status == "success":
         session.status = "done"
         write_stl_to_studio(run_id)
+        await _emit_trace_event(
+            run_id,
+            send,
+            source="backend",
+            stage="outcome",
+            status="ok",
+            title="Run succeeded",
+            summary="Artifacts are ready.",
+        )
         await send(
             {
                 "type": "success",
@@ -309,6 +428,16 @@ async def _emit_loop_result(
         )
     else:
         session.status = "failed"
+        await _emit_trace_event(
+            run_id,
+            send,
+            source="backend",
+            stage="outcome",
+            status="error",
+            title="Run failed",
+            summary=result.message,
+            payload={"failure_category": result.failure_category or "unknown"},
+        )
         await send(
             {
                 "type": "failed",
@@ -318,7 +447,11 @@ async def _emit_loop_result(
         )
 
 
-def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
+def _make_planner_fn(
+    backend_url: str,
+    *,
+    run_id: str | None = None,
+) -> Callable[..., PrimitivePlan]:
     """Return a PlannerFn closure for the geometry loop's replan path.
 
     Uses the scoped run_replanner_turn (read-only pull tools, no delegate_features
@@ -328,9 +461,60 @@ def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
     """
 
     def _fn(original_prompt: str, history: list[dict[str, str]]) -> PrimitivePlan:
-        return run_replanner_turn(original_prompt, history, backend_url=backend_url)
+        return run_replanner_turn(
+            original_prompt,
+            history,
+            backend_url=backend_url,
+            run_id=run_id,
+        )
 
     return _fn
+
+
+async def _emit_trace_event(
+    run_id: str,
+    send: SendFn,
+    *,
+    source: str,
+    stage: str,
+    status: str,
+    title: str,
+    summary: str = "",
+    payload: dict[str, Any] | None = None,
+    artifact_refs: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Persist and stream one timeline event; never crash the user run."""
+    try:
+        event = append_event(
+            run_id,
+            source=source,
+            stage=stage,
+            status=status,
+            title=title,
+            summary=summary,
+            payload=payload,
+            artifact_refs=artifact_refs,
+        )
+        await send({"type": "trace_event", "event": event})
+        return event
+    except Exception as exc:
+        log.warning("could not emit trace event for %s: %s", run_id, exc)
+        return None
+
+
+async def _emit_existing_events(run_id: str, send: SendFn, *, after_seq: int) -> int:
+    """Stream persisted events once after blocking RLM/runtime work completes."""
+    max_seq = after_seq
+    try:
+        for event in list_events(run_id):
+            seq = int(event.get("seq") or 0)
+            if seq <= after_seq:
+                continue
+            await send({"type": "trace_event", "event": event})
+            max_seq = max(max_seq, seq)
+    except Exception as exc:
+        log.warning("could not replay trace events for %s: %s", run_id, exc)
+    return max_seq
 
 
 def run_intake_turn(

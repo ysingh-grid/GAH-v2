@@ -24,6 +24,7 @@
     temporalOnline: false,
     temporalStarting: false,
     forgecadOnline: false,
+    traceEvents: [],
   };
 
   const el = id => document.getElementById(id);
@@ -40,6 +41,11 @@
       const v = el('ga-runs-view'); if (v) v.style.display = 'block';
       document.querySelector('button[onclick*="runs"]')?.classList.add('active');
       fetchRunHistory();
+    } else if (viewId === 'system') {
+      const v = el('ga-system-view'); if (v) v.style.display = 'block';
+      document.querySelector('button[onclick*="system"]')?.classList.add('active');
+      loadSystemStatus();
+      loadSystemLog('temporal_worker');
     } else if (viewId === 'studio') {
       const v = el('ga-studio-view'); if (v) v.style.display = 'flex';
     }
@@ -194,6 +200,66 @@
     setTimeout(_updateToggleRowState, 500);
   }
 
+  function loadSystemStatus() {
+    return fetch(BACKEND + '/system/status').then(r => r.json()).then(status => {
+      renderSystemStatus(status);
+      const temporal = status.temporal || {};
+      updateServiceDot('ga-temporal-status', temporal.server_up && temporal.managed_worker_up ? 'online' : temporal.server_up ? 'checking' : 'offline');
+      return status;
+    }).catch(() => {
+      const target = el('ga-system-summary');
+      if (target) target.innerHTML = '<div class="ga-system-card ga-system-bad">System status unavailable. Check backend logs.</div>';
+    });
+  }
+
+  function renderSystemStatus(status) {
+    const target = el('ga-system-summary'); if (!target) return;
+    const temporal = status.temporal || {}, tools = status.tools || {}, config = status.config || {};
+    const workerState = temporal.managed_worker_up ? 'online' : temporal.server_up ? 'server only' : 'offline';
+    const cards = [
+      ['Backend', status.backend?.status || 'unknown', 'API server serving UI and routes'],
+      ['Temporal', workerState, 'CLI: '+(tools.temporal_cli ? 'found' : 'missing')+', worker: '+(temporal.managed_worker_up ? 'managed' : 'not managed')],
+      ['ForgeCAD', tools.forgecad_cli ? 'cli found' : 'cli missing', config.forgecad_studio_url || 'Studio expected at http://localhost:4000'],
+      ['Type Check', tools.mypy ? 'mypy found' : 'mypy missing', 'Install dev extras to run strict type checks'],
+    ];
+    target.innerHTML = cards.map(card => '<div class="ga-system-card '+systemCardClass(card[1])+'"><div class="ga-system-label">'+_escHtml(card[0])+'</div><div class="ga-system-value">'+_escHtml(card[1])+'</div><div class="ga-system-note">'+_escHtml(card[2])+'</div></div>').join('');
+    if (temporal.last_worker_errors && temporal.last_worker_errors.length) {
+      target.innerHTML += '<div class="ga-system-card ga-system-wide ga-system-bad"><div class="ga-system-label">Recent Worker Errors</div><pre>'+_escHtml(temporal.last_worker_errors.join('\n'))+'</pre></div>';
+    }
+  }
+
+  function systemCardClass(value) {
+    const text = String(value || '').toLowerCase();
+    if (text.includes('online') || text.includes('found') || text === 'ok') return 'ga-system-good';
+    if (text.includes('server only')) return 'ga-system-warn';
+    return 'ga-system-bad';
+  }
+
+  function loadSystemLog(service) {
+    return fetch(BACKEND + '/system/logs?service=' + encodeURIComponent(service || 'temporal_worker') + '&tail=200')
+      .then(r => r.json())
+      .then(data => {
+        const out = el('ga-system-log-output'); if (!out) return;
+        out.textContent = (data.lines || []).join('\n') || 'No log lines yet.';
+      })
+      .catch(() => {
+        const out = el('ga-system-log-output'); if (out) out.textContent = 'Could not load system log.';
+      });
+  }
+
+  function restartWorker() {
+    const out = el('ga-system-log-output'); if (out) out.textContent = 'Restarting Temporal worker...';
+    return fetch(BACKEND + '/system/restart-worker', { method: 'POST' })
+      .then(r => r.json())
+      .then(status => {
+        traceLog('Temporal worker restart: ' + (status.message || 'done'), status.ok ? 'success' : 'error');
+        return loadSystemStatus().then(() => loadSystemLog('temporal_worker'));
+      })
+      .catch(err => {
+        traceLog('Temporal worker restart failed: ' + err.message, 'error');
+      });
+  }
+
   function openTemporal() {
     if (S.temporalOnline) { window.open(TEMPORAL_UI_URL, '_blank', 'noopener'); }
     else { showWarning('Temporal not running. Toggle the switch ON first.'); }
@@ -205,12 +271,33 @@
 
   /* ─── Live Trace ───────────────────────────────────────────────────────── */
   function traceLog(text, type) {
-    const body = el('ga-trace-output'); if (!body) return;
+    const body = el('ga-raw-trace-output'); if (!body) return;
     const line = document.createElement('div'); line.className = 'ga-trace-line ga-trace-' + (type || 'meta');
     line.textContent = text; body.appendChild(line); body.scrollTop = body.scrollHeight;
   }
-  function clearTrace() { const body = el('ga-trace-output'); if (body) body.innerHTML = '<div class="ga-trace-line ga-trace-meta">System ready. Enter a design prompt to start.</div>'; }
+  function clearTrace() {
+    S.traceEvents = [];
+    const timeline = el('ga-event-timeline');
+    if (timeline) timeline.innerHTML = '<div class="ga-empty-timeline">System ready. Enter a design prompt to start.</div>';
+    const body = el('ga-raw-trace-output');
+    if (body) body.innerHTML = '<div class="ga-trace-line ga-trace-meta">System ready. Enter a design prompt to start.</div>';
+  }
   function setStatus(text) { const badge = el('ga-status-badge'); if (!badge) return; badge.textContent = text; badge.className = 'ga-status-badge ' + text.replace(/\s+/g, '-').toLowerCase(); }
+
+  function addTraceEvent(event) {
+    if (!event || typeof event !== 'object') return;
+    const seq = Number(event.seq || 0);
+    if (seq && S.traceEvents.some(e => Number(e.seq || 0) === seq && e.run_id === event.run_id)) return;
+    S.traceEvents.push(event);
+    S.traceEvents.sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0));
+    renderLiveTimeline();
+  }
+
+  function renderLiveTimeline() {
+    const timeline = el('ga-event-timeline'); if (!timeline) return;
+    timeline.innerHTML = renderEventTimeline(S.traceEvents);
+    timeline.scrollTop = timeline.scrollHeight;
+  }
 
   /* ─── Assistant ────────────────────────────────────────────────────────── */
   function showAssistant(html, showReply) {
@@ -246,7 +333,9 @@
         const rid = (run.run_id || '').substring(0, 14), prompt = (run.prompt || '').substring(0, 60);
         const status = run.status || 'unknown', ts = run.timestamp ? new Date(run.timestamp).toLocaleString() : '-';
         const bc = status === 'success' || status === 'done' ? 'success' : status === 'failed' ? 'failed' : 'thinking';
-        let a = ''; if (run.has_trace) a += '<button class="ga-btn-secondary ga-btn-xs" onclick="window.__gah.viewTrace(\'' + run.run_id + '\')">📋</button>';
+        let a = '';
+        if (run.has_events) a += '<button class="ga-btn-secondary ga-btn-xs" onclick="window.__gah.viewEvents(\'' + run.run_id + '\')">Timeline</button>';
+        if (run.has_trace) a += '<button class="ga-btn-secondary ga-btn-xs" onclick="window.__gah.viewTrace(\'' + run.run_id + '\')">Trace</button>';
         if (run.has_stl) a += '<a href="' + BACKEND + '/runs/' + run.run_id + '/stl" class="ga-btn-secondary ga-btn-xs" download>⬇STL</a>';
         if (run.has_step) a += '<a href="' + BACKEND + '/runs/' + run.run_id + '/step" class="ga-btn-secondary ga-btn-xs" download>⬇STEP</a>';
         return '<tr><td style="font-family:var(--font-mono);font-size:11px;">' + rid + '…</td><td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _escAttr(run.prompt) + '">' + _escHtml(prompt) + '</td><td><span class="ga-status-badge ' + bc + '">' + status + '</span></td><td style="font-size:11px;color:var(--text-muted);">' + ts + '</td><td class="ga-actions-cell">' + a + '</td></tr>';
@@ -262,6 +351,43 @@
     }).catch(() => traceLog('Could not load trace.', 'error'));
   }
   function closeTrace() { const m = el('ga-trace-modal'); if (m) m.style.display = 'none'; }
+
+  function viewEvents(runId) {
+    fetch(BACKEND + '/runs/' + runId + '/events').then(r => r.json()).then(data => {
+      const modal = el('ga-trace-modal'), content = el('ga-trace-content');
+      if (!modal || !content) return;
+      content.innerHTML = renderEventTimeline(data.events || []);
+      modal.style.display = 'flex';
+    }).catch(() => traceLog('Could not load run events.', 'error'));
+  }
+
+  function renderEventTimeline(events) {
+    if (!Array.isArray(events) || events.length === 0) return '<div class="ga-empty-timeline">No timeline events yet.</div>';
+    return events.map(event => {
+      const status = event.status || 'info';
+      const source = event.source || 'system';
+      const stage = event.stage || 'event';
+      const title = event.title || stage;
+      const summary = event.summary || '';
+      const payload = event.payload && Object.keys(event.payload).length ? '<details class="ga-event-details"><summary>Details</summary><div class="ga-tc-json">'+_escHtml(JSON.stringify(event.payload,null,2))+'</div></details>' : '';
+      const refs = event.artifact_refs && Object.keys(event.artifact_refs).length ? '<details class="ga-event-details"><summary>Artifacts</summary><div class="ga-tc-json">'+_escHtml(JSON.stringify(event.artifact_refs,null,2))+'</div></details>' : '';
+      return '<div class="ga-event-card '+_eventClass(status)+'">'+
+        '<div class="ga-event-rail"></div>'+
+        '<div class="ga-event-main">'+
+          '<div class="ga-event-top"><span class="ga-event-stage">'+_escHtml(stage)+'</span><span class="ga-event-source">'+_escHtml(source)+'</span><span class="ga-event-status">'+_escHtml(status)+'</span></div>'+
+          '<div class="ga-event-title">'+_escHtml(title)+'</div>'+
+          (summary ? '<div class="ga-event-summary">'+_escHtml(summary)+'</div>' : '')+
+          payload+refs+
+        '</div></div>';
+    }).join('');
+  }
+
+  function _eventClass(status) {
+    if (status === 'ok' || status === 'success') return 'ok';
+    if (status === 'error' || status === 'failed') return 'error';
+    if (status === 'running') return 'running';
+    return 'info';
+  }
 
   function renderStructuredTrace(trace) {
     if (!trace || typeof trace !== 'object') return '<p class="ga-text-muted">No trace data.</p>';
@@ -321,6 +447,7 @@
 
   function handleEvent(evt) {
     switch (evt.type) {
+      case 'trace_event': addTraceEvent(evt.event); break;
       case 'thinking': setStatus('thinking'); traceLog('Agent is planning...','thinking'); break;
       case 'plan': setStatus('plan-ready'); traceLog('Plan generated:\n'+JSON.stringify(evt.plan,null,2),'plan'); break;
       case 'ask_user': case 'needs_user': setStatus('awaiting-input'); hideAssistant(); traceLog('Agent needs clarification: '+evt.question,'meta'); if (evt.question) showAssistant('<p>'+evt.question+'</p>',true); unlockSend(); break;
@@ -335,7 +462,7 @@
           if (vt) vt.onclick = () => viewTrace(evt.run_id);
           if (lb) lb.textContent = 'Run: '+(evt.run_id||'').substring(0,14)+'…';
         }
-        if (S.useForgeCAD && S.forgecadOnline) { const ifr = el('ga-studio-iframe'); if (ifr) ifr.src = FORGECAD_URL; showView('studio'); }
+        if (S.useForgeCAD && S.forgecadOnline) { const ifr = el('ga-studio-iframe'); if (ifr) ifr.src = FORGECAD_URL; const lb = el('ga-studio-run-label'); if (lb) lb.textContent = 'STL Preview: '+(evt.run_id||'').substring(0,14)+'…'; showView('studio'); }
         unlockSend(); break;
       case 'failed': setStatus('failed'); traceLog('❌ Failed ['+(evt.category||'unknown')+']: '+(evt.message||''),'failed'); unlockSend(); break;
       case 'error': setStatus('error'); traceLog('⚠ Error: '+(evt.message||'unknown'),'error'); unlockSend(); break;
@@ -369,12 +496,13 @@
   function encodeAttachments(files) { return Promise.all(files.map(f=>readFileAsDataUrl(f).then(u=>{ let b=u; if (b.includes(',')) b=b.split(',')[1]; return {filename:f.name,mime_type:f.type||'image/png',data:b}; }))); }
 
   /* ─── Boot ─────────────────────────────────────────────────────────────── */
-  function boot() { healthCheck(); setInterval(healthCheck, 20000); showView('new-run'); }
+  function boot() { healthCheck(); loadSystemStatus(); setInterval(healthCheck, 20000); showView('new-run'); }
 
   window.__gah = {
     send: () => { const i = el('ga-input'); sendMsg(i ? i.value.trim() : ''); },
     showView, reset: resetUI, toggleTemporal, toggleForgeCAD,
-    openTemporal, openForgeCAD, viewTrace, closeTrace,
+    openTemporal, openForgeCAD, viewTrace, viewEvents, closeTrace,
+    loadSystemStatus, loadSystemLog, restartWorker,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

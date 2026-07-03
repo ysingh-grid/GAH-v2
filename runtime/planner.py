@@ -22,6 +22,24 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+# Tools the planner may call inside its REPL. Imported as objects so fast-rlm
+# can extract their source; they must stay self-contained (see rlm/pull_tools).
+from rlm.pull_tools import (
+    delegate_features,
+    fetch_kb_sections,
+    list_kb_index,
+    list_primitives,
+    list_skills,
+    lookup_design_reference,
+    lookup_primitive,
+    read_skill,
+)
+from runtime.events import ingest_rlm_log
+from runtime.schema import PrimitivePlan
+
+if TYPE_CHECKING:
+    from fast_rlm import RLMConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,23 +54,6 @@ def _llm_kwargs() -> dict:
 
     return LLM_KWARGS
 
-
-# Tools the planner may call inside its REPL. Imported as objects so fast-rlm
-# can extract their source; they must stay self-contained (see rlm/pull_tools).
-from rlm.pull_tools import (
-    delegate_features,
-    fetch_kb_sections,
-    list_kb_index,
-    list_primitives,
-    list_skills,
-    lookup_design_reference,
-    lookup_primitive,
-    read_skill,
-)
-from runtime.schema import PrimitivePlan
-
-if TYPE_CHECKING:
-    from fast_rlm import RLMConfig
 
 _PLANNER_TOOLS = [
     read_skill,
@@ -87,7 +88,7 @@ _REPLANNER_TOOLS = [
 # — add it explicitly only if the replanner genuinely needs it.
 
 
-def parse_planner_result(result: Any) -> PrimitivePlan:
+def parse_planner_result(result: object) -> PrimitivePlan:
     """Validate a fast-rlm FINAL dict into a PrimitivePlan (raises on mismatch)."""
     if isinstance(result, PrimitivePlan):
         return result
@@ -130,6 +131,7 @@ def run_planner_turn(
     *,
     backend_url: str,
     config: RLMConfig | None = None,
+    run_id: str | None = None,
 ) -> PrimitivePlan:
     """Run one planner turn against the RLM and return its validated plan.
 
@@ -178,7 +180,9 @@ def run_planner_turn(
             original_prompt,
             chat_history,
             available_primitives=available_primitives,
+            kb_index=kb_index,
         ),
+        prefix=f"{run_id}_planner" if run_id else None,
         config=config,
         tools=_PLANNER_TOOLS,
         output_schema=PrimitivePlan,
@@ -187,6 +191,8 @@ def run_planner_turn(
         },
         llm_kwargs=_llm_kwargs(),
     )
+    if run_id and result.get("log_file"):
+        ingest_rlm_log(run_id, str(result["log_file"]), stage="planning")
     return parse_planner_result(result["results"])
 
 
@@ -206,6 +212,7 @@ def run_replanner_turn(
     *,
     backend_url: str | None = None,
     config: RLMConfig | None = None,
+    run_id: str | None = None,
 ) -> PrimitivePlan:
     """Run one replan turn against the scoped replanner toolset (no fork tool).
 
@@ -242,6 +249,7 @@ def run_replanner_turn(
     }
     result = fast_rlm.run(
         query,
+        prefix=f"{run_id}_replanner" if run_id else None,
         config=config,
         tools=_REPLANNER_TOOLS,
         output_schema=PrimitivePlan,
@@ -250,4 +258,6 @@ def run_replanner_turn(
         },
         llm_kwargs=_llm_kwargs(),
     )
+    if run_id and result.get("log_file"):
+        ingest_rlm_log(run_id, str(result["log_file"]), stage="replanning")
     return parse_planner_result(result["results"])

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from runtime.compile_cadquery import CompileError, compile_plan_to_cadquery
+from runtime.events import append_event
 from runtime.replan import (
     PlannerFn,
     collect_feedback_detail,
@@ -93,30 +94,78 @@ def _run_geometry(
     from tools.render_views import render_views
     from tools.repair_mesh import repair_mesh
 
+    _append_runtime_event(run_id, "compile", "running", "Compiling CadQuery")
     compile_failure = _compile_cadquery(plan, library, art)
     if compile_failure is not None:
+        _append_runtime_event(
+            run_id,
+            "compile",
+            "error",
+            "CadQuery compile failed",
+            compile_failure.detail,
+        )
         return compile_failure
+    _append_runtime_event(run_id, "compile", "ok", "CadQuery compiled")
 
+    _append_runtime_event(run_id, "execute", "running", "Executing CadQuery")
     art.execution_result = execute_cadquery(art.code, run_id)
     if not art.execution_result.get("success"):
-        return _StageFailure("cadquery_execute", str(art.execution_result.get("error")))
+        detail = str(art.execution_result.get("error"))
+        _append_runtime_event(run_id, "execute", "error", "CadQuery execution failed", detail)
+        return _StageFailure("cadquery_execute", detail)
+    _append_runtime_event(
+        run_id,
+        "execute",
+        "ok",
+        "CadQuery execution finished",
+        payload={
+            "volume": art.execution_result.get("volume"),
+            "faces_count": art.execution_result.get("faces_count"),
+            "stl_path": art.execution_result.get("stl_path"),
+            "step_path": art.execution_result.get("step_path"),
+        },
+    )
 
     stl_path = art.execution_result["stl_path"]
+    _append_runtime_event(run_id, "inspect", "running", "Inspecting mesh")
     art.mesh_report = inspect_mesh(stl_path)
     if not art.mesh_report.get("passes"):
+        _append_runtime_event(
+            run_id,
+            "inspect",
+            "error",
+            "Mesh inspection failed",
+            payload=art.mesh_report,
+        )
+        _append_runtime_event(run_id, "repair", "running", "Repairing mesh")
         repair = repair_mesh(stl_path, run_id)
         art.mesh_report = repair.get("after", art.mesh_report)
         if not repair.get("passes"):
-            return _StageFailure("mesh_repair", collect_feedback_detail("mesh_repair", repair))
+            detail = collect_feedback_detail("mesh_repair", repair)
+            _append_runtime_event(run_id, "repair", "error", "Mesh repair failed", detail)
+            return _StageFailure("mesh_repair", detail)
         stl_path = repair["repaired_stl_path"]
+        _append_runtime_event(run_id, "repair", "ok", "Mesh repaired", payload=art.mesh_report)
+    else:
+        _append_runtime_event(
+            run_id,
+            "inspect",
+            "ok",
+            "Mesh inspection passed",
+            payload=art.mesh_report,
+        )
 
+    _append_runtime_event(run_id, "render", "running", "Rendering preview")
     art.renders = render_views(stl_path, run_id)
     if not art.renders.get("success"):
-        return _StageFailure("cadquery_execute", str(art.renders.get("error")))
+        detail = str(art.renders.get("error"))
+        _append_runtime_event(run_id, "render", "error", "Render failed", detail)
+        return _StageFailure("cadquery_execute", detail)
+    _append_runtime_event(run_id, "render", "ok", "Render generated", payload=art.renders)
     return None
 
 
-def _run_verify(prompt: str, plan_code: str, art: _Artifacts) -> _StageFailure | None:
+def _run_verify(prompt: str, art: _Artifacts, run_id: str) -> _StageFailure | None:
     """Run the multimodal verifier; returns a visual_mismatch failure or None."""
     from tools.verify_geometry import verify_geometry
 
@@ -125,14 +174,26 @@ def _run_verify(prompt: str, plan_code: str, art: _Artifacts) -> _StageFailure |
         raise RuntimeError("verifier ran before geometry produced results")
     metrics = _merge_metrics(exec_result, mesh)
     png = (art.renders or {}).get("png_path", "")
-    art.verdict = verify_geometry(
-        prompt, plan_code, metrics, png, prior_feedback=art.feedback_log or None
-    )
+    _append_runtime_event(run_id, "verify", "running", "Verifying rendered geometry")
+    try:
+        art.verdict = verify_geometry(prompt, metrics, png, prior_feedback=art.feedback_log or None)
+    except Exception as exc:
+        feedback = f"[verifier-error] {type(exc).__name__}: {exc}"
+        art.verdict = {
+            "passed": False,
+            "failure_type": "verifier_error",
+            "feedback": feedback,
+            "render_png": png,
+            "verifier_ran": False,
+            "failure_stage": "verifier_error",
+        }
     if not art.verdict.get("passed"):
         failure_stage = str(art.verdict.get("failure_stage") or "visual_mismatch")
         feedback = collect_feedback_detail(failure_stage, art.verdict)
         art.feedback_log.append(feedback)
+        _append_runtime_event(run_id, "verify", "error", "Verifier rejected geometry", feedback)
         return _StageFailure(failure_stage, feedback)
+    _append_runtime_event(run_id, "verify", "ok", "Verifier accepted geometry", payload=art.verdict)
     return None
 
 
@@ -212,7 +273,7 @@ def run_geometry_loop(
         art = _Artifacts(feedback_log=art.feedback_log)
         failure = _run_geometry(plan, library, run_id, art)
         if failure is None and verify:
-            failure = _run_verify(original_prompt, art.code or "", art)
+            failure = _run_verify(original_prompt, art, run_id)
 
         attempts = inner_attempts + outer_attempts + 1
         if failure is None:
@@ -250,6 +311,14 @@ def run_geometry_loop(
             )
 
         try:
+            _append_runtime_event(
+                run_id,
+                "replanning",
+                "running",
+                "Replanner requested",
+                failure.detail,
+                payload={"failure_stage": failure.stage, "attempt": attempt_for_stage},
+            )
             plan = replan_with_feedback(
                 original_prompt=original_prompt,
                 last_plan=plan,
@@ -258,7 +327,21 @@ def run_geometry_loop(
                 prior_history=history,
                 planner_fn=planner_fn,
             )
+            _append_runtime_event(
+                run_id,
+                "replanning",
+                "ok",
+                "Replanner returned a revised plan",
+                payload=plan_to_dict(plan),
+            )
         except Exception as exc:
+            _append_runtime_event(
+                run_id,
+                "replanning",
+                "error",
+                "Replanner failed",
+                str(exc),
+            )
             return _finalize(
                 run_id=run_id,
                 prompt=original_prompt,
@@ -270,3 +353,29 @@ def run_geometry_loop(
                 failure_detail=str(exc),
                 message="replanner failed to produce a corrected plan",
             )
+
+
+def _append_runtime_event(
+    run_id: str,
+    stage: str,
+    status: str,
+    title: str,
+    summary: str = "",
+    *,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort runtime event write; event logging must never break geometry."""
+    if not run_id:
+        return
+    try:
+        append_event(
+            run_id,
+            source="runtime",
+            stage=stage,
+            status=status,
+            title=title,
+            summary=summary,
+            payload=payload,
+        )
+    except Exception:
+        return

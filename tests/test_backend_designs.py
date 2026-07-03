@@ -7,6 +7,8 @@ run the actual geometry loop so artifact evidence is produced.
 
 from __future__ import annotations
 
+import asyncio
+import shutil
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -112,6 +114,73 @@ def test_post_designs_creates_retrievable_session(client):
     assert session.id == design_id
 
 
+def test_list_runs_includes_artifact_folder_without_trace(client, tmp_path, monkeypatch):
+    """Crashed runs can leave STL/STEP/render artifacts before trace writing."""
+    from backend.designs import routes
+
+    artifacts_dir = tmp_path / "artifacts"
+    run_dir = artifacts_dir / "crashed_run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "solid.stl").write_text("stl", encoding="utf-8")
+    (run_dir / "solid.step").write_text("step", encoding="utf-8")
+    (run_dir / "threeview.png").write_bytes(b"png")
+    monkeypatch.setattr(routes, "_OUTPUTS_DIR", artifacts_dir)
+
+    resp = client.get("/runs")
+
+    assert resp.status_code == 200
+    run = next(item for item in resp.json() if item["run_id"] == "crashed_run")
+    assert run["status"] == "incomplete"
+    assert run["has_trace"] is False
+    assert run["has_stl"] is True
+    assert run["has_step"] is True
+
+
+def test_get_run_events_returns_normalized_timeline(client):
+    from runtime.events import append_event
+    from tools.artifacts import new_run_id, run_dir
+
+    run_id = new_run_id("test_route_events")
+    try:
+        append_event(
+            run_id,
+            source="backend",
+            stage="planning",
+            status="running",
+            title="Planning started",
+        )
+
+        resp = client.get(f"/runs/{run_id}/events")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["run_id"] == run_id
+        assert body["events"][0]["title"] == "Planning started"
+    finally:
+        shutil.rmtree(run_dir(run_id), ignore_errors=True)
+
+
+def test_get_run_artifacts_reports_available_outputs(client):
+    from tools.artifacts import new_run_id, run_dir
+
+    run_id = new_run_id("test_route_artifacts")
+    base = run_dir(run_id)
+    try:
+        (base / "solid.stl").write_text("stl", encoding="utf-8")
+        (base / "events.jsonl").write_text("", encoding="utf-8")
+
+        resp = client.get(f"/runs/{run_id}/artifacts")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["run_id"] == run_id
+        assert body["has_stl"] is True
+        assert body["has_events"] is True
+        assert body["has_trace"] is False
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 # ── WebSocket tests ───────────────────────────────────────────────────────────
 
 def _collect_ws_events(ws_session, max_events: int = 20) -> list[dict]:
@@ -144,14 +213,14 @@ def test_ws_non_message_event_ignored(client):
         with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
             ws.send_json({"type": "ping"})  # ignored
             ws.send_json({"type": "message", "text": "make a box"})
-            evt1 = ws.receive_json()  # thinking
-            evt2 = ws.receive_json()  # plan
-            evt3 = ws.receive_json()  # generating
+            events = _collect_ws_events(ws)
             # exit context → server gets WebSocketDisconnect, exits cleanly
 
-    assert evt1["type"] == "thinking"
-    assert evt2["type"] == "plan"
-    assert evt3["type"] == "generating"
+    types = [event["type"] for event in events]
+    assert "thinking" in types
+    assert "trace_event" in types
+    assert "plan" in types
+    assert "generating" in types
 
 
 def test_ws_image_attachment_hits_intake_before_planner(client):
@@ -214,8 +283,13 @@ def test_ws_plan_ready_success_flow(mock_planner, mock_loop, mock_write_stl, cli
 
     types = [e["type"] for e in events]
     assert "thinking" in types
+    assert "trace_event" in types
     assert "generating" in types
     assert "success" in types
+
+    trace_events = [e["event"] for e in events if e["type"] == "trace_event"]
+    assert any(event["stage"] == "planning" for event in trace_events)
+    assert any(event["stage"] == "outcome" for event in trace_events)
 
     success_evt = next(e for e in events if e["type"] == "success")
     assert "forge_js" not in success_evt
@@ -323,7 +397,9 @@ def test_ws_plan_ready_replan_failure_flow(mock_planner, mock_loop, client):
     """loop can no longer escalate to needs_user — a replan failure is just 'failed'."""
     mock_planner.return_value = _plan_ready_output()
     mock_loop.return_value = _loop_result(
-        "failed", category="geometry_invalidity", message="replanner failed to produce a corrected plan"
+        "failed",
+        category="geometry_invalidity",
+        message="replanner failed to produce a corrected plan",
     )
 
     design_id = client.post("/designs").json()["design_id"]
@@ -347,11 +423,57 @@ def test_ws_planner_exception_sends_error_event(mock_planner, client):
     design_id = client.post("/designs").json()["design_id"]
     with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
         ws.send_json({"type": "message", "text": "make anything"})
-        ws.receive_json()         # thinking
-        err = ws.receive_json()   # error
+        events = [ws.receive_json() for _ in range(4)]
 
+    err = next(event for event in events if event["type"] == "error")
     assert err["type"] == "error"
     assert "Gemini" in err["message"]
+    assert any(event["type"] == "trace_event" for event in events)
+
+
+def test_temporal_result_exception_includes_run_id(monkeypatch):
+    """Unexpected Temporal workflow failures should be connectable to artifacts."""
+    from backend.designs import runner
+
+    events: list[dict] = []
+    session = new_session()
+    session.original_prompt = "make a cube"
+
+    class FakeHandle:
+        async def result(self):
+            raise RuntimeError("Workflow execution failed")
+
+        async def query(self, _query):
+            return "verifying"
+
+    class FakeClient:
+        async def start_workflow(self, *_args, **_kwargs):
+            return FakeHandle()
+
+    async def fake_get_client():
+        return FakeClient()
+
+    async def send(event: dict) -> None:
+        events.append(event)
+
+    monkeypatch.setattr("temporal.client.get_client", fake_get_client)
+
+    asyncio.run(
+        runner._run_via_temporal(
+            session,
+            _plan_ready_output(),
+            "run_123",
+            send,
+            backend_url="http://localhost:8001",
+            planner_history=[],
+            last_event_seq=0,
+        )
+    )
+
+    assert session.status == "failed"
+    assert events[-1]["type"] == "error"
+    assert "run_123" in events[-1]["message"]
+    assert "Workflow execution failed" in events[-1]["message"]
 
 
 # ── Helpers (build typed return values for mocks) ────────────────────────────
@@ -419,3 +541,70 @@ def test_config_endpoint_empty_when_unset(client, monkeypatch):
     monkeypatch.delenv("FORGECAD_STUDIO_URL", raising=False)
     body = client.get("/config").json()
     assert body["forgecad_studio_url"] == ""
+
+
+def test_rlm_list_primitives_endpoint_matches_pull_tool_contract(client):
+    """RLM pull_tools.list_primitives calls /internal/list-primitives."""
+    resp = client.get("/internal/list-primitives")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, dict)
+    assert "box" in body
+
+
+def test_rlm_lookup_primitive_endpoint_matches_pull_tool_contract(client):
+    """RLM pull_tools.lookup_primitive calls /internal/lookup-primitive."""
+    resp = client.get("/internal/lookup-primitive", params={"key": "box"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "box"
+    assert "parameters" in body
+
+
+def test_system_status_reports_runtime_dependencies(client, monkeypatch):
+    from backend.services import system_diagnostics
+
+    monkeypatch.setattr(system_diagnostics, "temporal_status", lambda: {
+        "cli": True,
+        "server_up": True,
+        "managed_worker_up": False,
+        "worker_up": False,
+        "worker_exit_code": 1,
+        "last_worker_errors": ["TypeError: verify_geometry"],
+    })
+    monkeypatch.setattr(system_diagnostics.shutil, "which", lambda name: f"/bin/{name}")
+
+    resp = client.get("/system/status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backend"]["status"] == "ok"
+    assert body["temporal"]["server_up"] is True
+    assert body["temporal"]["managed_worker_up"] is False
+    assert body["tools"]["forgecad_cli"] == "/bin/forgecad"
+    assert body["tools"]["mypy"] == "/bin/mypy"
+    assert "TypeError: verify_geometry" in body["temporal"]["last_worker_errors"]
+
+
+def test_system_logs_returns_safe_tail_for_known_log(client, tmp_path, monkeypatch):
+    from backend.services import system_diagnostics
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "temporal_worker.log").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    monkeypatch.setattr(system_diagnostics, "LOGS", log_dir)
+
+    resp = client.get("/system/logs", params={"service": "temporal_worker", "tail": 2})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["service"] == "temporal_worker"
+    assert body["lines"] == ["two", "three"]
+
+
+def test_system_logs_rejects_unknown_service(client):
+    resp = client.get("/system/logs", params={"service": "../secret"})
+
+    assert resp.status_code == 404

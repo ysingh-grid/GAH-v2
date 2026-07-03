@@ -28,6 +28,9 @@
         <button class="ga-nav-btn" onclick="window.__gah.showView('runs')">
           <span class="icon">📜</span> Run History
         </button>
+        <button class="ga-nav-btn" onclick="window.__gah.showView('system')">
+          <span class="icon">⚙</span> System
+        </button>
       </nav>
 
       <div class="ga-sidebar-divider"></div>
@@ -51,7 +54,7 @@
         <!-- ForgeCAD Toggle -->
         <label class="ga-toggle-row" id="ga-forgecad-toggle-row">
           <div class="ga-toggle-info">
-            <span class="ga-toggle-label">ForgeCAD Preview</span>
+            <span class="ga-toggle-label">ForgeCAD STL Preview</span>
             <span class="ga-toggle-desc" id="ga-forgecad-desc">Off — download only</span>
           </div>
           <div class="ga-toggle-switch">
@@ -117,11 +120,19 @@
         <!-- Right: Live Trace Console -->
         <div class="ga-panel ga-panel-trace">
           <div class="ga-panel-header">
-            <h2>🧠 Live Agent Trace</h2>
+            <h2>Live Agent Trace</h2>
             <span id="ga-status-badge" class="ga-status-badge idle">Idle</span>
           </div>
           <div class="ga-trace-body" id="ga-trace-output">
-            <div class="ga-trace-line ga-trace-meta">System ready. Enter a design prompt to start.</div>
+            <div id="ga-event-timeline" class="ga-event-timeline">
+              <div class="ga-empty-timeline">System ready. Enter a design prompt to start.</div>
+            </div>
+            <details class="ga-raw-console">
+              <summary>Raw console</summary>
+              <div id="ga-raw-trace-output">
+                <div class="ga-trace-line ga-trace-meta">System ready. Enter a design prompt to start.</div>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -150,6 +161,34 @@
           </div>
           <div id="ga-runs-empty" style="display:none; text-align:center; padding:40px; color:var(--text-muted);">
             No runs yet. Create one from the New Run tab.
+          </div>
+        </div>
+      </section>
+
+      <!-- System View -->
+      <section id="ga-system-view" class="ga-view" style="display:none;">
+        <div class="ga-panel" id="ga-system-panel" style="max-width:1100px; margin:0 auto;">
+          <div class="ga-panel-header">
+            <h2>System Control Center</h2>
+            <div class="ga-system-actions">
+              <button class="ga-btn-secondary ga-btn-sm" onclick="window.__gah.loadSystemStatus()">Refresh</button>
+              <button class="ga-btn-secondary ga-btn-sm" onclick="window.__gah.restartWorker()">Restart Worker</button>
+            </div>
+          </div>
+          <div class="ga-system-body">
+            <div id="ga-system-summary" class="ga-system-grid">
+              <div class="ga-system-card">Loading system status...</div>
+            </div>
+            <div class="ga-system-logs">
+              <div class="ga-system-log-header">
+                <h3>System Logs</h3>
+                <select id="ga-system-log-select" onchange="window.__gah.loadSystemLog(this.value)">
+                  <option value="temporal_worker">Temporal Worker</option>
+                  <option value="temporal_server">Temporal Server</option>
+                </select>
+              </div>
+              <pre id="ga-system-log-output" class="ga-system-log-output">Choose a log to inspect runtime failures.</pre>
+            </div>
           </div>
         </div>
       </section>
