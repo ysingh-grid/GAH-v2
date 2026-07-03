@@ -1,3 +1,4 @@
+
 # GAH-v2 — Geometry Agent Harness
 
 A multi-milestone AI-powered CAD design system: natural language → design plan → 3D geometry → ForgeCAD Studio rendering.
