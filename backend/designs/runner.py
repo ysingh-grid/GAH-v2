@@ -25,6 +25,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from backend.designs.intake import (
+    IntakeOutcome,
+    build_planner_history,
+    parse_incoming_attachments,
+    start_or_resume_intake,
+)
 from backend.designs.models import DesignSession
 from runtime.loop import LoopResult, run_geometry_loop
 from runtime.planner import run_planner_turn, run_replanner_turn
@@ -76,6 +82,7 @@ async def run_chat_turn(
     user_text: str,
     send: SendFn,
     *,
+    attachments: list[dict[str, Any]] | None = None,
     backend_url: str = _BACKEND_URL_DEFAULT,
 ) -> None:
     """Process one user message: planner turn, then optionally the geometry loop.
@@ -91,12 +98,37 @@ async def run_chat_turn(
 
     ev_loop = asyncio.get_running_loop()
 
+    intake = await ev_loop.run_in_executor(
+        None,
+        lambda: run_intake_turn(
+            session=session,
+            user_text=user_text,
+            attachments=attachments,
+        ),
+    )
+    if intake.status == "need_user":
+        session.status = "needs_user"
+        session.intake_state = intake.state
+        session.history.append({"role": "planner", "content": intake.question})
+        await send({"type": "ask_user", "question": intake.question, "options": []})
+        return
+
+    if intake.intake_context:
+        session.intake_context = intake.intake_context
+    session.intake_state = None
+
+    planner_history = build_planner_history(
+        original_prompt=session.original_prompt,
+        chat_history=session.history,
+        intake_context=session.intake_context,
+    )
+
     # ── 1. Planner turn (blocking RLM call → thread) ──────────────────────────
     try:
         plan = await ev_loop.run_in_executor(
             None,
             lambda: run_planner_turn(
-                session.original_prompt, session.history, backend_url=backend_url
+                session.original_prompt, planner_history, backend_url=backend_url
             ),
         )
     except Exception as exc:
@@ -275,3 +307,18 @@ def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
         return run_replanner_turn(original_prompt, history, backend_url=backend_url)
 
     return _fn
+
+
+def run_intake_turn(
+    *,
+    session: DesignSession,
+    user_text: str,
+    attachments: list[dict[str, Any]] | None = None,
+) -> IntakeOutcome:
+    """Run the pre-RLM intake step for one websocket message."""
+    return start_or_resume_intake(
+        user_prompt=session.original_prompt or user_text,
+        incoming_text=user_text,
+        attachments=parse_incoming_attachments(attachments),
+        state=session.intake_state,
+    )

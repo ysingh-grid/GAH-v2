@@ -11,11 +11,13 @@ events. Status transitions:
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-DesignStatus = Literal["chatting", "generating", "done", "failed"]
+from backend.designs.intake import IntakeState
+
+DesignStatus = Literal["chatting", "generating", "done", "failed", "needs_user"]
 
 
 @dataclass
@@ -26,6 +28,8 @@ class DesignSession:
     status: DesignStatus
     original_prompt: str
     history: list[dict[str, str]]  # [{"role": "user"|"planner", "content": str}]
+    intake_state: IntakeState | None = None
+    intake_context: str = ""
     last_plan: dict[str, Any] | None = None
     run_id: str | None = None
     created_at: str = field(
@@ -38,6 +42,8 @@ class DesignSession:
             "status": self.status,
             "original_prompt": self.original_prompt,
             "history": self.history,
+            "intake_state": asdict(self.intake_state) if self.intake_state else None,
+            "intake_context": self.intake_context,
             "last_plan": self.last_plan,
             "run_id": self.run_id,
             "created_at": self.created_at,
@@ -50,4 +56,6 @@ def new_session() -> DesignSession:
         status="chatting",
         original_prompt="",
         history=[],
+        intake_state=None,
+        intake_context="",
     )

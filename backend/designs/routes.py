@@ -56,8 +56,9 @@ async def chat_ws(design_id: str, ws: WebSocket) -> None:
             user_text = str(data.get("text", "")).strip()
             if not user_text:
                 continue
+            attachments = data.get("attachments")
 
-            await run_chat_turn(session, user_text, send)
+            await run_chat_turn(session, user_text, send, attachments=attachments)
 
             if session.status in ("done", "failed"):
                 await ws.close()
