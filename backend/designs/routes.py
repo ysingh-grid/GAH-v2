@@ -16,7 +16,7 @@ from backend.designs.runner import run_chat_turn
 router = APIRouter()
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_OUTPUTS_DIR = _REPO_ROOT / "outputs"
+_OUTPUTS_DIR = _REPO_ROOT / "artifacts"
 _SESSIONS_DIR = _REPO_ROOT / "sessions"
 
 
