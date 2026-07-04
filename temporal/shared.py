@@ -40,6 +40,10 @@ class DesignInput:
     plan_dict: dict[str, Any]
     run_id: str
     backend_url: str = "http://localhost:8001"
+    # Base replan history: the pre-planner intake facts ONLY (never the raw
+    # chatbot conversation). The workflow appends each round's failed plan +
+    # failure on top, so every replan sees the full plan lineage.
+    history: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass

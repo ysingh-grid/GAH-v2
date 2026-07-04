@@ -14,6 +14,13 @@ caps how many times the geometry loop re-enters replan after a NEW downstream
 failure. Separately, each individual replan CALL retries up to
 REPLAN_CALL_RETRIES (2) times if it raises (flaky LLM call), before that one
 attempt counts as a failure against the stage cap above.
+
+History contract (state across plan->replan rounds): the base is the
+pre-planner intake facts ONLY — never the raw chatbot conversation. On top of
+that, the caller (runtime.loop / temporal.workflow) appends each prior round's
+(failed plan + failure) pair, and replan_with_feedback appends the CURRENT
+round's feedback message (which embeds the current plan + detail + guide
+index). So every replan sees the full plan lineage, bounded by the caps.
 """
 
 from __future__ import annotations

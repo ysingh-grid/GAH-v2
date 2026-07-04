@@ -18,6 +18,7 @@ Temporal constraints inside @workflow.defn:
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 from temporalio import workflow
@@ -101,7 +102,9 @@ class DesignWorkflow:
     async def run(self, inp: DesignInput) -> DesignResult:
         plan_dict = inp.plan_dict
         feedback_log: list[str] = []    # verifier feedback accumulated across outer attempts
-        replan_history: list[dict] = [] # compact prior-failure records fed to each replan
+        # Replan state: seeded with the pre-planner intake facts (inp.history),
+        # then each round appends its failed plan + failure — full plan lineage.
+        replan_history: list[dict] = list(inp.history)
         inner = 0                       # compile/execute/mesh attempts (cap 5)
         outer = 0                       # visual_mismatch attempts (cap 2)
         # Set when a replan returns the plan UNCHANGED after a verify-stage failure
@@ -290,17 +293,23 @@ class DesignWorkflow:
                     failure_category=category_for_stage("replan_error").value,
                     message=rep.error or "replanner failed to produce a corrected plan",
                 )
-            # Record this round's failure COMPACTLY for the NEXT replan (if any):
-            # each round's replan already embeds the full current plan + detail
-            # itself, so history carries only short prior-attempt facts (bounded
-            # by the caps: <=8 entries per run). Previously this list was never
-            # populated — every replan round was stateless and could retry a fix
-            # an earlier round had already tried.
+            # Maintain STATE across plan->replan rounds (mirrors runtime/loop.py):
+            # append the plan that failed AND the failure it hit, so the NEXT
+            # replan sees the full plan lineage on top of the intake-facts base.
+            # Bounded by the caps (<=8 rounds); the current round's plan rides in
+            # the feedback message, entering history only when the next round
+            # begins — no duplication within one request.
+            attempt_no = inner + outer
+            replan_history.append({
+                "role": "planner",
+                "content": f"[attempt {attempt_no} plan] "
+                           + json.dumps(plan_dict, separators=(",", ":")),
+            })
             replan_history.append({
                 "role": "system",
                 "content": (
-                    f"[prior attempt] failed at stage '{failure_stage}': "
-                    f"{failure_detail[:500]}"
+                    f"[attempt {attempt_no} result] failed at stage "
+                    f"'{failure_stage}': {failure_detail[:800]}"
                 ),
             })
             # Plan returned UNCHANGED after a verify-stage failure (geometry was

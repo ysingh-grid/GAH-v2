@@ -35,6 +35,12 @@ class TestDesignInput:
     def test_defaults(self):
         inp = DesignInput(original_prompt="sphere", plan_dict={}, run_id="r1")
         assert inp.backend_url == "http://localhost:8001"
+        assert inp.history == []  # replan base: intake facts only, defaults empty
+
+    def test_history_field(self):
+        base = [{"role": "user", "content": "Established design facts from intake:\n- 60mm"}]
+        inp = DesignInput(original_prompt="cube", plan_dict={}, run_id="r3", history=base)
+        assert inp.history == base
 
     def test_fields(self):
         inp = DesignInput(

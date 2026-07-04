@@ -143,10 +143,24 @@ async def run_chat_turn(
 
     await send({"type": "generating", "stage": "cadquery_compile"})
 
+    # Base replan history: the pre-planner intake facts ONLY — never the raw
+    # chatbot conversation. Replans build plan-lineage state on top of this.
+    replan_base_history: list[dict[str, str]] = (
+        [{"role": "user", "content": f"Established design facts from intake:\n{session.intake_context}"}]
+        if session.intake_context
+        else []
+    )
+
     if _USE_TEMPORAL:
-        await _run_via_temporal(session, plan, run_id, send, backend_url=backend_url)
+        await _run_via_temporal(
+            session, plan, run_id, send,
+            backend_url=backend_url, history=replan_base_history,
+        )
     else:
-        await _run_in_process(session, plan, run_id, send, backend_url=backend_url, ev_loop=ev_loop)
+        await _run_in_process(
+            session, plan, run_id, send,
+            backend_url=backend_url, ev_loop=ev_loop, history=replan_base_history,
+        )
 
 
 async def _run_in_process(
@@ -157,6 +171,7 @@ async def _run_in_process(
     *,
     backend_url: str,
     ev_loop: asyncio.AbstractEventLoop,
+    history: list[dict[str, str]] | None = None,
 ) -> None:
     """Original path: geometry loop runs in a thread-pool executor."""
     library = load_library()
@@ -171,6 +186,7 @@ async def _run_in_process(
                 planner_fn=planner_fn,
                 library=library,
                 run_id=run_id,
+                history=history,
             ),
         )
     except Exception as exc:
@@ -188,6 +204,7 @@ async def _run_via_temporal(
     send: SendFn,
     *,
     backend_url: str,
+    history: list[dict[str, str]] | None = None,
 ) -> None:
     """Temporal path: start the workflow, stream its coarse-stage progress, await result.
 
@@ -208,6 +225,7 @@ async def _run_via_temporal(
         plan_dict=plan_to_dict(plan),
         run_id=run_id,
         backend_url=backend_url,
+        history=list(history or []),
     )
 
     try:
@@ -299,9 +317,10 @@ def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
 
     Uses the scoped run_replanner_turn (read-only pull tools, no delegate_features
     fork tool) — mirrors temporal.activities.replan_activity so the in-process and
-    Temporal paths behave the same on a replan. `history` carries the current
-    round's feedback message (built by replan_with_feedback) plus compact
-    prior-attempt records accumulated by the geometry loop.
+    Temporal paths behave the same on a replan. `history` = the pre-planner intake
+    facts base, plus each prior round's (failed plan + failure) pair accumulated
+    by the geometry loop, plus the current round's feedback message appended by
+    replan_with_feedback — never the raw chatbot conversation.
     """
 
     def _fn(original_prompt: str, history: list[dict[str, str]]) -> PrimitivePlan:

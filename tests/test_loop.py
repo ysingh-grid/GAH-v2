@@ -224,8 +224,9 @@ def test_loop_fails_when_replanner_raises():
 
 
 def test_loop_threads_prior_failures_into_replan_history():
-    """Each replan round must see COMPACT records of earlier failed attempts —
-    previously history never accumulated, so every replan was stateless and
+    """Each replan round must see STATE from earlier rounds — the plan that
+    failed AND the failure it hit — on top of the pre-planner intake base.
+    Previously history never accumulated, so every replan was stateless and
     could retry a fix an earlier round had already tried."""
     from tools.artifacts import new_run_id
 
@@ -237,6 +238,9 @@ def test_loop_threads_prior_failures_into_replan_history():
         seen_histories.append(list(history))
         return scenario.plan
 
+    intake_base = [
+        {"role": "user", "content": "Established design facts from intake:\n- plate 100x60mm"}
+    ]
     try:
         with patch("tools.verify_geometry.verify_geometry") as judge:
             judge.side_effect = [
@@ -251,17 +255,29 @@ def test_loop_threads_prior_failures_into_replan_history():
                 library=LIBRARY,
                 run_id=run_id,
                 verify=True,
+                history=intake_base,
             )
         assert result.status == "success"
         assert len(seen_histories) == 2
-        # 1st replan: no prior attempts yet — only the current feedback message.
-        first_prior = [m for m in seen_histories[0] if "[prior attempt]" in m["content"]]
-        assert first_prior == []
-        # 2nd replan: must carry a compact record of the 1st failed attempt.
-        second_prior = [m for m in seen_histories[1] if "[prior attempt]" in m["content"]]
-        assert len(second_prior) == 1
-        assert "visual_mismatch" in second_prior[0]["content"]
-        assert "holes missing" in second_prior[0]["content"]
+        # Both replans: the intake-facts base leads the history (never raw chat).
+        assert seen_histories[0][0]["content"].startswith("Established design facts")
+        assert seen_histories[1][0]["content"].startswith("Established design facts")
+        # 1st replan: no prior attempts yet — base + current feedback message only.
+        assert not any("[attempt" in m["content"] for m in seen_histories[0])
+        # 2nd replan: carries the 1st round's failed PLAN and its failure.
+        plan_records = [
+            m for m in seen_histories[1]
+            if m["role"] == "planner" and "plan]" in m["content"]
+        ]
+        result_records = [
+            m for m in seen_histories[1]
+            if m["role"] == "system" and "result]" in m["content"]
+        ]
+        assert len(plan_records) == 1
+        assert '"primitive":"box"' in plan_records[0]["content"]  # failed plan JSON present
+        assert len(result_records) == 1
+        assert "visual_mismatch" in result_records[0]["content"]
+        assert "holes missing" in result_records[0]["content"]
     finally:
         _cleanup(run_id)
 

@@ -44,4 +44,6 @@ artifacts/
 
 
 
-graphify-out/
+.graphify-out/
+.playwright-mcp/
+

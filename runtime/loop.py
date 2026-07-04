@@ -12,6 +12,7 @@ with real geometry tools but no live RLM.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -274,15 +275,23 @@ def run_geometry_loop(
                 prior_history=history,
                 planner_fn=planner_fn,
             )
-            # Record this round's failure COMPACTLY so the NEXT replan (if any)
-            # knows what was already tried — replan_with_feedback embeds the full
-            # current plan+detail itself, so history carries only the short prior-
-            # attempt facts (bounded by the caps: <=8 short entries per run).
+            # Maintain STATE across plan->replan rounds: each round appends the
+            # plan that failed AND the failure it hit, on top of whatever history
+            # existed before (the pre-planner intake facts). The NEXT replan sees
+            # the full plan lineage, not just failure texts. Bounded by the caps
+            # (<=8 rounds); the current round's plan rides in the feedback message
+            # built by replan_with_feedback, so it enters history only when the
+            # following round begins — no duplication within one request.
+            history.append({
+                "role": "planner",
+                "content": f"[attempt {attempts} plan] "
+                           + json.dumps(plan_to_dict(plan), separators=(",", ":")),
+            })
             history.append({
                 "role": "system",
                 "content": (
-                    f"[prior attempt] failed at stage '{failure.stage}': "
-                    f"{failure.detail[:500]}"
+                    f"[attempt {attempts} result] failed at stage "
+                    f"'{failure.stage}': {failure.detail[:800]}"
                 ),
             })
             # Plan returned unchanged after a verify-stage failure → geometry on
