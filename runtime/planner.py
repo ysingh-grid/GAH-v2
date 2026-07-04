@@ -94,6 +94,16 @@ def parse_planner_result(result: Any) -> PrimitivePlan:
     return PrimitivePlan.model_validate(result)
 
 
+PLANNER_TASK = """\
+You are the PLANNER. Turn the user's request (original_prompt, plus any
+chat_history) into ONE validated PrimitivePlan.
+
+Load your playbook guide first — it has your operating steps, skill read order,
+and output contract. Resolve ambiguity with reasonable defaults; there is no
+option to ask the user. Emit FINAL in as few REPL steps as possible.
+"""
+
+
 def build_planner_query(
     original_prompt: str,
     chat_history: list[dict[str, str]],
@@ -112,8 +122,11 @@ def build_planner_query(
     the planner still pulls only what it needs via lookup_primitive()/
     fetch_kb_sections(). Omitted (None) → the planner falls back to the tools.
     """
+    # task = the planner's standing instruction; the user's actual request lives
+    # ONLY in original_prompt/chat_history. (task used to duplicate original_prompt
+    # byte-for-byte — pure wasted context on every REPL step.)
     query: dict[str, Any] = {
-        "task": original_prompt,
+        "task": PLANNER_TASK,
         "original_prompt": original_prompt,
         "chat_history": chat_history,
     }
@@ -178,6 +191,7 @@ def run_planner_turn(
             original_prompt,
             chat_history,
             available_primitives=available_primitives,
+            kb_index=kb_index,
         ),
         config=config,
         tools=_PLANNER_TOOLS,
@@ -235,11 +249,25 @@ def run_replanner_turn(
     if backend_url:
         os.environ["DTCM_BACKEND_URL"] = backend_url
 
-    query = {
+    # Pre-fetch ONLY the primitive-catalog menu (the same measured win as the
+    # planner's pre-inject: skips a list_primitives() REPL step whose growing-
+    # transcript resend costs far more than these ~20 keys). kb_index is NOT
+    # injected — a replan edits an existing plan and rarely needs the KB menu;
+    # the tool remains available if it does.
+    available_primitives: list[str] | None = None
+    if backend_url:
+        try:
+            available_primitives = list_primitives()
+        except Exception:
+            available_primitives = None
+
+    query: dict[str, Any] = {
         "task": REPLANNER_TASK,
         "original_prompt": original_prompt,
         "chat_history": chat_history,
     }
+    if available_primitives is not None:
+        query["available_primitives"] = available_primitives
     result = fast_rlm.run(
         query,
         config=config,

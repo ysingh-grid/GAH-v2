@@ -68,10 +68,27 @@ def test_extra_fields_forbidden():
 
 
 def test_build_planner_query_shape():
+    from runtime.planner import PLANNER_TASK
+
     q = build_planner_query("make a 60mm cube", [{"role": "user", "content": "hi"}])
     assert q["original_prompt"] == "make a 60mm cube"
     assert q["chat_history"][0]["content"] == "hi"
-    assert q["task"] == "make a 60mm cube"
+    # task is the planner's standing instruction — NOT a duplicate of the user
+    # prompt (the old byte-for-byte duplication was wasted context every REPL step).
+    assert q["task"] == PLANNER_TASK
+    assert q["task"] != q["original_prompt"]
+
+
+def test_build_planner_query_forwards_both_menus():
+    """kb_index was fetched then silently dropped before reaching the query —
+    regression guard that both pre-injected menus land in the dict when supplied."""
+    q = build_planner_query(
+        "make a cube", [],
+        available_primitives=["box"],
+        kb_index={"cadquery": {"3d-operations": "..."}},
+    )
+    assert q["available_primitives"] == ["box"]
+    assert q["kb_index"] == {"cadquery": {"3d-operations": "..."}}
 
 
 def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
@@ -97,6 +114,55 @@ def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
     assert out.part_name == "cube"
     assert captured["output_schema"] is PrimitivePlan
     assert captured["env_variables"]["DTCM_BACKEND_URL"] == "http://backend.test"
+
+
+def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
+    """The replanner gets the same measured pre-inject win as the planner, but
+    MINIMAL: only available_primitives (needed to swap/fix a primitive) — no
+    kb_index (a replan edits an existing plan; the KB menu stays pull-only)."""
+    import fast_rlm
+
+    from runtime.planner import run_replanner_turn
+
+    captured = {}
+
+    def fake_run(query, **kwargs):
+        captured["query"] = query
+        captured.update(kwargs)
+        return {"results": _CUBE_PLAN}
+
+    monkeypatch.setattr(fast_rlm, "run", fake_run)
+    monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box", "cylinder"])
+
+    out = run_replanner_turn(
+        "make a 60mm cube",
+        [{"role": "system", "content": "fix it"}],
+        backend_url="http://backend.test",
+        config={},
+    )
+
+    assert out.part_name == "cube"
+    assert captured["query"]["available_primitives"] == ["box", "cylinder"]
+    assert "kb_index" not in captured["query"]
+    assert captured["output_schema"] is PrimitivePlan
+
+
+def test_all_skills_fit_in_one_repl_output():
+    """Every skill must fit under truncate_len or the engine truncates it on
+    delivery and the model burns extra REPL steps paginating (the exact problem
+    truncate_len was raised to eliminate — playbook.md regressed past the old
+    8000 cap silently)."""
+    from pathlib import Path
+
+    from rlm.rlm_config import config
+
+    skills_dir = Path(__file__).resolve().parent.parent / "skills"
+    for md in sorted(skills_dir.glob("*.md")):
+        size = len(md.read_text(encoding="utf-8"))
+        assert size < config.truncate_len, (
+            f"{md.name} is {size} chars >= truncate_len={config.truncate_len}; "
+            "raise truncate_len in rlm/rlm_config.py or trim the skill"
+        )
 
 
 def test_run_planner_turn_propagates_exception(monkeypatch):
