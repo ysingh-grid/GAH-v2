@@ -175,3 +175,8 @@ correct it, so get the invariants in §3 and §4 right the first time.
 - **On a retry, change the plan.** A new attempt with the same plan is a wasted loop.
 - **You have a hard call budget of 50 REPL steps.** Every step re-sends the full
   transcript — cost grows quadratically. Reach `FINAL` in one block. Plan inline, FINAL fast.
+- **Never emit an empty or no-op step.** If a tool call errors, or a step produced
+  nothing useful, do NOT repeat the same call and wait — either fix the call and
+  continue, or `FINAL` immediately using whatever you already have (a plan with
+  a best-effort default beats no plan). Emitting empty output and stalling is
+  never the right move; it burns steps and produces nothing.

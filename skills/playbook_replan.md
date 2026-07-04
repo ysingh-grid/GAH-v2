@@ -32,6 +32,10 @@ reasonable defaults, and always return a corrected plan.
 4. Re-check the invariants your guide lists (e.g. joined features overlap, cuts
    pass fully through, dimensions stay consistent) before you emit.
 5. Emit your FINAL decision in as few REPL steps as possible — ideally one.
+6. **Never emit an empty or no-op step.** If a tool call errors, do NOT repeat it
+   and wait — fix the call and continue, or `FINAL` a best-effort corrected plan
+   immediately using whatever you already have. Stalling on empty output wastes
+   the attempt budget for nothing.
 
 ## Output contract (enforced — your FINAL is schema-checked)
 

@@ -324,8 +324,19 @@ pyproject.toml              # uv, pytest, ruff, mypy config
 - Backend on 8001? `curl http://localhost:8001/health`
 - CORS issues? Frontend at `/ui/`, backend at `/`
 
-**"Temporal not connecting"**
-- Worker at `TEMPORAL_HOST=localhost:7233`?
+**"Designs generate fine and save to outputs/, but Temporal Web UI (:8088) shows zero activity"**
+- This means the backend is silently running the geometry loop IN-PROCESS,
+  not via Temporal — `TEMPORAL_HOST` reached the backend container empty.
+  `docker-compose.yml` fills backend's `TEMPORAL_HOST` from `${TEMPORAL_HOST:-}`
+  in **your `.env`/shell**, NOT from `--profile temporal` being passed — the
+  profile only starts the containers, it does not wire the backend to them.
+  Check: `docker exec gah-backend printenv TEMPORAL_HOST` — must print
+  `temporal:7233`. If blank, add `TEMPORAL_HOST=temporal:7233` to `.env` (see
+  `.env.example`) and recreate: `docker compose --profile temporal up -d --force-recreate --no-deps backend`.
+  `./restart.sh` sets this for you automatically; a bare `docker compose --profile temporal up` does not unless `.env` has it.
+  Backend logs a `⚠️  TEMPORAL_HOST is not set` line at startup when this is wrong — check `docker compose logs backend | grep TEMPORAL_HOST`.
+
+**"Temporal not connecting" (backend errors with "Temporal error: ...")**
 - Temporal server running? `curl http://localhost:8088`
 - Task queue mismatch? Backend and worker must share the SAME queue — compose
   sets both to `gah-design`. A workflow "running" forever with no activity
