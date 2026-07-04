@@ -46,8 +46,19 @@ def lookup_primitive(key: str) -> dict:
     for _attempt in range(2):
         try:
             resp = requests.get(url, params={"key": key}, timeout=10)
+            if resp.status_code == 404:
+                # Unknown key — a MODEL mistake, not an infra failure. Never retry
+                # (the answer is deterministic); surface the server's detail, which
+                # names the valid keys so the model can pick a real one next step.
+                try:
+                    _detail = resp.json().get("detail", resp.text)
+                except Exception:
+                    _detail = resp.text
+                raise KeyError(f"lookup_primitive({key!r}): {_detail}")
             resp.raise_for_status()
             return resp.json()
+        except KeyError:
+            raise
         except Exception as _e:
             if _attempt == 0:
                 continue
@@ -96,9 +107,20 @@ def read_skill(name: str) -> str:
     for _attempt in range(2):
         try:
             resp = requests.get(url, params={"name": name}, timeout=10)
+            if resp.status_code == 404:
+                # Unknown skill name — a MODEL mistake, not an infra failure. Never
+                # retry; surface the server's detail (it lists the known skills) so
+                # the model can pick a real name next step.
+                try:
+                    _detail = resp.json().get("detail", resp.text)
+                except Exception:
+                    _detail = resp.text
+                raise KeyError(f"read_skill({name!r}): {_detail}")
             resp.raise_for_status()
             text = resp.text
             break
+        except KeyError:
+            raise
         except Exception as _e:
             if _attempt == 0:
                 continue

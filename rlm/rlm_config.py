@@ -61,12 +61,14 @@ config.max_completion_tokens = int(os.environ.get("RLM_MAX_COMPLETION_TOKENS", "
 config.max_money_spent = float(os.environ.get("RLM_MAX_MONEY", "1.00"))
 # truncate_len controls how many chars of REPL stdout the engine shows back to
 # the model after each execution step. The default (2000) is too short for our
-# skills (playbook.md is 5,353 chars). When truncated, the model compensates by
-# manually printing the next slice (e.g. playbook[2000:4000]) in the next step —
-# wasting a whole step + its growing-history overhead just to read content it
-# already fetched. At 8000 chars, the longest skill fits in a single REPL output
-# so the agent never needs to paginate, saving 3-4 steps and ~40-60k tokens per run.
-config.truncate_len = 8000
+# skills. When truncated, the model compensates by manually printing the next
+# slice (e.g. playbook[2000:4000]) in the next step — wasting a whole step + its
+# growing-history overhead just to read content it already fetched. Sized so the
+# LONGEST skill fits in one REPL output with headroom (playbook.md is 8,025 chars
+# as of 2026-07; the previous 8000 silently truncated it and re-triggered the
+# exact pagination problem this knob was raised to eliminate). A test guards
+# skills/*.md staying under this value.
+config.truncate_len = 12000
 # max_depth caps llm_query() recursion. The engine makes an agent at depth ==
 # max_depth a LEAF: its llm_query is removed and any fork attempt throws. So
 # max_depth=1 means root planner (depth 0) forks ONE level of sub-part agents
