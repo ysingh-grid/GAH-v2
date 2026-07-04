@@ -167,10 +167,14 @@ class RenderOutput:
 
 @dataclass
 class VerifyInput:
-    """Input to verify_activity: prompt + geometry evidence for the multimodal judge."""
+    """Input to verify_activity: prompt + geometry evidence for the multimodal judge.
+
+    Deliberately NO CadQuery code field: the VLM judge reads only the prompt,
+    render PNG, and last replan feedback — shipping the code here made it show
+    up in the Temporal UI payload and look like it was being sent to the judge.
+    """
 
     prompt: str
-    code: str
     execution_result: dict[str, Any]
     mesh_report: dict[str, Any]
     renders: dict[str, Any]

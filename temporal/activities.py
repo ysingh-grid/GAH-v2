@@ -19,11 +19,48 @@ Timeouts and retry policy live on the workflow side, not here.
 
 from __future__ import annotations
 
+import contextvars
 import logging
+import threading
+from contextlib import contextmanager
 
 from temporalio import activity
 
 logger = logging.getLogger(__name__)
+
+
+_HEARTBEAT_INTERVAL_S = 10.0
+
+
+@contextmanager
+def _heartbeating(interval_s: float = _HEARTBEAT_INTERVAL_S):
+    """Emit activity.heartbeat() every `interval_s` while the activity body runs.
+
+    These are SYNC activities on a thread-pool executor — the activity thread is
+    fully blocked in real compute (OCCT, VTK, a Gemini call, the fast-rlm
+    subprocess), so heartbeats must come from a side thread. The activity context
+    lives in a contextvar, so the side thread runs under a copy of the current
+    context to reach it. Paired with heartbeat_timeout on the workflow side, this
+    lets Temporal detect a hung/dead worker in ~1 minute instead of only at the
+    activity's schedule_to_close ceiling (up to 1h for replan).
+    """
+    stop = threading.Event()
+    ctx = contextvars.copy_context()
+
+    def _beat() -> None:
+        while not stop.wait(interval_s):
+            try:
+                activity.heartbeat()
+            except Exception:  # noqa: BLE001 — context gone = activity finished/cancelled
+                return
+
+    thread = threading.Thread(target=lambda: ctx.run(_beat), daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
 
 # Pure single-attempt helpers shared with the in-process loop (runtime is the
 # canonical, Temporal-free home of stage logic; temporal/ depends on runtime/).
@@ -104,7 +141,8 @@ def execute_activity(inp: ExecuteInput) -> ExecuteOutput:
     """GENERATING(execute): run the CadQuery script -> solid + STL/STEP on disk."""
     from tools.execute_cadquery import execute_cadquery
 
-    res = execute_cadquery(inp.code, inp.run_id)
+    with _heartbeating():
+        res = execute_cadquery(inp.code, inp.run_id)
     if not res.get("success"):
         return ExecuteOutput(
             ok=False, execution_result=res,
@@ -128,7 +166,8 @@ def repair_activity(inp: RepairInput) -> RepairOutput:
     from runtime.replan import collect_feedback_detail
     from tools.repair_mesh import repair_mesh
 
-    repair = repair_mesh(inp.stl_path, inp.run_id)
+    with _heartbeating():
+        repair = repair_mesh(inp.stl_path, inp.run_id)
     after = repair.get("after", {})
     if not repair.get("passes"):
         return RepairOutput(
@@ -144,7 +183,8 @@ def render_activity(inp: RenderInput) -> RenderOutput:
     """GENERATING(render): three-view PNG render of the final STL for the verifier."""
     from tools.render_views import render_views
 
-    renders = render_views(inp.stl_path, inp.run_id)
+    with _heartbeating():
+        renders = render_views(inp.stl_path, inp.run_id)
     if not renders.get("success"):
         return RenderOutput(
             ok=False, renders=renders,
@@ -168,7 +208,11 @@ def verify_activity(inp: VerifyInput) -> VerifyOutput:
         feedback_log=list(inp.prior_feedback),
     )
 
-    failure = _run_verify(inp.prompt, inp.code, art)
+    # Empty code string: verify_geometry keeps `code` in its signature for the
+    # in-process loop's call shape but never sends it to the judge — the VLM
+    # reads prompt + render PNG + last feedback only.
+    with _heartbeating():
+        failure = _run_verify(inp.prompt, "", art)
 
     return VerifyOutput(
         passed=failure is None,
@@ -201,14 +245,15 @@ def replan_activity(inp: ReplanInput) -> ReplanOutput:
         def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
             return run_replanner_turn(original_prompt, history, backend_url=backend_url)
 
-        out = replan_with_feedback(
-            original_prompt=inp.original_prompt,
-            last_plan=last_plan,
-            failure_stage=inp.failure_stage,
-            detail=inp.detail,
-            prior_history=inp.history,
-            planner_fn=planner_fn,
-        )
+        with _heartbeating():
+            out = replan_with_feedback(
+                original_prompt=inp.original_prompt,
+                last_plan=last_plan,
+                failure_stage=inp.failure_stage,
+                detail=inp.detail,
+                prior_history=inp.history,
+                planner_fn=planner_fn,
+            )
         return ReplanOutput(ok=True, plan_dict=plan_to_dict(out))
     except Exception as exc:
         # run_replanner_turn no longer catches its own failures (no ask_user

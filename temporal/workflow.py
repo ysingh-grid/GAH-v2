@@ -67,6 +67,13 @@ _VERIFY_TIMEOUT = timedelta(minutes=3)
 # safety ceiling, not the real constraint.
 _REPLAN_TIMEOUT = timedelta(hours=1)
 _TRACE_TIMEOUT = timedelta(seconds=30)
+# Long activities heartbeat every ~10s from a side thread (temporal/activities.py
+# _heartbeating). If no heartbeat lands within this window, Temporal fails the
+# activity immediately — a hung worker/LLM call is detected in ~1 minute instead
+# of only at the schedule_to_close ceiling (up to 1h for replan). Only set on
+# activities that actually heartbeat (execute/repair/render/verify/replan);
+# compile/inspect/trace finish in seconds and don't need it.
+_HEARTBEAT_TIMEOUT = timedelta(seconds=60)
 
 # No Temporal-level retries: the workflow itself is the bounded retry loop. Letting
 # Temporal also retry would double attempts and burn extra Gemini quota.
@@ -93,82 +100,103 @@ class DesignWorkflow:
     @workflow.run
     async def run(self, inp: DesignInput) -> DesignResult:
         plan_dict = inp.plan_dict
-        feedback_log: list[str] = []   # verifier feedback accumulated across outer attempts
+        feedback_log: list[str] = []    # verifier feedback accumulated across outer attempts
+        replan_history: list[dict] = [] # compact prior-failure records fed to each replan
         inner = 0                       # compile/execute/mesh attempts (cap 5)
         outer = 0                       # visual_mismatch attempts (cap 2)
+        # Set when a replan returns the plan UNCHANGED after a verify-stage failure
+        # (e.g. verifier_error): the geometry artifacts from the previous round are
+        # still valid, so skip compile→execute→inspect→render and go straight to
+        # re-verify instead of re-paying up to ~10min of identical recompute.
+        reuse_geometry = False
+        code = ""
+        execution_result: dict = {}
+        mesh_report: dict = {}
+        renders: dict = {}
+        stl_path = ""
 
         while True:
             # ── GENERATE (split into per-step activities) ──────────────────────
             # compile → execute → inspect → (repair?) → render. Each is its own
             # Temporal activity → a distinct timeline event, repeated every loop.
             # The STL flows between steps by file path on the shared ./outputs volume.
-            code = ""
-            execution_result: dict = {}
-            mesh_report: dict = {}
-            renders: dict = {}
-            stl_path = ""
             failure_stage = ""
             failure_detail = ""
 
-            self._stage = DesignStage.GENERATING
-            comp = await workflow.execute_activity(
-                compile_activity,
-                CompileInput(plan_dict=plan_dict, run_id=inp.run_id),
-                schedule_to_close_timeout=_COMPILE_TIMEOUT,
-                retry_policy=_NO_RETRY,
-            )
-            code = comp.code
-            if not comp.ok:
-                failure_stage, failure_detail = comp.failure_stage, comp.failure_detail
+            if reuse_geometry:
+                # Plan came back unchanged after a verify-stage failure — the
+                # artifacts (code/execution_result/mesh_report/renders/stl_path)
+                # from the previous round are still valid. Skip straight to verify.
+                reuse_geometry = False
+            else:
+                code = ""
+                execution_result = {}
+                mesh_report = {}
+                renders = {}
+                stl_path = ""
 
-            if not failure_stage:
-                ex = await workflow.execute_activity(
-                    execute_activity,
-                    ExecuteInput(code=code, run_id=inp.run_id),
-                    schedule_to_close_timeout=_EXECUTE_TIMEOUT,
+                self._stage = DesignStage.GENERATING
+                comp = await workflow.execute_activity(
+                    compile_activity,
+                    CompileInput(plan_dict=plan_dict, run_id=inp.run_id),
+                    schedule_to_close_timeout=_COMPILE_TIMEOUT,
                     retry_policy=_NO_RETRY,
                 )
-                execution_result = ex.execution_result
-                stl_path = ex.stl_path
-                if not ex.ok:
-                    failure_stage, failure_detail = ex.failure_stage, ex.failure_detail
+                code = comp.code
+                if not comp.ok:
+                    failure_stage, failure_detail = comp.failure_stage, comp.failure_detail
 
-            if not failure_stage:
-                self._stage = DesignStage.INSPECTING
-                insp = await workflow.execute_activity(
-                    inspect_activity,
-                    InspectInput(stl_path=stl_path),
-                    schedule_to_close_timeout=_INSPECT_TIMEOUT,
-                    retry_policy=_NO_RETRY,
-                )
-                mesh_report = insp.mesh_report
-                if not insp.passes:
-                    # Only repair when inspect failed (mirrors the in-process loop).
-                    self._stage = DesignStage.REPAIRING
-                    rep_mesh = await workflow.execute_activity(
-                        repair_activity,
-                        RepairInput(stl_path=stl_path, run_id=inp.run_id),
-                        schedule_to_close_timeout=_REPAIR_TIMEOUT,
+                if not failure_stage:
+                    ex = await workflow.execute_activity(
+                        execute_activity,
+                        ExecuteInput(code=code, run_id=inp.run_id),
+                        schedule_to_close_timeout=_EXECUTE_TIMEOUT,
+                        heartbeat_timeout=_HEARTBEAT_TIMEOUT,
                         retry_policy=_NO_RETRY,
                     )
-                    if rep_mesh.mesh_report:
-                        mesh_report = rep_mesh.mesh_report
-                    if not rep_mesh.passes:
-                        failure_stage, failure_detail = rep_mesh.failure_stage, rep_mesh.failure_detail
-                    else:
-                        stl_path = rep_mesh.repaired_stl_path
+                    execution_result = ex.execution_result
+                    stl_path = ex.stl_path
+                    if not ex.ok:
+                        failure_stage, failure_detail = ex.failure_stage, ex.failure_detail
 
-            if not failure_stage:
-                self._stage = DesignStage.GENERATING
-                rnd = await workflow.execute_activity(
-                    render_activity,
-                    RenderInput(stl_path=stl_path, run_id=inp.run_id),
-                    schedule_to_close_timeout=_RENDER_TIMEOUT,
-                    retry_policy=_NO_RETRY,
-                )
-                renders = rnd.renders
-                if not rnd.ok:
-                    failure_stage, failure_detail = rnd.failure_stage, rnd.failure_detail
+                if not failure_stage:
+                    self._stage = DesignStage.INSPECTING
+                    insp = await workflow.execute_activity(
+                        inspect_activity,
+                        InspectInput(stl_path=stl_path),
+                        schedule_to_close_timeout=_INSPECT_TIMEOUT,
+                        retry_policy=_NO_RETRY,
+                    )
+                    mesh_report = insp.mesh_report
+                    if not insp.passes:
+                        # Only repair when inspect failed (mirrors the in-process loop).
+                        self._stage = DesignStage.REPAIRING
+                        rep_mesh = await workflow.execute_activity(
+                            repair_activity,
+                            RepairInput(stl_path=stl_path, run_id=inp.run_id),
+                            schedule_to_close_timeout=_REPAIR_TIMEOUT,
+                            heartbeat_timeout=_HEARTBEAT_TIMEOUT,
+                            retry_policy=_NO_RETRY,
+                        )
+                        if rep_mesh.mesh_report:
+                            mesh_report = rep_mesh.mesh_report
+                        if not rep_mesh.passes:
+                            failure_stage, failure_detail = rep_mesh.failure_stage, rep_mesh.failure_detail
+                        else:
+                            stl_path = rep_mesh.repaired_stl_path
+
+                if not failure_stage:
+                    self._stage = DesignStage.GENERATING
+                    rnd = await workflow.execute_activity(
+                        render_activity,
+                        RenderInput(stl_path=stl_path, run_id=inp.run_id),
+                        schedule_to_close_timeout=_RENDER_TIMEOUT,
+                        heartbeat_timeout=_HEARTBEAT_TIMEOUT,
+                        retry_policy=_NO_RETRY,
+                    )
+                    renders = rnd.renders
+                    if not rnd.ok:
+                        failure_stage, failure_detail = rnd.failure_stage, rnd.failure_detail
 
             geometry_ok = not failure_stage
             verdict: dict = {}
@@ -181,13 +209,13 @@ class DesignWorkflow:
                     verify_activity,
                     VerifyInput(
                         prompt=inp.original_prompt,
-                        code=code,
                         execution_result=execution_result,
                         mesh_report=mesh_report,
                         renders=renders,
                         prior_feedback=list(feedback_log),
                     ),
                     schedule_to_close_timeout=_VERIFY_TIMEOUT,
+                    heartbeat_timeout=_HEARTBEAT_TIMEOUT,
                     retry_policy=_NO_RETRY,
                 )
                 verdict = ver.verdict
@@ -243,9 +271,11 @@ class DesignWorkflow:
                     last_plan_dict=plan_dict,
                     failure_stage=failure_stage,
                     detail=failure_detail,
+                    history=list(replan_history),
                     backend_url=inp.backend_url,
                 ),
                 schedule_to_close_timeout=_REPLAN_TIMEOUT,
+                heartbeat_timeout=_HEARTBEAT_TIMEOUT,
                 retry_policy=_NO_RETRY,
             )
             if not rep.ok:
@@ -260,6 +290,22 @@ class DesignWorkflow:
                     failure_category=category_for_stage("replan_error").value,
                     message=rep.error or "replanner failed to produce a corrected plan",
                 )
+            # Record this round's failure COMPACTLY for the NEXT replan (if any):
+            # each round's replan already embeds the full current plan + detail
+            # itself, so history carries only short prior-attempt facts (bounded
+            # by the caps: <=8 entries per run). Previously this list was never
+            # populated — every replan round was stateless and could retry a fix
+            # an earlier round had already tried.
+            replan_history.append({
+                "role": "system",
+                "content": (
+                    f"[prior attempt] failed at stage '{failure_stage}': "
+                    f"{failure_detail[:500]}"
+                ),
+            })
+            # Plan returned UNCHANGED after a verify-stage failure (geometry was
+            # fine, e.g. verifier_error) → skip regenerate next round, re-verify only.
+            reuse_geometry = geometry_ok and rep.plan_dict == plan_dict
             plan_dict = rep.plan_dict  # corrected plan → next attempt
 
     async def _record(
