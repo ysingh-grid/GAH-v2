@@ -103,7 +103,9 @@ _VERIFIER_ERROR_NOTE = (
 
 def build_feedback_message(failure_stage: str, detail: str, last_plan: PrimitivePlan) -> str:
     """Compose the corrective instruction handed back to the replanner."""
-    plan_json = json.dumps(plan_to_dict(last_plan), indent=2)
+    # Compact separators, not indent=2: this string is read only by the LLM, and
+    # pretty-printing costs ~55% more bytes on every replan attempt for nothing.
+    plan_json = json.dumps(plan_to_dict(last_plan), separators=(",", ":"))
     index = "\n".join(f"- {name}: {desc}" for name, desc in REPLAN_SKILLS)
     note = _VERIFIER_ERROR_NOTE if failure_stage == "verifier_error" else ""
     return (
