@@ -54,56 +54,83 @@ A multi-milestone AI-powered CAD design system: natural language → design plan
 
 ## Quick Start
 
-### 1. Prerequisites
+### Full stack in containers (recommended)
+
+Everything — backend, worker, Temporal (server + Postgres + Web UI), and ForgeCAD
+Studio — runs from one compose file. Only prerequisite: Docker + a Gemini key.
 
 ```bash
-# Python 3.12+
+# 1. One-time setup: your Gemini API key (https://aistudio.google.com/app/apikeys)
+cp .env.example .env        # then put your real key in GEMINI_API_KEY
+
+# 2. Start ALL containers (build happens automatically on first run)
+./restart.sh
+```
+
+`./restart.sh` = stop everything, rebuild, start all six containers detached.
+Equivalent manual command:
+
+```bash
+FORGECAD_STUDIO_URL=http://localhost:4000 \
+  docker compose --profile temporal --profile studio up -d --build
+```
+
+**What comes up, and where:**
+
+| Container         | Profile    | URL / port                  | Purpose                          |
+|-------------------|------------|-----------------------------|----------------------------------|
+| `gah-backend`     | (default)  | http://localhost:8001/ui/   | FastAPI + chat UI + skills/KB    |
+| `gah-worker`      | `temporal` | —                           | Runs the geometry activities     |
+| `gah-temporal`    | `temporal` | localhost:7233 (gRPC)       | Temporal server                  |
+| `gah-temporal-db` | `temporal` | —                           | Postgres for Temporal            |
+| `gah-temporal-ui` | `temporal` | http://localhost:8088       | Workflow timeline / debugging    |
+| `gah-forgecad`    | `studio`   | http://localhost:4000       | ForgeCAD Studio live preview     |
+
+**Verify it's healthy:**
+
+```bash
+curl http://localhost:8001/health          # {"status":"ok",...}
+open http://localhost:8001/ui/             # chat UI
+open http://localhost:8088                 # Temporal timeline (watch a design run)
+docker compose ps                          # all containers "healthy"/"running"
+```
+
+**Smaller subsets** (skip containers you don't need):
+
+```bash
+docker compose up -d                        # backend only — geometry runs in-process
+docker compose --profile temporal up -d     # + durable Temporal pipeline (no Studio)
+docker compose --profile dev up -d          # backend-dev: live source mounts + --reload
+```
+
+**After changing code:** `./restart.sh` again, or targeted:
+
+```bash
+docker compose build backend
+docker compose --profile temporal up -d --force-recreate --no-deps backend worker
+```
+
+### Local (no containers)
+
+```bash
 uv sync
-
-# Optional: Gemini API key for planner
-# https://aistudio.google.com/app/apikeys
-echo 'GEMINI_API_KEY=your_key_here' > .env
-```
-
-### 2. Backend only (in-process geometry)
-
-```bash
-# Terminal 1: Backend
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8001
-
-# Visit http://localhost:8001/ui/
-# Geometry loop runs in-process (no Temporal)
+# http://localhost:8001/ui/ — geometry loop runs in-process (no Temporal)
 ```
-
-### 3. With Temporal durability (crash-safe geometry)
-
-```bash
-docker compose --profile temporal up
-```
-
-Check Temporal Web UI: http://localhost:8088
-
-### 4. With ForgeCAD Studio live preview
-
-```bash
-# Start all services with profiles
-FORGECAD_STUDIO_URL=http://localhost:4000 docker compose --profile temporal --profile studio up
-```
-
-> **Tip:** You can also use the included `./restart.sh` script to stop, build, and restart all Docker services for this project in the background automatically.
-
-Frontend auto-discovers Studio URL via `/config` endpoint.
 
 ## Environment Variables
 
+All are set automatically by docker-compose; only `GEMINI_API_KEY` (via `.env`)
+is required from you.
+
 ```env
-# Required
+# Required (in .env — compose passes it to backend + worker)
 GEMINI_API_KEY=your_gemini_api_key
 
-# Optional
+# Optional overrides
 TEMPORAL_HOST=localhost:7233           # Enable Temporal path; empty = in-process
 TEMPORAL_NAMESPACE=default             # Temporal namespace
-TEMPORAL_TASK_QUEUE=design             # Task queue name
+TEMPORAL_TASK_QUEUE=gah-design         # Task queue (compose default: gah-design)
 FORGECAD_STUDIO_URL=http://localhost:4000  # Studio URL for iframe
 BACKEND_URL=http://localhost:8001      # Backend for frontend discovery
 ```
@@ -162,22 +189,27 @@ uv run pytest tests/test_backend_designs.py -v
 
 ## Docker
 
+See **Quick Start** above for the standard container workflow (`./restart.sh`
+brings up everything). Reference:
+
 ```bash
-# Build
-docker build -t gah-backend:latest .
+docker compose up -d                        # Backend only
+docker compose --profile temporal up -d     # + Temporal server/DB/UI + worker
+docker compose --profile studio up -d       # + ForgeCAD Studio
+docker compose --profile dev up -d          # backend-dev: live mounts + --reload
+FORGECAD_STUDIO_URL=http://localhost:4000 \
+  docker compose --profile temporal --profile studio up -d   # everything
 
-# Compose (all-in-one with optional profiles)
-docker compose up                           # Backend only
-docker compose --profile temporal up        # + Temporal + worker
-docker compose --profile studio up          # + ForgeCAD Studio
-docker compose --profile temporal --profile studio up  # All three
-
-# Check health
-curl http://localhost:8001/health
-curl http://localhost:8088  # Temporal Web UI (with --profile temporal)
+docker compose logs -f backend worker       # follow logs
+docker compose down                         # stop (add --profile flags to stop those too)
 ```
 
-Platform: x86_64 only (Apple Silicon: `--platform=linux/amd64`).
+`backend` and `worker` share one image (`gah-backend:latest`); rebuilding it
+covers both. `./outputs`, `./logs`, and `./artifacts` are volume-mounted, so run
+artifacts and RLM JSONL logs land on the host either way.
+
+Platform: x86_64 only (Apple Silicon runs it via `platform: linux/amd64`, already
+set in the compose file).
 
 ## Geometry Pipeline
 
@@ -295,7 +327,10 @@ pyproject.toml              # uv, pytest, ruff, mypy config
 **"Temporal not connecting"**
 - Worker at `TEMPORAL_HOST=localhost:7233`?
 - Temporal server running? `curl http://localhost:8088`
-- Task queue mismatch? Check `TEMPORAL_TASK_QUEUE` env (default: `design`)
+- Task queue mismatch? Backend and worker must share the SAME queue — compose
+  sets both to `gah-design`. A workflow "running" forever with no activity
+  events in the Temporal UI usually means the worker is listening on a
+  different queue ("activity not registered" in worker logs is the same bug).
 
 **"ForgeCAD Studio not loading"**
 - Set `FORGECAD_STUDIO_URL` before backend start
