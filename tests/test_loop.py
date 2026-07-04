@@ -221,3 +221,92 @@ def test_loop_fails_when_replanner_raises():
         assert result.failure_category == "geometry_invalidity"
     finally:
         _cleanup(run_id)
+
+
+def test_loop_threads_prior_failures_into_replan_history():
+    """Each replan round must see COMPACT records of earlier failed attempts —
+    previously history never accumulated, so every replan was stateless and
+    could retry a fix an earlier round had already tried."""
+    from tools.artifacts import new_run_id
+
+    scenario = mounting_plate_with_four_holes()
+    run_id = new_run_id("test_loop_replan_history")
+    seen_histories: list[list[dict]] = []
+
+    def recording_planner(prompt, history):
+        seen_histories.append(list(history))
+        return scenario.plan
+
+    try:
+        with patch("tools.verify_geometry.verify_geometry") as judge:
+            judge.side_effect = [
+                {"passed": False, "feedback": "holes missing", "render_png": ""},
+                {"passed": False, "feedback": "holes still missing", "render_png": ""},
+                {"passed": True, "feedback": "All constraints met.", "render_png": ""},
+            ]
+            result = run_geometry_loop(
+                original_prompt=scenario.prompt,
+                initial_plan=scenario.plan,
+                planner_fn=recording_planner,
+                library=LIBRARY,
+                run_id=run_id,
+                verify=True,
+            )
+        assert result.status == "success"
+        assert len(seen_histories) == 2
+        # 1st replan: no prior attempts yet — only the current feedback message.
+        first_prior = [m for m in seen_histories[0] if "[prior attempt]" in m["content"]]
+        assert first_prior == []
+        # 2nd replan: must carry a compact record of the 1st failed attempt.
+        second_prior = [m for m in seen_histories[1] if "[prior attempt]" in m["content"]]
+        assert len(second_prior) == 1
+        assert "visual_mismatch" in second_prior[0]["content"]
+        assert "holes missing" in second_prior[0]["content"]
+    finally:
+        _cleanup(run_id)
+
+
+def test_loop_skips_regenerate_when_replan_returns_plan_unchanged():
+    """verifier_error + unchanged plan -> the geometry on disk is identical, so
+    the loop must NOT re-run compile/execute/inspect/render — straight to re-verify."""
+    import runtime.loop as loop_mod
+    from tools.artifacts import new_run_id
+
+    scenario = mounting_plate_with_four_holes()
+    run_id = new_run_id("test_loop_reuse_geometry")
+    planner = _planner_returning(scenario.plan)  # returns the SAME plan (unchanged)
+
+    real_run_geometry = loop_mod._run_geometry
+    geometry_calls = {"n": 0}
+
+    def counting_run_geometry(*args, **kwargs):
+        geometry_calls["n"] += 1
+        return real_run_geometry(*args, **kwargs)
+
+    try:
+        with (
+            patch("runtime.loop._run_geometry", side_effect=counting_run_geometry),
+            patch("tools.verify_geometry.verify_geometry") as judge,
+        ):
+            judge.side_effect = [
+                {
+                    "passed": False,
+                    "failure_stage": "verifier_error",
+                    "feedback": "[verifier-error] VLM judge failed: unterminated JSON object",
+                    "render_png": "",
+                },
+                {"passed": True, "feedback": "All constraints met.", "render_png": ""},
+            ]
+            result = run_geometry_loop(
+                original_prompt=scenario.prompt,
+                initial_plan=scenario.plan,
+                planner_fn=planner,
+                library=LIBRARY,
+                run_id=run_id,
+                verify=True,
+            )
+        assert result.status == "success"
+        assert judge.call_count == 2       # verify DID run again
+        assert geometry_calls["n"] == 1    # geometry was NOT regenerated
+    finally:
+        _cleanup(run_id)

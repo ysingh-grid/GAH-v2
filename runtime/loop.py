@@ -207,10 +207,25 @@ def run_geometry_loop(
     history = list(history or [])
     inner_attempts = 0
     outer_attempts = 0
+    reuse_geometry = False  # replan returned the plan UNCHANGED after a verify-stage
+    # failure (e.g. verifier_error) → the geometry on disk is still valid; skip the
+    # full recompile→execute→inspect→render and go straight back to verify.
 
     while True:
-        art = _Artifacts(feedback_log=art.feedback_log)
-        failure = _run_geometry(plan, library, run_id, art)
+        if reuse_geometry:
+            reuse_geometry = False
+            art = _Artifacts(
+                code=art.code,
+                forge_js=art.forge_js,
+                execution_result=art.execution_result,
+                mesh_report=art.mesh_report,
+                renders=art.renders,
+                feedback_log=art.feedback_log,
+            )
+            failure = None
+        else:
+            art = _Artifacts(feedback_log=art.feedback_log)
+            failure = _run_geometry(plan, library, run_id, art)
         if failure is None and verify:
             failure = _run_verify(original_prompt, art.code or "", art)
 
@@ -249,8 +264,9 @@ def run_geometry_loop(
                 message=f"exhausted attempts at stage '{failure.stage}'",
             )
 
+        geometry_was_ok = art.renders is not None and bool(art.renders.get("success"))
         try:
-            plan = replan_with_feedback(
+            new_plan = replan_with_feedback(
                 original_prompt=original_prompt,
                 last_plan=plan,
                 failure_stage=failure.stage,
@@ -258,6 +274,21 @@ def run_geometry_loop(
                 prior_history=history,
                 planner_fn=planner_fn,
             )
+            # Record this round's failure COMPACTLY so the NEXT replan (if any)
+            # knows what was already tried — replan_with_feedback embeds the full
+            # current plan+detail itself, so history carries only the short prior-
+            # attempt facts (bounded by the caps: <=8 short entries per run).
+            history.append({
+                "role": "system",
+                "content": (
+                    f"[prior attempt] failed at stage '{failure.stage}': "
+                    f"{failure.detail[:500]}"
+                ),
+            })
+            # Plan returned unchanged after a verify-stage failure → geometry on
+            # disk is identical; skip regenerate and jump straight to re-verify.
+            reuse_geometry = geometry_was_ok and plan_to_dict(new_plan) == plan_to_dict(plan)
+            plan = new_plan
         except Exception as exc:
             return _finalize(
                 run_id=run_id,

@@ -299,8 +299,9 @@ def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
 
     Uses the scoped run_replanner_turn (read-only pull tools, no delegate_features
     fork tool) — mirrors temporal.activities.replan_activity so the in-process and
-    Temporal paths behave the same on a replan. Failure feedback arrives in
-    `history` (appended by replan_with_feedback).
+    Temporal paths behave the same on a replan. `history` carries the current
+    round's feedback message (built by replan_with_feedback) plus compact
+    prior-attempt records accumulated by the geometry loop.
     """
 
     def _fn(original_prompt: str, history: list[dict[str, str]]) -> PrimitivePlan:
