@@ -33,6 +33,47 @@ Rules:
 """
 
 
+INTAKE_CHAT_INSTRUCTION = """You are the intake chatbot for a CAD design service.
+You sit between the user and an automated geometry planner. Your ONLY job is to
+gather the non-negotiable facts the planner needs, through a short back-and-forth,
+then declare yourself satisfied.
+
+Gather ONLY facts that change the geometry:
+- overall size / key dimensions
+- count of repeated features (holes, slots, ribs, teeth)
+- critical orientation or mounting details
+- material ONLY if it changes the shape
+
+Rules:
+- Ask exactly ONE short, plain-language question per turn. No jargon.
+- Never re-ask something already answered in the conversation.
+- If an answer says to use defaults (e.g. "use sensible standard defaults"),
+  that fact is SETTLED — never ask about it again.
+- Be satisfied as soon as a competent CAD modeler could start work. If the
+  original request already contains concrete dimensions, be satisfied
+  immediately and ask nothing.
+- Do not ask about colors, finishes, tolerances, cost, or anything that does
+  not change the modeled shape.
+
+Return only JSON:
+{
+  "satisfied": true | false,
+  "question": "the next question to ask ('' when satisfied)",
+  "facts": ["concise geometry facts established so far"]
+}
+"""
+
+
+class IntakeChatMove(BaseModel):
+    """One conversational decision from the intake chatbot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    satisfied: bool
+    question: str = ""
+    facts: list[str] = Field(default_factory=list)
+
+
 class VlmIntakeSummary(BaseModel):
     """Structured summary returned by the intake VLM."""
 
@@ -67,9 +108,62 @@ def summarize_design_request(
         config=types.GenerateContentConfig(
             system_instruction=INTAKE_INSTRUCTION,
             response_mime_type="application/json",
+            # Same truncation bug class the VLM judge hit: this is a mandatory-
+            # thinking model, and with no output budget the reasoning tokens can
+            # exhaust the cap before the JSON is written ("unterminated JSON
+            # object"). LOW is the lowest level this model accepts (probed live).
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
+            max_output_tokens=4096,
         ),
     )
     return VlmIntakeSummary.model_validate(_read_json(response.text or "")).model_dump()
+
+
+def decide_next_intake_move(
+    user_prompt: str,
+    intake_summary: dict[str, Any],
+    qa_transcript: list[dict[str, str]],
+) -> dict[str, Any]:
+    """One conversational turn of the intake chatbot.
+
+    Sees the original request, the VLM summary, and the FULL question/answer
+    transcript so far, then decides: ask ONE more question, or declare itself
+    satisfied. Called once per user message during intake — latency matters, so
+    this runs on flash by default (INTAKE_CHAT_MODEL overrides).
+
+    Returns {"satisfied": bool, "question": str, "facts": [str]} (validated).
+    """
+    from google import genai
+    from google.genai import types
+
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not configured")
+
+    transcript = "\n".join(
+        f"Q: {item.get('question', '')}\nA: {item.get('answer', '')}"
+        for item in qa_transcript
+    ) or "(no questions asked yet)"
+
+    text = (
+        f"ORIGINAL REQUEST:\n{user_prompt}\n\n"
+        f"WHAT THE INTAKE VLM SAW:\n{json.dumps(intake_summary, separators=(',', ':'))}\n\n"
+        f"CONVERSATION SO FAR:\n{transcript}\n\n"
+        f"Decide: satisfied, or one more question?"
+    )
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=os.environ.get("INTAKE_CHAT_MODEL", "gemini-3.5-flash"),
+        contents=[types.Part.from_text(text=text)],
+        config=types.GenerateContentConfig(
+            system_instruction=INTAKE_CHAT_INSTRUCTION,
+            response_mime_type="application/json",
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
+            max_output_tokens=2048,
+        ),
+    )
+    return IntakeChatMove.model_validate(_read_json(response.text or "")).model_dump()
 
 
 def _read_json(text: str) -> dict[str, Any]:

@@ -165,7 +165,8 @@ def test_ws_image_attachment_hits_intake_before_planner(client):
             state=IntakeState(
                 source="image",
                 visual_summary="A bracket-like shape.",
-                question_queue=["How large should the bracket be?"],
+                pending_question="How large should the bracket be?",
+                questions_asked=1,
                 attachment_names=[str(attachment.get("filename")) for attachment in attachments],
             ),
         )

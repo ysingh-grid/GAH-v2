@@ -1,16 +1,21 @@
-"""Pre-RLM clarification intake for the designs websocket flow."""
+"""Pre-RLM clarification intake for the designs websocket flow.
+
+A real conversational agent: one LLM turn per user message. Each turn the intake
+chatbot sees the original request, the VLM's visual summary, and the FULL
+question/answer transcript so far, then decides — ask ONE more question, or
+declare itself satisfied and hand the gathered facts to the planner. Bounded by
+MAX_INTAKE_QUESTIONS so it can never interrogate forever; fails OPEN (straight
+to the planner) on any model error.
+"""
 
 from __future__ import annotations
 
 import base64
-import copy
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from tools.vlm_intake import summarize_design_request
+from tools.vlm_intake import decide_next_intake_move, summarize_design_request
 
 if TYPE_CHECKING:
     from fast_rlm import RLMConfig
@@ -23,22 +28,10 @@ _VAGUE_ANSWER_RE = re.compile(
 )
 _NUMERIC_HINT_RE = re.compile(r"\d")
 
-_INTAKE_ROLE = (
-    "You help a CAD planner ask only the few non-negotiable clarification "
-    "questions needed before geometry generation. Use plain language, avoid "
-    "jargon, and ask at most 3 short questions. Focus on overall size, count "
-    "of repeated features, critical orientation/mounting, and material only if "
-    "it changes the shape. If the request is already specific enough, return "
-    "no questions."
-)
-
-
-class ClarificationQuestions(BaseModel):
-    """Structured question list returned by the intake LLM."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    questions: list[str] = Field(default_factory=list)
+# Hard ceiling on back-and-forth rounds. The chatbot is PROMPTED to stop as soon
+# as a competent CAD modeler could proceed; this cap is the safety net so a
+# model that keeps finding "one more thing" can never trap the user in intake.
+MAX_INTAKE_QUESTIONS = 5
 
 
 @dataclass(frozen=True)
@@ -81,16 +74,22 @@ class IncomingAttachment:
 
 @dataclass
 class IntakeState:
-    """Mutable intake progress tracked across websocket turns."""
+    """Mutable intake conversation tracked across websocket turns."""
 
     source: Literal["text", "image"] = "text"
     visual_summary: str = ""
     observations: list[str] = field(default_factory=list)
     missing_facts: list[str] = field(default_factory=list)
-    question_queue: list[str] = field(default_factory=list)
     answers: list[dict[str, str]] = field(default_factory=list)
     attachment_names: list[str] = field(default_factory=list)
-    active_question_index: int = 0
+    # The conversational bits: the question currently awaiting the user's reply,
+    # how many questions have been asked (bounded by MAX_INTAKE_QUESTIONS), and
+    # the chatbot's running list of established geometry facts.
+    pending_question: str = ""
+    questions_asked: int = 0
+    gathered_facts: list[str] = field(default_factory=list)
+    # Original VLM summary kept verbatim so every chat turn can re-see it.
+    vlm_summary: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -137,43 +136,28 @@ def summarize_request_with_vlm(
     return summarize_design_request(user_prompt, image_parts=image_parts or None)
 
 
-def generate_clarification_questions(
-    user_prompt: str,
-    intake_summary: dict[str, Any],
-    *,
-    config: RLMConfig | None = None,
-) -> list[str]:
-    """Generate up to three clarifying questions from the intake summary."""
-    import fast_rlm
+def _next_move(user_prompt: str, state: IntakeState) -> dict[str, Any]:
+    """One chatbot turn: ask another question or declare satisfied.
 
-    if config is None:
-        from rlm.rlm_config import config as default_config
-
-        config = default_config
-
-    clar_cfg = copy.copy(config)
-    clar_cfg.max_depth = 0
-    clar_cfg.max_calls_per_subagent = 1
-
+    Fails OPEN — any model/transport error means "satisfied", so intake can
+    never block a design run. The direct Gemini call (flash, thinking LOW) is
+    used instead of a fast-rlm run: a chat turn must be fast, and spawning the
+    Deno/Pyodide sandbox per websocket message would add seconds of overhead.
+    """
     try:
-        result = fast_rlm.run(
-            {
-                "task": "Generate concise clarification questions for a CAD request.",
-                "user_prompt": user_prompt,
-                "intake_summary": intake_summary,
-                "role_instructions": _INTAKE_ROLE,
-            },
-            prefix="clarifier",
-            config=clar_cfg,
-            tools=[],
-            output_schema=ClarificationQuestions,
-            verbose=False,
-        )
-        questions = ClarificationQuestions.model_validate(result["results"]).questions
+        move = decide_next_intake_move(user_prompt, state.vlm_summary, state.answers)
     except Exception:
-        questions = []
+        return {"satisfied": True, "question": "", "facts": []}
 
-    return [question.strip() for question in questions if (question or "").strip()][:3]
+    question = str(move.get("question") or "").strip()
+    if not move.get("satisfied") and not question:
+        # A "not satisfied" verdict with no question is unusable — treat as done.
+        return {"satisfied": True, "question": "", "facts": move.get("facts") or []}
+    return {
+        "satisfied": bool(move.get("satisfied")),
+        "question": question,
+        "facts": [str(f).strip() for f in (move.get("facts") or []) if str(f).strip()],
+    }
 
 
 def start_or_resume_intake(
@@ -227,9 +211,10 @@ def _start_new_intake(
     user_prompt: str,
     incoming_text: str,
     attachments: list[IncomingAttachment],
-    config: RLMConfig | None,
+    config: RLMConfig | None,  # kept for call-shape compat; the chatbot is not an RLM run
 ) -> IntakeOutcome:
-    """Start intake from the user's initial request."""
+    """First user message: summarize the request, then let the chatbot open."""
+    _ = config
     try:
         summary = summarize_request_with_vlm(user_prompt, attachments)
     except Exception:
@@ -240,25 +225,42 @@ def _start_new_intake(
             "missing_facts": [],
         }
 
-    questions = _generate_questions_with_fallback(user_prompt, summary, attachments, config=config)
     state = IntakeState(
         source="image" if attachments else "text",
         visual_summary=str(summary.get("summary") or "").strip(),
         observations=_clean_summary_values(summary.get("observations")),
         missing_facts=_clean_summary_values(summary.get("missing_facts")),
-        question_queue=questions,
         answers=[],
         attachment_names=[attachment.filename for attachment in attachments],
-        active_question_index=0,
+        vlm_summary=dict(summary),
     )
 
-    if questions:
-        return IntakeOutcome(status="need_user", question=questions[0], state=state)
+    move = _next_move(user_prompt, state)
+    state.gathered_facts = move["facts"] or state.gathered_facts
 
-    return IntakeOutcome(
-        status="ready",
-        intake_context=build_intake_context(user_prompt=user_prompt, state=state),
-    )
+    if move["satisfied"]:
+        # Deterministic backstop: if the chatbot errored out (fail-open path)
+        # on a text-only request with no numbers at all, one catch-all question
+        # is still better than sending the planner a fully blind prompt.
+        if (
+            not state.answers
+            and not attachments
+            and not _NUMERIC_HINT_RE.search(user_prompt or "")
+            and not move["facts"]
+        ):
+            state.pending_question = (
+                "What overall size, mounting, material, and any required features should I use?"
+            )
+            state.questions_asked = 1
+            return IntakeOutcome(status="need_user", question=state.pending_question, state=state)
+        return IntakeOutcome(
+            status="ready",
+            intake_context=build_intake_context(user_prompt=user_prompt, state=state),
+        )
+
+    state.pending_question = move["question"]
+    state.questions_asked = 1
+    return IntakeOutcome(status="need_user", question=move["question"], state=state)
 
 
 def _resume_intake(
@@ -267,51 +269,36 @@ def _resume_intake(
     incoming_text: str,
     state: IntakeState,
 ) -> IntakeOutcome:
-    """Record one answer and either ask the next question or finish intake."""
-    if not state.question_queue:
+    """Record the user's answer, then let the chatbot ask on or finish."""
+    if state.pending_question:
+        answer = normalize_clarification_answer(incoming_text)
+        state.answers.append(
+            {
+                "question": state.pending_question,
+                "answer": answer or "use sensible standard defaults",
+            }
+        )
+        state.pending_question = ""
+
+    if state.questions_asked >= MAX_INTAKE_QUESTIONS:
         return IntakeOutcome(
             status="ready",
             intake_context=build_intake_context(user_prompt=user_prompt, state=state),
         )
 
-    current_question = state.question_queue[state.active_question_index]
-    answer = normalize_clarification_answer(incoming_text)
-    state.answers.append(
-        {
-            "question": current_question,
-            "answer": answer or "use sensible standard defaults",
-        }
-    )
-    state.active_question_index += 1
+    move = _next_move(user_prompt, state)
+    if move["facts"]:
+        state.gathered_facts = move["facts"]
 
-    if state.active_question_index < len(state.question_queue):
-        next_question = state.question_queue[state.active_question_index]
-        return IntakeOutcome(status="need_user", question=next_question, state=state)
+    if move["satisfied"]:
+        return IntakeOutcome(
+            status="ready",
+            intake_context=build_intake_context(user_prompt=user_prompt, state=state),
+        )
 
-    return IntakeOutcome(
-        status="ready",
-        intake_context=build_intake_context(user_prompt=user_prompt, state=state),
-    )
-
-
-def _generate_questions_with_fallback(
-    user_prompt: str,
-    summary: dict[str, Any],
-    attachments: list[IncomingAttachment],
-    *,
-    config: RLMConfig | None,
-) -> list[str]:
-    """Generate questions and apply a conservative fallback for under-specified text."""
-    questions = generate_clarification_questions(user_prompt, summary, config=config)
-    if questions:
-        return questions
-
-    if attachments or _NUMERIC_HINT_RE.search(user_prompt or ""):
-        return []
-
-    return [
-        "What overall size, mounting, material, and any required features should I use?"
-    ]
+    state.pending_question = move["question"]
+    state.questions_asked += 1
+    return IntakeOutcome(status="need_user", question=move["question"], state=state)
 
 
 def build_intake_context(user_prompt: str, state: IntakeState) -> str:
@@ -327,6 +314,9 @@ def build_intake_context(user_prompt: str, state: IntakeState) -> str:
     if state.observations:
         lines.append("- observations:")
         lines.extend(f"  - {item}" for item in state.observations)
+    if state.gathered_facts:
+        lines.append("- established facts:")
+        lines.extend(f"  - {item}" for item in state.gathered_facts)
     if state.missing_facts:
         lines.append("- still missing:")
         lines.extend(f"  - {item}" for item in state.missing_facts)
