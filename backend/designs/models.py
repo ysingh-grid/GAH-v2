@@ -32,6 +32,11 @@ class DesignSession:
     intake_context: str = ""
     last_plan: dict[str, Any] | None = None
     run_id: str | None = None
+    # Set while a post-design EDIT request is being clarified (reuses
+    # intake_state for the Q&A round-trip, same as the pre-planner intake).
+    # Empty = not currently clarifying an edit. Distinguishes a "needs_user"
+    # caused by an edit clarification from one caused by the original intake.
+    pending_edit_text: str = ""
     created_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat()
     )
@@ -46,6 +51,7 @@ class DesignSession:
             "intake_context": self.intake_context,
             "last_plan": self.last_plan,
             "run_id": self.run_id,
+            "pending_edit_text": self.pending_edit_text,
             "created_at": self.created_at,
         }
 

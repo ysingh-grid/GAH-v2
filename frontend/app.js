@@ -201,6 +201,15 @@
         advanceProgress('DONE');
         showOutput(evt);
         el('ga-fab').classList.add('has-notif');
+        // Keep the conversation open: the user can now ask a question about the
+        // model or request an edit — same session, no reset.
+        setInput(true);
+        break;
+
+      case 'answer':
+        hideTyping();
+        appendMsg('assistant', evt.text || '');
+        setInput(true);
         break;
 
       case 'needs_user':

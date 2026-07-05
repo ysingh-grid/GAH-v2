@@ -9,6 +9,7 @@ from backend.designs.intake import (
     IntakeState,
     build_planner_history,
     normalize_clarification_answer,
+    start_or_resume_edit_intake,
     start_or_resume_intake,
 )
 
@@ -164,5 +165,94 @@ def test_intake_fails_open_when_chat_model_errors(mock_summarize, mock_move) -> 
         incoming_text="make a 60mm cube",
         attachments=[],
         state=None,
+    )
+    assert outcome.status == "ready"
+
+
+# ── edit-mode intake (post-design edit clarification) ────────────────────────
+
+
+@patch("backend.designs.intake.decide_next_intake_move")
+def test_edit_intake_asks_when_ambiguous(mock_move) -> None:
+    mock_move.return_value = {
+        "satisfied": False,
+        "question": "Taller by how much?",
+        "facts": [],
+    }
+
+    outcome = start_or_resume_edit_intake(
+        edit_text="make it taller",
+        incoming_text="make it taller",
+        plan_summary='{"part_name":"cube","steps":[...]}',
+        state=None,
+    )
+    assert outcome.status == "need_user"
+    assert outcome.question == "Taller by how much?"
+    assert outcome.state is not None
+    assert outcome.state.questions_asked == 1
+    # The chatbot is told this is an edit, seeded with the current plan.
+    seen_prompt = mock_move.call_args.args[0]
+    assert "EDIT REQUEST" in seen_prompt
+    assert "make it taller" in seen_prompt
+
+
+@patch("backend.designs.intake.decide_next_intake_move")
+def test_edit_intake_resolves_after_clarification(mock_move) -> None:
+    mock_move.return_value = {
+        "satisfied": False,
+        "question": "By how much?",
+        "facts": [],
+    }
+    outcome = start_or_resume_edit_intake(
+        edit_text="make it taller",
+        incoming_text="make it taller",
+        plan_summary="{}",
+        state=None,
+    )
+
+    mock_move.return_value = {"satisfied": True, "question": "", "facts": ["height +20mm"]}
+    outcome = start_or_resume_edit_intake(
+        edit_text="make it taller",  # constant across the whole clarification round
+        incoming_text="20mm taller",
+        plan_summary="{}",
+        state=outcome.state,
+    )
+    assert outcome.status == "ready"
+    assert "make it taller" in outcome.intake_context
+    assert "By how much?" in outcome.intake_context
+    assert "20mm taller" in outcome.intake_context
+    assert "height +20mm" in outcome.intake_context
+
+
+@patch("backend.designs.intake.decide_next_intake_move")
+def test_edit_intake_unambiguous_edit_needs_no_clarification(mock_move) -> None:
+    mock_move.return_value = {"satisfied": True, "question": "", "facts": ["height=80mm"]}
+
+    outcome = start_or_resume_edit_intake(
+        edit_text="set the height to exactly 80mm",
+        incoming_text="set the height to exactly 80mm",
+        plan_summary="{}",
+        state=None,
+    )
+    assert outcome.status == "ready"
+    assert "80mm" in outcome.intake_context
+
+
+@patch("backend.designs.intake.decide_next_intake_move")
+def test_edit_intake_respects_question_cap(mock_move) -> None:
+    from backend.designs.intake import MAX_INTAKE_QUESTIONS
+
+    mock_move.return_value = {"satisfied": False, "question": "one more?", "facts": []}
+    state = IntakeState(
+        source="text",
+        pending_question="at the cap?",
+        questions_asked=MAX_INTAKE_QUESTIONS,
+        vlm_summary={},
+    )
+    outcome = start_or_resume_edit_intake(
+        edit_text="make it bigger",
+        incoming_text="whatever",
+        plan_summary="{}",
+        state=state,
     )
     assert outcome.status == "ready"

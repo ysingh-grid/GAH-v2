@@ -162,6 +162,16 @@ def replan_with_feedback(
         *prior_history,
         {"role": "system", "content": build_feedback_message(failure_stage, detail, last_plan)},
     ]
+    return _retry_planner_call(original_prompt, history, planner_fn, max_attempts)
+
+
+def _retry_planner_call(
+    original_prompt: str,
+    history: list[dict[str, str]],
+    planner_fn: PlannerFn,
+    max_attempts: int,
+) -> PrimitivePlan:
+    """Shared retry-the-call loop for replan_with_feedback and replan_for_edit."""
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -169,11 +179,60 @@ def replan_with_feedback(
         except Exception as exc:
             last_exc = exc
             logger.warning(
-                "replan call attempt %d/%d failed for stage '%s': %s",
-                attempt, max_attempts, failure_stage, exc,
+                "replan call attempt %d/%d failed: %s", attempt, max_attempts, exc,
             )
     assert last_exc is not None  # loop always runs >=1 time (max_attempts >= 1)
     raise last_exc
+
+
+def build_edit_message(edit_text: str, last_plan: PrimitivePlan) -> str:
+    """Compose the edit instruction handed to the replanner.
+
+    Edit-framed, not failure-framed — parallel to build_feedback_message but
+    for a user-requested change to an already-generated, already-valid model,
+    not a downstream error.
+    """
+    plan_json = json.dumps(plan_to_dict(last_plan), separators=(",", ":"))
+    return (
+        f"The user wants to EDIT the current model. This is a fresh request, "
+        f"not a failure — the plan below is already valid and was generated "
+        f"successfully.\n\n"
+        f"Requested change:\n{edit_text}\n\n"
+        f"Apply ONLY this change. Keep every other step byte-for-byte identical "
+        f"unless the change requires touching it. Resolve any remaining "
+        f"ambiguity yourself with reasonable defaults — there is no option to "
+        f"ask the user.\n\n"
+        f"Current plan:\n{plan_json}"
+    )
+
+
+def replan_for_edit(
+    *,
+    original_prompt: str,
+    last_plan: PrimitivePlan,
+    edit_text: str,
+    prior_history: list[dict[str, str]],
+    planner_fn: PlannerFn,
+    max_attempts: int = REPLAN_CALL_RETRIES,
+) -> PrimitivePlan:
+    """Re-enter the replanner with a user EDIT request — not a failure.
+
+    Same retry-the-call mechanics as replan_with_feedback (protects against a
+    flaky LLM call), but framed via build_edit_message. Deliberately does NOT
+    touch INNER_CAP/OUTER_CAP: those bound how many times the loop re-enters
+    replan after a NEW downstream failure, and an edit is fresh user intent,
+    not a retry. The geometry loop run after this edit still enforces its own
+    caps for any new compile/mesh/verify failures the edit introduces.
+
+    Returns:
+        The replanner's edited PrimitivePlan. Raises the last exception if
+        every attempt fails.
+    """
+    history = [
+        *prior_history,
+        {"role": "system", "content": build_edit_message(edit_text, last_plan)},
+    ]
+    return _retry_planner_call(original_prompt, history, planner_fn, max_attempts)
 
 
 def collect_feedback_detail(stage: str, payload: dict[str, Any]) -> str:

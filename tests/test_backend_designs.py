@@ -114,12 +114,24 @@ def test_post_designs_creates_retrievable_session(client):
 
 # ── WebSocket tests ───────────────────────────────────────────────────────────
 
+_TERMINAL_EVENT_TYPES = {"success", "failed", "error", "ask_user", "answer"}
+
+
 def _collect_ws_events(ws_session, max_events: int = 20) -> list[dict]:
-    """Drain events from the TestClient WS session until close or max."""
+    """Drain events from the TestClient WS session for one logical turn.
+
+    The socket no longer auto-closes after done/failed (the session stays open
+    for post-design questions/edits), so draining stops at the first terminal
+    event type rather than waiting on a server-initiated close — otherwise
+    receive_json() blocks forever waiting for a message the server never sends.
+    """
     events = []
     try:
         for _ in range(max_events):
-            events.append(ws_session.receive_json())
+            evt = ws_session.receive_json()
+            events.append(evt)
+            if evt.get("type") in _TERMINAL_EVENT_TYPES:
+                break
     except Exception:  # noqa: S110, BLE001
         pass
     return events
@@ -353,6 +365,116 @@ def test_ws_planner_exception_sends_error_event(mock_planner, client):
 
     assert err["type"] == "error"
     assert "Gemini" in err["message"]
+
+
+# ── Post-design continuation: questions + edits (Feature 2) ─────────────────
+
+
+@patch("backend.designs.runner.write_stl_to_studio", return_value=True)
+@patch("backend.designs.runner.answer_model_question")
+@patch("backend.designs.runner.classify_post_design_message")
+@patch("backend.designs.runner.run_geometry_loop")
+@patch("backend.designs.runner.run_planner_turn")
+def test_ws_post_design_question_answered_without_regeneration(
+    mock_planner, mock_loop, mock_classify, mock_answer, mock_write_stl, client
+):
+    """A question after 'done' is answered directly — no replan, no new run_id."""
+    mock_planner.return_value = _plan_ready_output()
+    mock_loop.return_value = _loop_result("success")
+    mock_classify.return_value = "question"
+    mock_answer.return_value = "It's 10mm on each side."
+
+    design_id = client.post("/designs").json()["design_id"]
+    with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
+        ws.send_json({"type": "message", "text": "10mm box"})
+        _collect_ws_events(ws)
+
+        ws.send_json({"type": "message", "text": "how big is it?"})
+        events = _collect_ws_events(ws)
+
+    types = [e["type"] for e in events]
+    assert "answer" in types
+    answer_evt = next(e for e in events if e["type"] == "answer")
+    assert answer_evt["text"] == "It's 10mm on each side."
+
+    session = design_store.get_session(design_id)
+    assert session.status == "done"  # unchanged — no regeneration happened
+    mock_loop.assert_called_once()  # geometry loop ran ONLY for the original design
+
+
+@patch("backend.designs.runner.write_stl_to_studio", return_value=True)
+@patch("backend.designs.runner.replan_for_edit")
+@patch("backend.designs.runner.classify_post_design_message")
+@patch("backend.designs.runner.run_geometry_loop")
+@patch("backend.designs.runner.run_planner_turn")
+def test_ws_post_design_edit_applies_and_regenerates(
+    mock_planner, mock_loop, mock_classify, mock_replan_edit, mock_write_stl, client
+):
+    """An unambiguous edit replans, regenerates on a NEW run_id, and succeeds again."""
+    mock_planner.return_value = _plan_ready_output()
+    mock_classify.return_value = "edit"
+    edited_plan = _plan_ready_output()
+    mock_replan_edit.return_value = edited_plan
+
+    design_id = client.post("/designs").json()["design_id"]
+    with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
+        mock_loop.return_value = _loop_result("success")
+        ws.send_json({"type": "message", "text": "10mm box"})
+        first_events = _collect_ws_events(ws)
+        first_run_id = next(e for e in first_events if e["type"] == "success")["run_id"]
+
+        mock_loop.return_value = _loop_result("success")
+        ws.send_json({"type": "message", "text": "make it 20mm"})
+        second_events = _collect_ws_events(ws)
+
+    types = [e["type"] for e in second_events]
+    assert "generating" in types  # went through the geometry loop again
+    assert "success" in types
+    second_run_id = next(e for e in second_events if e["type"] == "success")["run_id"]
+    assert second_run_id != first_run_id  # versioned: new run_id per edit
+
+    mock_replan_edit.assert_called_once()
+    assert mock_replan_edit.call_args.kwargs["edit_text"]
+    assert mock_loop.call_count == 2  # original design + one edit
+
+    session = design_store.get_session(design_id)
+    assert session.status == "done"
+    assert session.pending_edit_text == ""  # cleared after applying
+
+
+@patch("backend.designs.runner.classify_post_design_message")
+@patch("backend.designs.intake.decide_next_intake_move")
+@patch("backend.designs.runner.run_geometry_loop")
+@patch("backend.designs.runner.run_planner_turn")
+def test_ws_post_design_ambiguous_edit_asks_for_clarification(
+    mock_planner, mock_loop, mock_move, mock_classify, client
+):
+    """An ambiguous edit re-opens the intake chatbot instead of guessing."""
+    mock_planner.return_value = _plan_ready_output()
+    mock_loop.return_value = _loop_result("success")
+    mock_classify.return_value = "edit"
+    mock_move.return_value = {
+        "satisfied": False,
+        "question": "Bigger in which dimension?",
+        "facts": [],
+    }
+
+    design_id = client.post("/designs").json()["design_id"]
+    with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
+        ws.send_json({"type": "message", "text": "10mm box"})
+        _collect_ws_events(ws)
+
+        ws.send_json({"type": "message", "text": "make it bigger"})
+        events = _collect_ws_events(ws)
+
+    types = [e["type"] for e in events]
+    assert "ask_user" in types
+    ask_evt = next(e for e in events if e["type"] == "ask_user")
+    assert ask_evt["question"] == "Bigger in which dimension?"
+
+    session = design_store.get_session(design_id)
+    assert session.status == "needs_user"
+    assert session.pending_edit_text == "make it bigger"
 
 
 # ── Helpers (build typed return values for mocks) ────────────────────────────

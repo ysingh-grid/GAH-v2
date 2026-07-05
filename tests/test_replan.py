@@ -4,10 +4,12 @@ from runtime.replan import (
     INNER_CAP,
     OUTER_CAP,
     STAGE_TO_SKILL,
+    build_edit_message,
     build_feedback_message,
     cap_for_stage,
     collect_feedback_detail,
     is_exhausted,
+    replan_for_edit,
     replan_with_feedback,
 )
 from runtime.schema import plan_from_dict
@@ -161,4 +163,62 @@ def test_replan_call_succeeds_on_second_attempt():
         planner_fn=flaky_then_ok_planner,
     )
     assert out is _CUBE
+    assert calls["n"] == 2
+
+
+# ── edit replan (post-design edit requests, not failures) ───────────────────
+
+
+def test_build_edit_message_is_not_failure_framed():
+    msg = build_edit_message("make it 20mm taller", _CUBE)
+    assert "make it 20mm taller" in msg
+    assert "box" in msg  # the current plan is embedded
+    assert "not a failure" in msg.lower()
+    assert "failed at stage" not in msg  # distinct wording from build_feedback_message
+
+
+def test_replan_for_edit_calls_planner_with_edit_message():
+    captured = {}
+
+    def fake_planner(prompt, history):
+        captured["prompt"] = prompt
+        captured["history"] = history
+        return _CUBE
+
+    out = replan_for_edit(
+        original_prompt="a cube",
+        last_plan=_CUBE,
+        edit_text="add a hole in the top",
+        prior_history=[{"role": "user", "content": "established facts"}],
+        planner_fn=fake_planner,
+    )
+    assert out is _CUBE
+    assert captured["history"][0] == {"role": "user", "content": "established facts"}
+    assert "add a hole in the top" in captured["history"][-1]["content"]
+
+
+def test_replan_for_edit_does_not_touch_stage_caps():
+    """An edit is fresh user intent, not a bounded retry — cap_for_stage/
+    is_exhausted are stage-keyed and untouched by anything edit-related."""
+    assert cap_for_stage("cadquery_compile") == INNER_CAP
+    assert cap_for_stage("visual_mismatch") == OUTER_CAP
+
+
+def test_replan_for_edit_retries_on_flaky_call_then_raises():
+    calls = {"n": 0}
+
+    def always_failing(prompt, history):
+        calls["n"] += 1
+        raise RuntimeError(f"attempt {calls['n']}")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="attempt 2"):
+        replan_for_edit(
+            original_prompt="a cube",
+            last_plan=_CUBE,
+            edit_text="make it bigger",
+            prior_history=[],
+            planner_fn=always_failing,
+        )
     assert calls["n"] == 2

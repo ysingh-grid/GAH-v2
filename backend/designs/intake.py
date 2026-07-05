@@ -301,6 +301,78 @@ def _resume_intake(
     return IntakeOutcome(status="need_user", question=move["question"], state=state)
 
 
+def start_or_resume_edit_intake(
+    *,
+    edit_text: str,
+    incoming_text: str,
+    plan_summary: str,
+    state: IntakeState | None,
+) -> IntakeOutcome:
+    """Same conversational engine as the pre-planner intake (_next_move), seeded
+    to clarify an EDIT to an already-generated model instead of a fresh design.
+
+    No VLM summarization step (there's no fresh image to describe) — the seed is
+    built directly from the current plan + the edit request. Ambiguous edits ask
+    ONE question at a time, same MAX_INTAKE_QUESTIONS cap as the pre-planner flow.
+    `edit_text` stays constant across resumes (the original edit request); only
+    `incoming_text` (the reply to whatever question is pending) changes per turn.
+    """
+    if state is None:
+        state = IntakeState(
+            source="text",
+            visual_summary=plan_summary,
+            vlm_summary={
+                "mode": "text",
+                "summary": (
+                    f"Editing an existing model. Current design: {plan_summary}. "
+                    f"Requested change: {edit_text}"
+                ),
+                "observations": [],
+                "missing_facts": [],
+            },
+        )
+    elif state.pending_question:
+        answer = normalize_clarification_answer(incoming_text)
+        state.answers.append({
+            "question": state.pending_question,
+            "answer": answer or "use sensible standard defaults",
+        })
+        state.pending_question = ""
+
+    if state.questions_asked >= MAX_INTAKE_QUESTIONS:
+        return IntakeOutcome(
+            status="ready", intake_context=build_edit_context(edit_text=edit_text, state=state)
+        )
+
+    move = _next_move(f"EDIT REQUEST to an existing model: {edit_text}", state)
+    if move["facts"]:
+        state.gathered_facts = move["facts"]
+
+    if move["satisfied"]:
+        return IntakeOutcome(
+            status="ready", intake_context=build_edit_context(edit_text=edit_text, state=state)
+        )
+
+    state.pending_question = move["question"]
+    state.questions_asked += 1
+    return IntakeOutcome(status="need_user", question=move["question"], state=state)
+
+
+def build_edit_context(*, edit_text: str, state: IntakeState) -> str:
+    """Build the resolved edit instruction handed to the replanner."""
+    lines = [
+        "Requested edit to the existing model:",
+        f"- edit request: {edit_text.strip()}",
+    ]
+    if state.gathered_facts:
+        lines.append("- clarified facts:")
+        lines.extend(f"  - {item}" for item in state.gathered_facts)
+    if state.answers:
+        lines.append("- clarified answers:")
+        lines.extend(_answer_lines(state.answers))
+    return "\n".join(lines)
+
+
 def build_intake_context(user_prompt: str, state: IntakeState) -> str:
     """Build the text block handed to the planner as immutable intake facts."""
     lines = [

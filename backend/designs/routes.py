@@ -34,7 +34,10 @@ async def chat_ws(design_id: str, ws: WebSocket) -> None:
     Client → Server:  {"type": "message", "text": str}
     Server → Client:  typed events — see runner.py docstring for full list.
 
-    Connection closes automatically after a terminal event (success / failed).
+    The connection stays open after success/failed — the session isn't reset;
+    the next message is a post-design question or edit request (see
+    runner.run_chat_turn). Only a real client disconnect or design-not-found
+    closes the socket.
     """
     await ws.accept()
 
@@ -59,10 +62,6 @@ async def chat_ws(design_id: str, ws: WebSocket) -> None:
             attachments = data.get("attachments")
 
             await run_chat_turn(session, user_text, send, attachments=attachments)
-
-            if session.status in ("done", "failed"):
-                await ws.close()
-                break
 
     except WebSocketDisconnect:
         pass
