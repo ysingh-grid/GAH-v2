@@ -109,10 +109,23 @@ config.enable_compression_guard = False
 # seed: BEST-EFFORT. OpenAI honors it (+ returns system_fingerprint); Gemini's
 #   OpenAI-compat endpoint MAY ignore it — set it to ATTEMPT repro, do NOT expect
 #   bit-identical runs. Enable by exporting RLM_SEED; unset = normal production.
+# reasoning_effort: THE thinking-budget control for the pro-tier root driver.
+#   gemini-3.1-pro-preview is a THINKING model; with no effort param it defaults to
+#   dynamic/HIGH thinking, and each REPL turn spent 40-173s of hidden reasoning on
+#   only 12-14k prompt tokens (MEASURED: a 20-blade part = ~20min across 3 cold
+#   runs, latency almost entirely thinking, not context). The planner is structured
+#   extraction (pick primitive, fill dims, emit JSON), so "low" caps that budget
+#   without starving the reasoning it genuinely needs. Gemini's OpenAI-compat
+#   endpoint honors reasoning_effort ("low"|"medium"|"high") and maps it to the
+#   thinking budget; it spreads UNTOUCHED through call_llm.ts into every root +
+#   sub-agent call. Override via RLM_REASONING_EFFORT; set to "none"/"" to omit.
 LLM_KWARGS: dict = {
     "temperature": float(os.environ.get("RLM_TEMPERATURE", "0.1")),
     "top_p": float(os.environ.get("RLM_TOP_P", "0.95")),
 }
+_effort = os.environ.get("RLM_REASONING_EFFORT", "low")
+if _effort not in (None, "", "none"):
+    LLM_KWARGS["reasoning_effort"] = _effort
 _seed = os.environ.get("RLM_SEED")
 if _seed not in (None, ""):
     LLM_KWARGS["seed"] = int(_seed)

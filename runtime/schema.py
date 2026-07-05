@@ -166,6 +166,36 @@ class PrimitivePlan(BaseModel):
             raise ValueError(f"only 'mm' units are supported in the MVP, got '{v}'")
         return v
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_extra_bases(cls, data: Any) -> Any:
+        """Deterministically fold multiple 'base' steps into one legal compound.
+
+        A Case-A multi-solid plan (bolt+nut, flange-kit) has N independent
+        bodies. Each body's own root primitive reads naturally as 'base', so the
+        planner routinely emits N bases — but the schema requires exactly one,
+        and the documented-correct form (playbook: "only the FIRST body is base,
+        every other is union; a union of disjoint solids is one multi-component
+        compound") is an unambiguous rewrite. Apply it here instead of bouncing
+        the whole plan through an expensive cold replan for a mechanical rule.
+        Only the FIRST primitive 'base' is kept; later 'base' steps → 'union'.
+        """
+        if not isinstance(data, dict):
+            return data
+        steps = data.get("steps")
+        if not isinstance(steps, list):
+            return data
+        seen_base = False
+        for s in steps:
+            # PrimitiveStep carries "operation"; FinishStep carries "op" — the
+            # latter has no operation key, so it's skipped by this guard.
+            if isinstance(s, dict) and s.get("operation") == "base":
+                if seen_base:
+                    s["operation"] = "union"
+                else:
+                    seen_base = True
+        return data
+
     @model_validator(mode="after")
     def _structural_rules(self) -> PrimitivePlan:
         ids = [s.id for s in self.steps]
