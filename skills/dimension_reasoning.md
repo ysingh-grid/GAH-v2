@@ -48,6 +48,7 @@ Unsure for a specific primitive? Call `lookup_primitive(key)` and read its descr
 - **Clearance fit**: Shaft of diameter `D` → hole diameter = `D + clearance` (0.2–0.5mm typical).
 - **Union overlap**: Features being fused must extend **0.5–1mm INTO** the body they join.
   A feature that only touches (tangent/coincident face) does NOT fuse → disconnected components → mesh fails.
+  For custom profiles (like `profile_extrude`) attached to a curved face (e.g., a cylinder/hub of radius `R`): ensure **every point** on the connecting face/edge of the profile has a radial distance less than or equal to `R - 0.5mm` from the cylinder's center. Do not let any connection point sit outside the radius, as this leaves wedge-shaped gaps.
 - **ONE connected solid**: After all unions the part must be a single connected body.
   Every union feature must overlap something already attached. Verify by tracing the overlap chain.
 - **Intersect semantics**: `intersect` keeps only the boolean AND (shared volume) of the primitive
