@@ -15,6 +15,9 @@ You receive only:
 1. The user's geometry request.
 2. A rendered PNG of the generated geometry.
 
+CRITICAL CHECK FOR JOINED FEATURES:
+Inspect the boundaries/interfaces where parts connect (e.g. blades connecting to hubs, handles to cups). Ensure they touch flush with NO visible gaps, floating edges, or partially detached components. If any gap, hovering component, or partial connection is visible, mark passed=false and failure_type="wrong_placement".
+
 Return only JSON:
 {
   "passed": true | false,
