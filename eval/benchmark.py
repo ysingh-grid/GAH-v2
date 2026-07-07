@@ -185,6 +185,19 @@ def _run_full_loop_entry(entry: dict, base_record: dict, backend_url: str) -> di
     stl_path = str(stl) if stl.exists() else None
     passed = result.status == "success"
 
+    failure_category = result.failure_category
+    failure_reason = outcome.get("failure_detail")
+    if not passed and failure_reason:
+        # The core trace's 6-category taxonomy (runtime/trace.py, PRD §14) has no
+        # infra bucket — a timeout inside a replan retry surfaces through the
+        # normal LoopResult path and falls back to geometry_invalidity, which
+        # would misreport an API timeout as a geometry defect on the scorecard.
+        # Reclassify from the failure TEXT for eval reporting only; the core
+        # trace.json is untouched.
+        eval_category, _ = _classify_exception(RuntimeError(failure_reason))
+        if eval_category != "geometry_invalidity":
+            failure_category = eval_category
+
     record: dict = {
         **base_record,
         "run_id": run_id,
@@ -194,8 +207,8 @@ def _run_full_loop_entry(entry: dict, base_record: dict, backend_url: str) -> di
         "total_time_ms": elapsed_ms,
         "duration_s": outcome.get("duration_s"),      # full-workflow wall-clock
         "status": result.status,
-        "failure_category": result.failure_category,
-        "failure_reason": outcome.get("failure_detail"),
+        "failure_category": failure_category,
+        "failure_reason": failure_reason,
         "stl_path": stl_path,
     }
 
