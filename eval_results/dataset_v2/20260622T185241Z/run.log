@@ -1,3 +1,0 @@
-  1/3 [PASS] T1_001   32.6s  stl=684B    vsREF=MATCH(vr=1.0)    stage=done               verified
-  2/3 [PASS] T2_001   35.0s  stl=50484B  vsREF=MATCH(vr=1.0)    stage=done               verified
-  3/3 [PASS] T3_001  225.4s  stl=52684B  vsREF=MATCH(vr=1.0)    stage=done               verified
