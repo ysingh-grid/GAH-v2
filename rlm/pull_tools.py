@@ -92,6 +92,32 @@ def list_skills() -> list[str]:
             ) from None
 
 
+def list_skills_replan() -> list[str]:
+    """Return the names of every reasoning-guide skill available to the REPLANNER.
+
+    The replanner's live catalog of guides — scoped to revising ONE existing
+    plan (repair/refinement + primitive/dimension reasoning). Planner-only
+    guides (full intake/decomposition/verification playbook) are deliberately
+    NOT listed here. Start with read_skill('playbook_replan').
+    """
+    import os
+    import requests
+
+    base = os.environ["DTCM_BACKEND_URL"]
+    url = f"{base}/internal/list-skills-replan"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"list_skills_replan: backend unreachable at {url!r} ({_e})."
+            ) from None
+
+
 def read_skill(name: str) -> str:
     """Load one skill guide into REPL memory `_SKILLS[name]` (and `context['skills'][name]`).
 
@@ -309,119 +335,4 @@ def lookup_design_reference(query: str) -> dict:
         handles[k] = f"[MEMORY_LOADED] stored in `_REF['{k}']` ({summary})"
 
     return handles
-
-
-async def delegate_features(features: list[dict], shared_frame: dict) -> list[list[dict]]:
-    """Delegate independent solids or body features to parallel child agents.
-
-    Call this tool when planning compound parts (e.g. box + lid, hub + spokes + rim).
-    It spawns parallel child sub-agents with clean context windows, runs them
-    simultaneously, and returns their generated CSG step lists.
-
-    Args:
-        features: List of feature specifications. Each dictionary should contain:
-                  - "name": str (e.g. "lid", "spoke")
-                  - "operation": str ("base", "union", "cut", or "intersect")
-                  - "placement": list[float] (absolute [x, y, z] position)
-                  - "candidate_primitives": list[str] (2-4 catalog keys to consider)
-                  - "notes": str (optional overlap or sizing details)
-        shared_frame: Dictionary defining shared skeleton dimensions (radii, planes,
-                      bolt circles) so child parts align correctly. Pass {} if parts
-                      are completely independent solids.
-
-    Returns:
-        A list of step-lists (one list of CSG step dicts per feature), in the exact
-        order requested. Flatten these into your main steps array.
-    """
-    _llm_query = globals()["llm_query"]
-    _batch_query = globals()["batch_llm_query"]
-    _lookup_prim = globals()["lookup_primitive"]
-    _lookup_ref = globals()["lookup_design_reference"]
-
-    step_schema = {"type": "array", "items": {"type": "object"}}
-    child_tools = [_lookup_prim, _lookup_ref]
-
-    queries = []
-    for feat in features:
-        q_context = {
-            "task": (
-                "Build ONLY this feature/solid IN THE SHARED FRAME given. Use the "
-                "absolute position + operation provided — do NOT change any shared "
-                "anchor. Use lookup_primitive(key) for exact param names. Return a "
-                "JSON list of step objects: {id, primitive, operation, parameters, "
-                "position:[x,y,z], orientation:[rx,ry,rz], pattern?}."
-            ),
-            "feature": feat,
-            "shared_frame": shared_frame,
-            "candidate_primitives": feat.get("candidate_primitives", []),
-        }
-        queries.append(_llm_query(q_context, step_schema, tools=child_tools))
-
-    results = await _batch_query(*queries)
-    return list(results)
-
-
-async def delegate_stage(stage: str, skill_name: str, payload: dict) -> dict:
-    """ISOLATED / NOT IN THE TOOLSET — kept for reference, do not re-add blindly.
-
-    Measured harmful: a planning stage has tiny context, so spawning a full child
-    agent per stage is pure overhead (drove a single-solid part to >1M tokens /
-    runaway). Inline reasoning in the root is cheaper. Delegation is reserved for
-    delegate_features (independent SOLIDS in a multi-solid assembly). See
-    runtime/planner._PLANNER_TOOLS for why this is excluded.
-
-    Run ONE reasoning stage in an isolated child agent — keep the root tiny.
-
-    This is the by-reference workhorse. Instead of YOU (the root) reading a skill
-    guide into your own context and reasoning over it, you hand the stage off: this
-    fetches the guide itself, ships it + only the data the stage needs into a fresh
-    child agent, and returns the child's clean dict. The guide text and the child's
-    working tokens NEVER enter your context — you only get the small result back.
-
-    Use it for each planning stage in order, e.g.:
-        intent = await delegate_stage("intent_extraction", "intent_extraction",
-                                      {"prompt": context["original_prompt"]})
-        dims   = await delegate_stage("dimension_reasoning", "dimension_reasoning",
-                                      {"intent": intent})
-        prim   = await delegate_stage("primitive_planning", "primitive_planning",
-                                      {"intent": intent, "dimensions": dims})
-
-    Args:
-        stage: short label for the stage (e.g. "intent_extraction"), for the child.
-        skill_name: the guide to fetch and hand the child (e.g. "primitive_planning").
-        payload: ONLY the data this stage needs (prior stage results, the prompt).
-                 Keep it minimal — do not dump your whole context in.
-
-    Returns:
-        The child's result as a Python dict (e.g. {"steps": [...]} for
-        primitive_planning, or extracted fields for intent_extraction).
-    """
-    import os
-
-    import requests
-
-    base = os.environ["DTCM_BACKEND_URL"]
-    guide = requests.get(
-        f"{base}/internal/read-skill",
-        params={"name": skill_name},
-        timeout=10,
-    ).text
-
-    _llm_query = globals()["llm_query"]
-    g = globals()
-    child_tools = [
-        g[name] for name in ("lookup_primitive", "lookup_design_reference") if name in g
-    ]
-
-    child_context = {
-        "task": (
-            f"You are the '{stage}' stage of a CAD planner. Follow the GUIDE exactly "
-            "and operate ONLY on the PAYLOAD given. Use lookup_primitive(key) for exact "
-            "parameter names when the guide calls for it. Return a single JSON object "
-            "with this stage's result — no prose, no explanation."
-        ),
-        "guide": guide,
-        "payload": payload,
-    }
-    return await _llm_query(child_context, {"type": "object"}, tools=child_tools)
 

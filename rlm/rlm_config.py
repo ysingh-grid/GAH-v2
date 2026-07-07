@@ -22,7 +22,9 @@ config = RLMConfig.default()
 # 35k-498k tokens). A stronger coding model reasons more per turn → fewer turns →
 # less of the quadratic prompt-token growth that dominated cost. Trade: pro spends
 # more COMPLETION (reasoning) tokens per call, but prompt_tokens were the bloat.
-# sub_agent (delegate_features children) stays flash for cost — separation of roles.
+# sub_agent stays flash, but is now INERT: the delegation tools (delegate_features/
+# delegate_stage) were removed, so fast_rlm never spawns a sub-agent. Left set as a
+# harmless default in case a fork path is ever reintroduced.
 config.primary_agent = "gemini-3.1-pro-preview"
 config.sub_agent = "gemini-3.5-flash"
 # Hard safety-net cap on REPL steps per agent (the soft target lives in the prompt:
@@ -92,8 +94,8 @@ config.api_max_retries = int(os.environ.get("RLM_API_MAX_RETRIES", "2"))
 
 # ── Compression guard ──────────────────────────────────────────────────────────
 # Default forces a self-confirm (same model, same system prompt) + compress+retry
-# before a delegate_features call with a large, barely-compressed context runs.
-# Explicitly off: no compression step, no extra confirm call before a fork.
+# before a fork with a large, barely-compressed context runs. Moot now that the
+# fork tools are gone, but explicitly off regardless: no compression/confirm step.
 config.enable_compression_guard = False
 
 # ── Generation params (temperature / seed / top_p) ────────────────────────────

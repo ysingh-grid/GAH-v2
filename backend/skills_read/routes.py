@@ -8,7 +8,14 @@ router = APIRouter()
 
 @router.get("/internal/list-skills")
 def list_skills() -> list[str]:
-    return store.load_all_skills()
+    """Planner's guide catalog (SKILLS.md) — replan-only guides not listed."""
+    return store.load_planner_skills()
+
+
+@router.get("/internal/list-skills-replan")
+def list_skills_replan() -> list[str]:
+    """Replanner's guide catalog (SKILLS_replan.md) — planner-only guides not listed."""
+    return store.load_replan_skills()
 
 
 @router.get("/internal/read-skill", response_class=PlainTextResponse)

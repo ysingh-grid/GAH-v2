@@ -550,8 +550,8 @@ def _metrics_for_run(run_id: str | None) -> dict[str, Any]:
 def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
     """Return a PlannerFn closure for the geometry loop's replan path.
 
-    Uses the scoped run_replanner_turn (read-only pull tools, no delegate_features
-    fork tool) — mirrors temporal.activities.replan_activity so the in-process and
+    Uses the scoped run_replanner_turn (read-only pull tools, no fork tool) —
+    mirrors temporal.activities.replan_activity so the in-process and
     Temporal paths behave the same on a replan. `history` = the pre-planner intake
     facts base, plus each prior round's (failed plan + failure) pair accumulated
     by the geometry loop, plus the current round's feedback message appended by

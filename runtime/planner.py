@@ -30,8 +30,8 @@ def _llm_kwargs() -> dict:
 
     Lazy import keeps this module import-safe without rlm_config (mirrors how
     `config` is lazily imported below). fast_rlm.run spreads these into every
-    chat.completions.create call (root + all delegate_features sub-agents), so
-    setting them once per run() covers the whole agent tree."""
+    chat.completions.create call, so setting them once per run() covers the
+    whole (now single-agent, no-fork) planner."""
     from rlm.rlm_config import LLM_KWARGS
 
     return LLM_KWARGS
@@ -40,11 +40,11 @@ def _llm_kwargs() -> dict:
 # Tools the planner may call inside its REPL. Imported as objects so fast-rlm
 # can extract their source; they must stay self-contained (see rlm/pull_tools).
 from rlm.pull_tools import (
-    delegate_features,
     fetch_kb_sections,
     list_kb_index,
     list_primitives,
     list_skills,
+    list_skills_replan,
     lookup_design_reference,
     lookup_primitive,
     read_skill,
@@ -62,27 +62,29 @@ _PLANNER_TOOLS = [
     list_kb_index,
     fetch_kb_sections,
     lookup_design_reference,
-    delegate_features,
 ]
-# delegate_stage is intentionally NOT exposed. Measured: per-stage child delegation
-# spawns a full agent per stage over tiny context = pure overhead; it drove a single
-# solid to >1M tokens / runaway. The def is kept in rlm/pull_tools.py but isolated.
-# delegate_features stays (genuine compound multi-solid assemblies). NOTE: isolating
-# delegate_features too gave NO token benefit (pure-inline box still ~183k/17 steps),
-# so the bloat is the monolithic root's per-step context growth + flash's step count,
-# not delegation alone.
+# NO child-delegation tools. Both were removed after measurement:
+#   - delegate_stage (per-stage fork) — pure overhead over tiny per-stage context;
+#     drove a single solid to >1M tokens / runaway.
+#   - delegate_features (per-solid fork for assemblies) — NO token benefit
+#     (pure-inline box still ~183k/17 steps) AND never once invoked across logged
+#     runs; the planner always planned inline / via patterns. The real cost was
+#     the monolithic root's per-step context growth + flash's step count, not the
+#     lack of delegation. The planner is now a flat, single-agent inline planner.
 
 _REPLANNER_TOOLS = [
     read_skill,
-    list_skills,
+    list_skills_replan,
     list_primitives,
     lookup_primitive,
     list_kb_index,
     fetch_kb_sections,
     lookup_design_reference,
 ]
-# delegate_features intentionally absent: a replan edits ONE existing plan, it
-# never decomposes a new assembly, so the fork tool has no legitimate use here.
+# list_skills_replan (NOT list_skills): the replanner discovers ONLY its own
+# scoped guide catalog (SKILLS_replan.md) — it never sees the planner-only
+# intake/decomposition/verification guides. read_skill stays shared (access is
+# open, discovery is scoped), so a guide listed in both catalogs still resolves.
 # If you add a new tool to _PLANNER_TOOLS, it does NOT automatically appear here
 # — add it explicitly only if the replanner genuinely needs it.
 

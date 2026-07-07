@@ -4,10 +4,11 @@ EVERY failure source — primitive_gap, cadquery_compile, cadquery_execute,
 mesh_repair, verifier_error (all inner repair loop), and visual_mismatch (outer
 refine loop) — comes back through `replan_with_feedback`. No stage is ever
 fail-fast; the replanner always gets a chance, bounded by its cap. The failure
-stage picks the attempt cap; the replanner itself picks which guide to read
-from REPLAN_SKILLS (always passed in full, not pre-selected by stage) and
-always returns a revised PrimitivePlan — there is no escalate-to-user escape
-hatch; it must resolve ambiguity itself.
+stage picks the attempt cap AND the one guide the feedback message steers to
+(STAGE_TO_SKILL); the replanner discovers its FULL guide catalog via its
+list_skills_replan tool (single source: skills/SKILLS_replan.md) and always
+returns a revised PrimitivePlan — there is no escalate-to-user escape hatch; it
+must resolve ambiguity itself.
 
 Bounds (Q8): inner (repair) stages max 5 attempts, outer (visual) max 3 — this
 caps how many times the geometry loop re-enters replan after a NEW downstream
@@ -49,16 +50,6 @@ STAGE_TO_SKILL: dict[str, str] = {
     "verifier_error": "repair_guidance",
     "visual_mismatch": "refinement_guidance",
 }
-
-# Replan guide index — name + one-line purpose, always passed in full so the
-# replanner picks the guide matching its own failure, instead of the host
-# pre-selecting by stage. Keep in sync with skills/*.md if a guide's role changes.
-REPLAN_SKILLS: tuple[tuple[str, str], ...] = (
-    ("repair_guidance", "fix a compiler/execution/mesh error in an existing plan"),
-    ("refinement_guidance", "adjust parameters/positioning from visual verifier feedback"),
-    ("primitive_planning", "swap or reselect a primitive when the wrong one was chosen"),
-    ("dimension_reasoning", "recompute offsets, clearances, or stacked/relative dimensions"),
-)
 
 # Inner (repair) stages share one cap; the outer (visual) loop has its own.
 # verifier_error (VLM transport/parse failure, e.g. truncated JSON) is inner —
@@ -113,17 +104,21 @@ def build_feedback_message(failure_stage: str, detail: str, last_plan: Primitive
     # Compact separators, not indent=2: this string is read only by the LLM, and
     # pretty-printing costs ~55% more bytes on every replan attempt for nothing.
     plan_json = json.dumps(plan_to_dict(last_plan), separators=(",", ":"))
-    index = "\n".join(f"- {name}: {desc}" for name, desc in REPLAN_SKILLS)
+    # Steer to the ONE guide that matches this failure stage (STAGE_TO_SKILL) —
+    # not a full catalog dump. The replanner discovers its complete guide list
+    # via list_skills_replan() (single source: skills/SKILLS_replan.md), so no
+    # second catalog lives here to drift out of sync.
+    guide = STAGE_TO_SKILL.get(failure_stage, "repair_guidance")
     note = _VERIFIER_ERROR_NOTE if failure_stage == "verifier_error" else ""
     return (
         f"Your previous PrimitivePlan failed at stage '{failure_stage}'.\n"
         f"Failure detail:\n{detail}\n"
         f"{note}\n"
-        f"Available guides:\n{index}\n\n"
-        f"Read whichever guide matches this failure, then return a corrected "
-        f"plan_ready that fixes it. You must resolve this yourself using the "
-        f"guides, context, and reasonable defaults — there is no option to ask "
-        f"the user.\n\n"
+        f"Read the '{guide}' guide (read_skill('{guide}')) — it matches this "
+        f"failure; call list_skills_replan() if you need the full guide list. "
+        f"Then return a corrected plan_ready that fixes it. You must resolve "
+        f"this yourself using the guides, context, and reasonable defaults — "
+        f"there is no option to ask the user.\n\n"
         f"Previous plan was:\n{plan_json}"
     )
 
