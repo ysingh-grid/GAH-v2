@@ -82,16 +82,12 @@ def test_build_planner_query_shape():
     assert q["task"] != q["original_prompt"]
 
 
-def test_build_planner_query_forwards_both_menus():
-    """kb_index was fetched then silently dropped before reaching the query —
-    regression guard that both pre-injected menus land in the dict when supplied."""
-    q = build_planner_query(
-        "make a cube", [],
-        available_primitives=["box"],
-        kb_index={"cadquery": {"3d-operations": "..."}},
-    )
+def test_build_planner_query_forwards_primitive_menu():
+    """The catalog menu lands in the query when supplied; the KB menu is no
+    longer pre-injected (pull-only via list_kb_index), so it never appears here."""
+    q = build_planner_query("make a cube", [], available_primitives=["box"])
     assert q["available_primitives"] == ["box"]
-    assert q["kb_index"] == {"cadquery": {"3d-operations": "..."}}
+    assert "kb_index" not in q
 
 
 def test_run_planner_turn_uses_typed_output_schema(monkeypatch):

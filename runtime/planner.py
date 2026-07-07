@@ -111,18 +111,17 @@ def build_planner_query(
     chat_history: list[dict[str, str]],
     *,
     available_primitives: list[str] | None = None,
-    kb_index: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the structured context dict handed to the RLM for one turn.
 
-    MENU by value, CONTENT by reference. available_primitives (20 catalog keys) and
-    kb_index (a compact section menu) are tiny — pre-fetching them once and embedding
-    them here is cheaper than making the monolithic root spend extra REPL steps to
-    pull them (each added step re-sends the whole transcript — quadratic cost; this
-    was MEASURED: removing the menu pushed a complex part from 326k → 464k tokens).
-    The LARGE data — full primitive specs and KB section bodies — is NOT injected;
-    the planner still pulls only what it needs via lookup_primitive()/
-    fetch_kb_sections(). Omitted (None) → the planner falls back to the tools.
+    MENU by value, CONTENT by reference. available_primitives (the ~26 catalog
+    keys) is tiny — pre-fetching it once and embedding it here is cheaper than
+    making the monolithic root spend an extra REPL step to pull it (each added
+    step re-sends the whole transcript — quadratic cost; MEASURED: removing the
+    menu pushed a complex part from 326k → 464k tokens). The LARGE data — full
+    primitive specs — is NOT injected; the planner pulls only what it needs via
+    lookup_primitive(). The KB menu is likewise pull-only (list_kb_index()) — it
+    is no longer pre-injected. Omitted (None) → the planner falls back to the tools.
     """
     # task = the planner's standing instruction; the user's actual request lives
     # ONLY in original_prompt/chat_history. (task used to duplicate original_prompt
@@ -134,8 +133,6 @@ def build_planner_query(
     }
     if available_primitives is not None:
         query["available_primitives"] = available_primitives
-    if kb_index is not None:
-        query["kb_index"] = kb_index
     return query
 
 
@@ -183,17 +180,16 @@ def run_planner_turn(
         available_primitives: list[str] | None = list_primitives()
     except Exception:
         available_primitives = None
-    try:
-        kb_index: dict[str, Any] | None = list_kb_index()
-    except Exception:
-        kb_index = None
+    # kb_index is NOT pre-injected. It's a supplementary CadQuery-API menu the
+    # planner rarely needs (it plans in library primitives, not raw CadQuery),
+    # and pre-injecting it re-sent ~1.5k chars on every growing-transcript REPL
+    # step. The planner pulls it on demand via list_kb_index() if it wants it.
 
     result = fast_rlm.run(
         build_planner_query(
             original_prompt,
             chat_history,
             available_primitives=available_primitives,
-            kb_index=kb_index,
         ),
         config=config,
         tools=_PLANNER_TOOLS,

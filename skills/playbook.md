@@ -29,7 +29,6 @@ that is not your role and you physically cannot do it here.
 Pre-injected, always read these from `context` first:
 
 - `context["available_primitives"]` — the catalog keys (your vocabulary)
-- `context["kb_index"]` — the CadQuery KB section menu
 - `context["chat_history"]` — prior turns
 - `context["prior_feedback"]` — present only on a re-plan after a downstream failure
 
