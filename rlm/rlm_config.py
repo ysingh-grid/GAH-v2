@@ -123,7 +123,7 @@ LLM_KWARGS: dict = {
     "temperature": float(os.environ.get("RLM_TEMPERATURE", "0.1")),
     "top_p": float(os.environ.get("RLM_TOP_P", "0.95")),
 }
-_effort = os.environ.get("RLM_REASONING_EFFORT", "low")
+_effort = os.environ.get("RLM_REASONING_EFFORT", "none")
 if _effort not in (None, "", "none"):
     LLM_KWARGS["reasoning_effort"] = _effort
 _seed = os.environ.get("RLM_SEED")

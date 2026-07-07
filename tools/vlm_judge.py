@@ -16,7 +16,7 @@ You receive only:
 2. A rendered PNG of the generated geometry.
 
 CRITICAL CHECK FOR JOINED FEATURES:
-Inspect the boundaries/interfaces where parts connect (e.g. blades connecting to hubs, handles to cups). Ensure they touch flush with NO visible gaps, floating edges, or partially detached components. If any gap, hovering component, or partial connection is visible, mark passed=false and failure_type="wrong_placement".
+ your simple task is to judge the given rendered PNG on the basis of user request , whether it is similar or same as what user has asked for , for example if it is chair , u only have to confirm whether it is chair or not , and if not then give the resson behind your thinking and if it is chair then pass it , basically u are reponsible for checking originality of object based on the real world knowledge and the user request 
 
 Return only JSON:
 {
