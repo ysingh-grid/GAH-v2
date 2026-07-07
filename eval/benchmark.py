@@ -525,8 +525,11 @@ def _print_prd_gates(results_file: Path) -> None:
     print(f"  Avg repair iterations : {avg_rep:5.2f}    (<2)     [{gate(avg_rep < 2)}]")
     print(f"  Trace artifacts       : {100*len(traced)/n:5.0f}%   (100%)   [{gate(len(traced) == n)}]")
     if avg_dur is not None:
-        print(f"  Avg workflow time     : {avg_dur:5.0f}s   (<300s)  [{gate(not over5)}]"
-              f"   ({len(over5)}/{len(durs)} over 5 min)")
+        # PRD gate is on the AVERAGE; outlier count is reported alongside, not
+        # folded into the same pass/fail (a single slow T3 part must not flip an
+        # otherwise-fast average to FAIL, and vice versa — keep them legible).
+        print(f"  Avg workflow time     : {avg_dur:5.0f}s   (<300s)  [{gate(avg_dur < 300)}]"
+              f"   ({len(over5)}/{len(durs)} runs over 5 min)")
     else:
         print(f"  Avg workflow time     :   n/a    (<300s)  [no duration recorded]")
     print(f"  Runs: {n} | success: {len(passed)} | first-pass: {len(first_pass)}")
