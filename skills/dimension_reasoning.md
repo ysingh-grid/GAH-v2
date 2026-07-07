@@ -56,7 +56,35 @@ Unsure for a specific primitive? Call `lookup_primitive(key)` and read its descr
   is an empty solid → mesh fails. Use intersect to carve a body to a shared region
   (e.g. box ∩ sphere = domed top, cylinder ∩ box = D-profile).
 
-## Rule 3 — Derived Parameters
+## Rule 3 — Axis Orientation (aligning a primitive's default axis)
+
+`cylinder`/`hollow_cylinder`/`tube`'s default axis (before any `orientation`)
+is **+Z**. `_place` applies `orientation=[rx,ry,rz]` as Rx, THEN Ry, THEN Rz,
+about the ORIGIN (not the primitive's own center) — get the sign/axis wrong
+and the whole primitive points the wrong way while still passing every
+mesh/watertight check (the render still "looks like a pipe/cylinder" from most
+angles, so this is a SILENT defect, easy to miss).
+
+**Verified rotation table** (derive from Rx/Ry/Rz applied to the default +Z axis):
+
+| Target axis | `orientation` | Rotation applied |
+|---|---|---|
+| **+Z** (the default) | `[0, 0, 0]` | **NONE — no rotation needed** |
+| +X | `[0, 90, 0]` | 90° about Y |
+| −X | `[0, -90, 0]` | −90° about Y |
+| +Y | `[-90, 0, 0]` | −90° about X |
+| −Y | `[90, 0, 0]` | 90° about X |
+
+**The common mistake**: when building a SECOND pipe/cylinder perpendicular to a
+first one already aligned to X (via `[0,90,0]`), it's tempting to reach for
+"the other rotation axis" — `[90,0,0]` or `[-90,0,0]` — assuming perpendicular
+always means "rotate about X." That lands on **Y, not Z**. If the second
+member actually needs to point along **Z** (e.g., a tee/cross fitting's branch
+going "up"), the correct `orientation` is `[0, 0, 0]` — **no rotation at all**,
+because Z is already the default. Always name the TARGET axis first, then look
+it up in the table above — never infer it from "perpendicular to the other one."
+
+## Rule 4 — Derived Parameters
 
 Use these formulas to predict and verify shape volumes:
 
