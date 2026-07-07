@@ -36,7 +36,14 @@ Base Solid  (+addition solids)  (−subtraction solids)  [+finish features]
 | **Base** | `base` | Largest/dominant primitive. Starting point. |
 | **Feature** | `union` | Fused additions — bosses, ribs, tabs, flanges |
 | **Pocket** | `cut` | Carved subtractions — holes, slots, pockets, counterbores |
-| **Finish** | `fillet`/`chamfer` | Applied last — stress relief, handling, appearance |
+| **Finish** | `fillet`/`chamfer`/`shell` | Applied last — stress relief, handling, appearance, hollowing |
+
+> **Adapter/duct/pipe/tube/nozzle/manifold/funnel parts are NOT done after Base
+> + Feature + Pocket.** If the part is meant to pass fluid, air, or a cable
+> through it, a `shell` Finish step (or an equivalent hollow primitive/
+> through-cut) is REQUIRED — see `primitive_planning`'s "Hollow / Flow-Through
+> Parts" rule. A solid block shaped like the envelope is a silent defect: it
+> looks correct from every exterior view and passes mesh checks.
 
 ---
 
