@@ -1,21 +1,31 @@
-def render_views(stl_path: str, run_id: str) -> dict:
+def render_views(stl_path: str, run_id: str, section: dict | None = None) -> dict:
     """
-    Renders a single composite PNG with THREE side-by-side views of an STL,
-    using VTK with Phong shading (server-side, offscreen, no GUI).
+    Render a single composite PNG with FIVE side-by-side views of an STL,
+    using VTK with Phong shading + bold black edge/silhouette overlays
+    (server-side, offscreen, no GUI).
 
     Views (left -> right):
-      - Isometric        (elev=35,  azim=45)  — overall 3D shape
-      - High-angle rear  (elev=65,  azim=220) — top-face holes/bores/cavities
-      - Low front profile(elev=10,  azim=0)   — vertical profile, heights, slots
+      - front    (true orthographic, look +Y)  — XZ face, heights/widths
+      - side     (true orthographic, look -X)  — YZ face, depth profile
+      - top      (true orthographic, look -Z)  — XY face, hole/slot layout
+      - iso      (perspective, elev35/azim45)  — overall 3D shape
+      - section  (cutaway half-solid)          — interior walls/cavities
+
+    Section plane:
+      Plan-driven when `section` is provided as {"normal": [x,y,z],
+      "point": [x,y,z]}; otherwise auto — through the center of mass with the
+      normal along the SHORTEST bounding-box axis (plane spans the two longest
+      dims = maximum cross-section revealed).
 
     Args:
         stl_path: Absolute (or repo-relative) path to the STL file.
         run_id: Unique identifier for the run; names the output PNG.
+        section: Optional {"normal":[x,y,z], "point":[x,y,z]} cut plane.
 
     Returns:
         On success:
           {"success": True, "png_path": str, "width": int, "height": int,
-           "views": ["iso", "high_rear", "front"],
+           "views": ["front","side","top","iso","section"],
            "renders": {"composite": png_path}}
         On failure:
           {"success": False, "error": str}
@@ -26,8 +36,7 @@ def render_views(stl_path: str, run_id: str) -> dict:
         background thread), this causes a silent segfault that kills the whole
         server process. To avoid this, the actual VTK work is performed inside
         a fresh subprocess — which always starts with its own main thread —
-        and the result is returned as JSON. This is the same pattern used by
-        execute_cadquery.py for CadQuery isolation.
+        and the result is returned as JSON. Same pattern as execute_cadquery.py.
     """
     import json
     import os
@@ -39,15 +48,12 @@ def render_views(stl_path: str, run_id: str) -> dict:
     if not os.path.exists(stl_path):
         return {"success": False, "error": f"STL file not found at {stl_path}"}
 
-    # Build the Python snippet the subprocess will run.
-    # It imports the private _do_render from this same module and calls it,
-    # then prints the JSON result to stdout so we can capture it.
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     wrapper = f"""
 import sys, json, os
 sys.path.insert(0, {repr(repo_root)})
 from tools.render_views import _do_render
-result = _do_render({repr(stl_path)}, {repr(run_id)})
+result = _do_render({repr(stl_path)}, {repr(run_id)}, section={repr(section)})
 print(json.dumps(result))
 """
 
@@ -111,27 +117,28 @@ print(json.dumps(result))
         return {"success": False, "error": f"render subprocess launch failed: {exc}"}
 
 
-def _do_render(stl_path: str, run_id: str) -> dict:
+def _do_render(stl_path: str, run_id: str, section: dict | None = None) -> dict:
     """
-    Execute the VTK three-view render in the *current* process.
+    Execute the VTK five-view render in the *current* process.
 
     This must only be called from a process whose main thread is available for
     Cocoa/OpenGL (i.e. NOT from a uvicorn thread-pool worker). Call render_views()
     instead — it guarantees isolation via a subprocess.
     """
+    import math
     import os
     import traceback
 
     from tools.artifacts import run_dir
 
     outputs_dir = str(run_dir(run_id))
-    out_png = os.path.join(outputs_dir, "threeview.png")
+    out_png = os.path.join(outputs_dir, "threeview.png")  # name kept for path-compat
 
     try:
         import numpy as np
         import vtk
 
-        size = (2400, 800)
+        size = (4000, 800)  # five 800-wide panels in a row
         scale = 2
 
         # Read STL
@@ -139,7 +146,7 @@ def _do_render(stl_path: str, run_id: str) -> dict:
         reader.SetFileName(stl_path)
         reader.Update()
 
-        # Smooth normals, split at sharp edges
+        # Smooth normals, split at sharp edges (feeds both shading and edges).
         normals = vtk.vtkPolyDataNormals()
         normals.SetInputConnection(reader.GetOutputPort())
         normals.SetFeatureAngle(30.0)
@@ -155,69 +162,185 @@ def _do_render(stl_path: str, run_id: str) -> dict:
             (bounds[2] + bounds[3]) / 2,
             (bounds[4] + bounds[5]) / 2,
         ]
-        extent = max(
-            bounds[1] - bounds[0],
-            bounds[3] - bounds[2],
-            bounds[5] - bounds[4],
-        )
+        dims = [bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]]
+        extent = max(dims) or 1.0
 
-        def _make_actor():
-            """Phong-shaded actor from the STL normals pipeline."""
+        # ── reusable actor builders (parameterized by producer port) ──────────
+        def _solid_actor(port):
+            """Matte-shaded actor — flat even shading reads better than glossy."""
             mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputConnection(normals.GetOutputPort())
+            mapper.SetInputConnection(port)
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(0.45, 0.68, 0.95)  # light blue
-            actor.GetProperty().SetSpecular(0.3)
-            actor.GetProperty().SetSpecularPower(20)
-            actor.GetProperty().SetAmbient(0.2)
-            actor.GetProperty().SetDiffuse(0.8)
-            actor.GetProperty().SetInterpolationToPhong()
+            p = actor.GetProperty()
+            p.SetColor(0.80, 0.80, 0.82)  # light neutral gray
+            p.SetSpecular(0.0)            # kill glare that washes out features
+            p.SetAmbient(0.35)
+            p.SetDiffuse(0.65)
+            p.SetInterpolationToPhong()
             return actor
 
-        def _setup_camera(renderer, elev, azim, zoom=0.85):
-            """Position camera at given elevation/azimuth angles."""
-            distance = extent * 2.5
-            elev_rad = np.radians(elev)
-            azim_rad = np.radians(azim)
-            cam_x = center[0] + distance * np.cos(elev_rad) * np.cos(azim_rad)
-            cam_y = center[1] + distance * np.cos(elev_rad) * np.sin(azim_rad)
-            cam_z = center[2] + distance * np.sin(elev_rad)
-            camera = renderer.GetActiveCamera()
-            camera.SetPosition(cam_x, cam_y, cam_z)
-            camera.SetFocalPoint(*center)
-            camera.SetViewUp(0, 0, 1)
+        def _edges_actor(port):
+            """Bold black feature + boundary edges (view-independent hard edges).
+
+            vtkFeatureEdges pulls the model's sharp creases (dihedral > angle)
+            and open boundaries; tubing them makes thick crisp outlines instead
+            of 1px hairlines a flat shaded solid hides.
+            """
+            fe = vtk.vtkFeatureEdges()
+            fe.SetInputConnection(port)
+            fe.BoundaryEdgesOn()
+            fe.FeatureEdgesOn()
+            fe.SetFeatureAngle(20.0)
+            fe.ManifoldEdgesOff()
+            fe.NonManifoldEdgesOff()
+            fe.ColoringOff()
+            tube = vtk.vtkTubeFilter()
+            tube.SetInputConnection(fe.GetOutputPort())
+            tube.SetRadius(extent * 0.003)
+            tube.SetNumberOfSides(6)
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(tube.GetOutputPort())
+            mapper.ScalarVisibilityOff()
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0, 0, 0)
+            actor.GetProperty().SetLighting(False)
+            return actor
+
+        def _silhouette_actor(port, renderer):
+            """View-dependent outer contour — catches CURVED silhouettes (helmet,
+            sphere, cylinder) that vtkFeatureEdges misses (no sharp crease).
+            Bound to this renderer's camera; updates on Render()."""
+            sil = vtk.vtkPolyDataSilhouette()
+            sil.SetInputConnection(port)
+            sil.SetCamera(renderer.GetActiveCamera())
+            sil.SetEnableFeatureAngle(0)  # silhouette only; feature edges handled above
+            tube = vtk.vtkTubeFilter()
+            tube.SetInputConnection(sil.GetOutputPort())
+            tube.SetRadius(extent * 0.003)
+            tube.SetNumberOfSides(6)
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(tube.GetOutputPort())
+            mapper.ScalarVisibilityOff()
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0, 0, 0)
+            actor.GetProperty().SetLighting(False)
+            return actor
+
+        def _add_label(renderer, text):
+            """Bold black caption centered at the bottom of one panel's viewport."""
+            actor = vtk.vtkTextActor()
+            actor.SetInput(text.upper())
+            actor.GetTextProperty().SetColor(0, 0, 0)
+            actor.GetTextProperty().SetFontSize(28)
+            actor.GetTextProperty().BoldOn()
+            actor.GetTextProperty().SetJustificationToCentered()
+            actor.GetTextProperty().SetVerticalJustificationToBottom()
+            coord = actor.GetPositionCoordinate()
+            coord.SetCoordinateSystemToNormalizedViewport()
+            coord.SetValue(0.5, 0.03)
+            renderer.AddActor2D(actor)
+
+        def _frame_ortho(renderer, view_dir, view_up):
+            """True orthographic framing: parallel projection along view_dir."""
+            cam = renderer.GetActiveCamera()
+            cam.ParallelProjectionOn()
+            dx, dy, dz = view_dir
+            cam.SetFocalPoint(*center)
+            cam.SetPosition(
+                center[0] - dx * extent * 3,
+                center[1] - dy * extent * 3,
+                center[2] - dz * extent * 3,
+            )
+            cam.SetViewUp(*view_up)
             renderer.ResetCamera()
-            camera.Zoom(zoom)
+            cam.Zoom(0.9)
 
-        # View 1 (left): Isometric
-        ren1 = vtk.vtkRenderer()
-        ren1.AddActor(_make_actor())
-        ren1.SetBackground(1.0, 1.0, 1.0)
-        ren1.SetViewport(0, 0, 1 / 3, 1.0)
-        _setup_camera(ren1, 35, 45)
+        def _frame_iso(renderer, elev, azim):
+            distance = extent * 2.5
+            er, ar = np.radians(elev), np.radians(azim)
+            cam = renderer.GetActiveCamera()
+            cam.SetPosition(
+                center[0] + distance * np.cos(er) * np.cos(ar),
+                center[1] + distance * np.cos(er) * np.sin(ar),
+                center[2] + distance * np.sin(er),
+            )
+            cam.SetFocalPoint(*center)
+            cam.SetViewUp(0, 0, 1)
+            renderer.ResetCamera()
+            cam.Zoom(0.85)
 
-        # View 2 (center): High-angle rear
-        ren2 = vtk.vtkRenderer()
-        ren2.AddActor(_make_actor())
-        ren2.SetBackground(1.0, 1.0, 1.0)
-        ren2.SetViewport(1 / 3, 0, 2 / 3, 1.0)
-        _setup_camera(ren2, 65, 220)
-
-        # View 3 (right): Low front profile
-        ren3 = vtk.vtkRenderer()
-        ren3.AddActor(_make_actor())
-        ren3.SetBackground(1.0, 1.0, 1.0)
-        ren3.SetViewport(2 / 3, 0, 1.0, 1.0)
-        _setup_camera(ren3, 10, 0)
-
-        # Offscreen render window
         render_window = vtk.vtkRenderWindow()
         render_window.SetOffScreenRendering(1)
-        render_window.AddRenderer(ren1)
-        render_window.AddRenderer(ren2)
-        render_window.AddRenderer(ren3)
         render_window.SetSize(size[0], size[1])
+
+        n = 5  # front, side, top, iso, section
+
+        # ── ortho + iso panels (share the full-solid pipeline) ────────────────
+        panels = [
+            ("front", lambda r: _frame_ortho(r, (0, 1, 0), (0, 0, 1))),
+            ("side",  lambda r: _frame_ortho(r, (-1, 0, 0), (0, 0, 1))),
+            ("top",   lambda r: _frame_ortho(r, (0, 0, -1), (0, 1, 0))),
+            ("iso",   lambda r: _frame_iso(r, 35, 45)),
+        ]
+        for i, (name, setup) in enumerate(panels):
+            ren = vtk.vtkRenderer()
+            ren.SetViewport(i / n, 0, (i + 1) / n, 1.0)
+            ren.SetBackground(1.0, 1.0, 1.0)
+            ren.AddActor(_solid_actor(normals.GetOutputPort()))
+            ren.AddActor(_edges_actor(normals.GetOutputPort()))
+            setup(ren)  # position camera (needs actors first for ResetCamera)
+            ren.AddActor(_silhouette_actor(normals.GetOutputPort(), ren))
+            _add_label(ren, name)
+            render_window.AddRenderer(ren)
+
+        # ── section panel: cutaway half-solid ─────────────────────────────────
+        # Plan-driven plane if provided, else auto: center of mass + shortest-axis
+        # normal (plane spans the two longest dims = maximum cross-section).
+        if section and section.get("normal") and section.get("point"):
+            s_normal = [float(c) for c in section["normal"]]
+            s_point = [float(c) for c in section["point"]]
+        else:
+            com = vtk.vtkCenterOfMass()
+            com.SetInputData(normals.GetOutput())
+            com.SetUseScalarsAsWeights(False)
+            com.Update()
+            s_point = list(com.GetCenter())
+            axis = dims.index(min(dims))  # shortest extent → span the two longest
+            s_normal = [0.0, 0.0, 0.0]
+            s_normal[axis] = 1.0
+
+        plane = vtk.vtkPlane()
+        plane.SetOrigin(*s_point)
+        plane.SetNormal(*s_normal)
+        clip = vtk.vtkClipPolyData()
+        clip.SetInputConnection(normals.GetOutputPort())
+        clip.SetClipFunction(plane)  # keeps +normal half; cut face opens toward -normal
+        clip.Update()
+
+        sec = vtk.vtkRenderer()
+        sec.SetViewport(4 / n, 0, 1.0, 1.0)
+        sec.SetBackground(1.0, 1.0, 1.0)
+        sec.AddActor(_solid_actor(clip.GetOutputPort()))
+        sec.AddActor(_edges_actor(clip.GetOutputPort()))
+        nlen = math.sqrt(sum(c * c for c in s_normal)) or 1.0
+        un = [c / nlen for c in s_normal]
+        cam = sec.GetActiveCamera()
+        cam.ParallelProjectionOn()
+        cam.SetFocalPoint(*center)
+        cam.SetPosition(  # -normal side, looking into the open cut face
+            center[0] - un[0] * extent * 3,
+            center[1] - un[1] * extent * 3,
+            center[2] - un[2] * extent * 3,
+        )
+        cam.SetViewUp(*((0, 0, 1) if abs(un[2]) < 0.9 else (0, 1, 0)))
+        sec.ResetCamera()
+        cam.Zoom(0.9)
+        _add_label(sec, "section")
+        render_window.AddRenderer(sec)
+
         render_window.Render()
 
         # Write PNG at supersampled resolution
@@ -238,7 +361,7 @@ def _do_render(stl_path: str, run_id: str) -> dict:
             "png_path": out_png,
             "width": size[0] * scale,
             "height": size[1] * scale,
-            "views": ["iso", "high_rear", "front"],
+            "views": ["front", "side", "top", "iso", "section"],
             "renders": {"composite": out_png},
         }
 

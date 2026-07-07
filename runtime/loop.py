@@ -111,7 +111,8 @@ def _run_geometry(
             return _StageFailure("mesh_repair", collect_feedback_detail("mesh_repair", repair))
         stl_path = repair["repaired_stl_path"]
 
-    art.renders = render_views(stl_path, run_id)
+    section = plan.section.model_dump(mode="json") if plan.section else None
+    art.renders = render_views(stl_path, run_id, section=section)
     if not art.renders.get("success"):
         return _StageFailure("cadquery_execute", str(art.renders.get("error")))
     return None

@@ -252,7 +252,7 @@ def test_ws_plan_ready_runs_real_geometry_pipeline_with_mocked_models(mock_plann
     scenario = mounting_plate_with_four_holes()
     mock_planner.return_value = _plan_ready_output(scenario.plan)
 
-    def fake_render(_stl_path: str, run_id: str) -> dict:
+    def fake_render(_stl_path: str, run_id: str, section: dict | None = None) -> dict:
         from tools.artifacts import run_dir
 
         png_path = run_dir(run_id) / "threeview.png"

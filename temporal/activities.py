@@ -184,7 +184,7 @@ def render_activity(inp: RenderInput) -> RenderOutput:
     from tools.render_views import render_views
 
     with _heartbeating():
-        renders = render_views(inp.stl_path, inp.run_id)
+        renders = render_views(inp.stl_path, inp.run_id, section=inp.section)
     if not renders.get("success"):
         return RenderOutput(
             ok=False, renders=renders,
