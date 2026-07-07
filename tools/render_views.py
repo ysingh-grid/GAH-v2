@@ -315,15 +315,46 @@ def _do_render(stl_path: str, run_id: str, section: dict | None = None) -> dict:
         plane = vtk.vtkPlane()
         plane.SetOrigin(*s_point)
         plane.SetNormal(*s_normal)
-        clip = vtk.vtkClipPolyData()
+        plane_collection = vtk.vtkPlaneCollection()
+        plane_collection.AddItem(plane)
+        # vtkClipPolyData does NOT cap the cut — it just deletes triangles beyond
+        # the plane, leaving an OPEN boundary. Viewed face-on down the cut normal
+        # that reads as "just the exterior again" (MEASURED: a fully-solid part
+        # rendered near-identical to the front view — no visual signal the
+        # interior was solid, not hollow, letting a false pass through). Use
+        # vtkClipClosedSurface instead: it auto-caps the cut with a real face, so
+        # a solid part shows a FILLED cap (no ring/void) and a hollow part shows
+        # the true wall cross-section — the whole point of a section view.
+        clip = vtk.vtkClipClosedSurface()
+        clip.SetClippingPlanes(plane_collection)
         clip.SetInputConnection(normals.GetOutputPort())
-        clip.SetClipFunction(plane)  # keeps +normal half; cut face opens toward -normal
+        clip.SetGenerateFaces(1)
+        clip.SetScalarModeToColors()
+        clip.SetBaseColor(0.80, 0.80, 0.82)   # passthrough body — matches _solid_actor's matte gray
+        clip.SetClipColor(0.90, 0.35, 0.15)   # cap face — distinct warm color, the cut itself
         clip.Update()
+
+        def _section_solid_actor(port):
+            """Like _solid_actor, but scalar-colored so the cap face's distinct
+            color (set above) actually renders instead of being flattened to one
+            uniform actor color."""
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(port)
+            mapper.ScalarVisibilityOn()
+            mapper.SetScalarModeToUseCellData()
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            p = actor.GetProperty()
+            p.SetSpecular(0.0)
+            p.SetAmbient(0.35)
+            p.SetDiffuse(0.65)
+            p.SetInterpolationToPhong()
+            return actor
 
         sec = vtk.vtkRenderer()
         sec.SetViewport(4 / n, 0, 1.0, 1.0)
         sec.SetBackground(1.0, 1.0, 1.0)
-        sec.AddActor(_solid_actor(clip.GetOutputPort()))
+        sec.AddActor(_section_solid_actor(clip.GetOutputPort()))
         sec.AddActor(_edges_actor(clip.GetOutputPort()))
         nlen = math.sqrt(sum(c * c for c in s_normal)) or 1.0
         un = [c / nlen for c in s_normal]
