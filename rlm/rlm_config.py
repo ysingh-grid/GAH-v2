@@ -109,23 +109,27 @@ config.enable_compression_guard = False
 # seed: BEST-EFFORT. OpenAI honors it (+ returns system_fingerprint); Gemini's
 #   OpenAI-compat endpoint MAY ignore it — set it to ATTEMPT repro, do NOT expect
 #   bit-identical runs. Enable by exporting RLM_SEED; unset = normal production.
-# reasoning_effort: THE thinking-budget control for the pro-tier root driver.
-#   gemini-3.1-pro-preview is a THINKING model; with no effort param it defaults to
-#   dynamic/HIGH thinking, and each REPL turn spent 40-173s of hidden reasoning on
-#   only 12-14k prompt tokens (MEASURED: a 20-blade part = ~20min across 3 cold
-#   runs, latency almost entirely thinking, not context). The planner is structured
-#   extraction (pick primitive, fill dims, emit JSON), so "low" caps that budget
-#   without starving the reasoning it genuinely needs. Gemini's OpenAI-compat
-#   endpoint honors reasoning_effort ("low"|"medium"|"high") and maps it to the
-#   thinking budget; it spreads UNTOUCHED through call_llm.ts into every root +
-#   sub-agent call. Override via RLM_REASONING_EFFORT; set to "none"/"" to omit.
+# reasoning_effort: THE thinking-budget control for the pro-tier root driver,
+#   if you want one. gemini-3.1-pro-preview is a THINKING model; with no effort
+#   param it defaults to AUTOMATIC thinking (per google.genai's own ThinkingConfig
+#   docstring: "-1 is AUTOMATIC... default values are model dependent") — the
+#   model picks its own budget per call, uncapped. Tried capping it to "low" then
+#   "medium" (measured: a 20-blade part spent 40-173s of hidden reasoning per REPL
+#   turn on only 12-14k prompt tokens under AUTOMATIC — capping cut latency but
+#   risks starving reasoning a compound-part decomposition genuinely needs).
+#   Left at AUTOMATIC (unset) as the owned default — correctness over latency
+#   until there's a specific reason to trade back. Gemini's OpenAI-compat endpoint
+#   honors reasoning_effort ("low"|"medium"|"high") and maps it to the thinking
+#   budget when set; it spreads UNTOUCHED through call_llm.ts into every root +
+#   sub-agent call. Owned here as a plain code constant, NOT an env var — to
+#   re-enable capping, edit REASONING_EFFORT below directly.
+REASONING_EFFORT: str | None = None  # None = AUTOMATIC (Gemini's own default)
 LLM_KWARGS: dict = {
     "temperature": float(os.environ.get("RLM_TEMPERATURE", "0.1")),
     "top_p": float(os.environ.get("RLM_TOP_P", "0.95")),
 }
-_effort = os.environ.get("RLM_REASONING_EFFORT", "none")
-if _effort not in (None, "", "none"):
-    LLM_KWARGS["reasoning_effort"] = _effort
+if REASONING_EFFORT:
+    LLM_KWARGS["reasoning_effort"] = REASONING_EFFORT
 _seed = os.environ.get("RLM_SEED")
 if _seed not in (None, ""):
     LLM_KWARGS["seed"] = int(_seed)

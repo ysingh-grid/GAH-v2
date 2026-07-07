@@ -48,10 +48,17 @@ def test_plan_with_no_base_step_raises():
         plan_from_dict(bad)
 
 
-def test_plan_with_two_base_steps_raises():
-    bad = {"part_name": "x", "steps": [_box_base("a"), _box_base("b")]}
-    with pytest.raises(ValidationError, match="exactly one 'base'"):
-        plan_from_dict(bad)
+def test_plan_with_two_base_steps_is_coerced_to_one_base_one_union():
+    """A Case-A multi-solid plan (bolt+nut, flange-kit) naturally has N bodies,
+    each reading as its own 'base' — the schema folds every base after the
+    first into 'union' instead of rejecting the plan (see
+    PrimitivePlan._coerce_extra_bases)."""
+    multi = {"part_name": "x", "steps": [_box_base("a"), _box_base("b"), _box_base("c")]}
+    plan = plan_from_dict(multi)
+    assert plan.steps[0].id == "a"
+    assert plan.steps[0].operation is Operation.base
+    assert plan.steps[1].operation is Operation.union
+    assert plan.steps[2].operation is Operation.union
 
 
 def test_base_step_not_first_raises():
@@ -194,7 +201,9 @@ def test_int_param_given_float_is_reported():
 def test_load_library_returns_full_catalog():
     library = schema.load_library()
     assert isinstance(library, dict)
-    assert len(library) == 20
+    assert len(library) == 26
     assert "box" in library
     assert "profile_extrude" in library
+    assert "loft" in library
+    assert "sweep" in library
     assert "revolve" in library

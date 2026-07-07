@@ -13,7 +13,7 @@ from runtime.planner import (
     parse_planner_result,
     run_planner_turn,
 )
-from runtime.schema import PrimitivePlan
+from runtime.schema import Operation, PrimitivePlan
 
 _CUBE_PLAN = {
     "part_name": "cube",
@@ -47,16 +47,19 @@ def test_plan_with_no_steps_raises():
         parse_planner_result({"part_name": "x", "steps": []})
 
 
-def test_plan_with_two_base_steps_raises():
-    bad = {
+def test_plan_with_two_base_steps_is_coerced_to_one_base_one_union():
+    """See runtime.schema.PrimitivePlan._coerce_extra_bases — a multi-solid
+    plan's extra 'base' steps fold into 'union' rather than raising."""
+    multi = {
         "part_name": "x",
         "steps": [
             {"id": "a", "primitive": "box", "operation": "base"},
             {"id": "b", "primitive": "box", "operation": "base"},
         ],
     }
-    with pytest.raises(ValidationError, match="exactly one 'base'"):
-        parse_planner_result(bad)
+    out = parse_planner_result(multi)
+    assert out.steps[0].operation is Operation.base
+    assert out.steps[1].operation is Operation.union
 
 
 def test_extra_fields_forbidden():
