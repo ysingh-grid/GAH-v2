@@ -57,12 +57,14 @@ def build_trace(
     attempts: int,
     failure_category: FailureCategory | None,
     failure_detail: str | None = None,
+    duration_s: float | None = None,
 ) -> dict[str, Any]:
     """Assemble the full trace payload for one attempt (pure, no I/O).
 
     `status` is "success" | "failed". A non-success status MUST carry a
     `failure_category`; this is asserted so a failure can never slip through
-    uncategorised.
+    uncategorised. `duration_s` is the measured workflow wall-clock (seconds)
+    for the "<5 min single-part workflow time" gate (PRD §Decision Metrics).
     """
     if status != "success" and failure_category is None:
         raise ValueError(f"status '{status}' requires a failure_category (PRD §14)")
@@ -82,6 +84,7 @@ def build_trace(
         "outcome": {
             "status": status,
             "attempts": attempts,
+            "duration_s": duration_s,
             "failure_category": failure_category.value if failure_category else None,
             "failure_detail": failure_detail,
         },

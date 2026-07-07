@@ -564,6 +564,35 @@ def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
     return _fn
 
 
+def run_design_sync(prompt: str, run_id: str, backend_url: str):
+    """Synchronous prompt -> LoopResult: plan + full geometry loop, no session/WS.
+
+    The clean entry the eval harness (eval/benchmark.py --mode full) uses to
+    exercise the REAL agent loop (planner writes the code, replanner repairs it)
+    instead of executing a reference snippet. wall_start is taken BEFORE planning
+    so the trace's duration_s reflects the FULL single-part workflow time (the
+    PRD "<5 min" gate), not just the geometry loop. Requires a running backend at
+    backend_url (the planner pull-tools hit its /internal endpoints)."""
+    import os
+    import time
+
+    from runtime.loop import run_geometry_loop
+    from runtime.planner import run_planner_turn
+    from runtime.schema import load_library
+
+    os.environ["DTCM_BACKEND_URL"] = backend_url
+    t0 = time.monotonic()
+    plan = run_planner_turn(prompt, [], backend_url=backend_url)
+    return run_geometry_loop(
+        original_prompt=prompt,
+        initial_plan=plan,
+        planner_fn=_make_planner_fn(backend_url),
+        library=load_library(),
+        run_id=run_id,
+        wall_start=t0,
+    )
+
+
 def run_intake_turn(
     *,
     session: DesignSession,

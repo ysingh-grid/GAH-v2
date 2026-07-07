@@ -149,6 +149,7 @@ def _finalize(
     failure_category: FailureCategory | None,
     failure_detail: str | None,
     message: str,
+    duration_s: float | None = None,
 ) -> LoopResult:
     """Build + write the trace and return the LoopResult."""
     plan_dict = plan_to_dict(plan)
@@ -165,6 +166,7 @@ def _finalize(
         attempts=attempts,
         failure_category=failure_category,
         failure_detail=failure_detail,
+        duration_s=duration_s,
     )
     trace_path = write_trace(trace)
     return LoopResult(
@@ -188,6 +190,7 @@ def run_geometry_loop(
     run_id: str,
     verify: bool = True,
     history: list[dict[str, str]] | None = None,
+    wall_start: float | None = None,
 ) -> LoopResult:
     """Run the bounded plan->verify->repair loop, returning a traced outcome.
 
@@ -204,6 +207,13 @@ def run_geometry_loop(
         A LoopResult with status success | failed, always with a trace written
         and (on failure) a failure_category set.
     """
+    import time
+
+    # Workflow wall-clock for the "<5 min single-part workflow time" gate. The
+    # caller (runner) may inject wall_start = monotonic() taken BEFORE initial
+    # planning so the trace reflects the FULL workflow; otherwise we time the
+    # geometry loop (compile→verify→all replans) alone.
+    t0 = wall_start if wall_start is not None else time.monotonic()
     plan = initial_plan
     art = _Artifacts()
     history = list(history or [])
@@ -243,6 +253,7 @@ def run_geometry_loop(
                 failure_category=None,
                 failure_detail=None,
                 message="verified" if verify else "geometry ok",
+                duration_s=round(time.monotonic() - t0, 2),
             )
 
         is_outer = failure.stage == "visual_mismatch"
@@ -264,6 +275,7 @@ def run_geometry_loop(
                 failure_category=category,
                 failure_detail=failure.detail,
                 message=f"exhausted attempts at stage '{failure.stage}'",
+                duration_s=round(time.monotonic() - t0, 2),
             )
 
         geometry_was_ok = art.renders is not None and bool(art.renders.get("success"))
@@ -310,4 +322,5 @@ def run_geometry_loop(
                 failure_category=category_for_stage("replan_error"),
                 failure_detail=str(exc),
                 message="replanner failed to produce a corrected plan",
+                duration_s=round(time.monotonic() - t0, 2),
             )

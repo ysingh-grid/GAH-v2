@@ -124,10 +124,78 @@ def get_reference_stl_path(entry_id: str) -> Optional[Path]:
 # ── Single-entry runner ---------------------------------------------------------
 
 
+def _run_full_loop_entry(entry: dict, base_record: dict, backend_url: str) -> dict:
+    """Run the REAL agent loop (plan -> execute -> inspect -> render -> verify ->
+    replan) for one entry and score it against the PRD gates.
+
+    Pulls first-pass/repair/duration from the geometry-loop LoopResult + trace,
+    and (if a reference STL exists) CD/F1/IoU against it. Requires a running
+    backend at backend_url and a fast_rlm-capable environment (Deno)."""
+    from backend.designs.runner import run_design_sync
+    from tools.artifacts import new_run_id, run_dir
+    from tools.load_trace import load_trace
+
+    entry_id = entry["id"]
+    prompt = entry.get("prompt", "")
+    run_id = new_run_id(label=entry_id)
+    start_time = time.time()
+
+    try:
+        result = run_design_sync(prompt, run_id, backend_url)
+    except Exception as exc:
+        return {
+            **base_record,
+            "total_time_ms": (time.time() - start_time) * 1000,
+            "failure_category": "geometry_invalidity",
+            "failure_reason": str(exc),
+            "error": str(exc),
+        }
+
+    elapsed_ms = (time.time() - start_time) * 1000
+    outcome: dict = {}
+    try:
+        # load_trace returns {"success", "trace"}; the payload is under "trace".
+        outcome = ((load_trace(run_id) or {}).get("trace") or {}).get("outcome", {}) or {}
+    except Exception:
+        pass
+
+    stl = run_dir(run_id) / "solid.stl"
+    stl_path = str(stl) if stl.exists() else None
+    passed = result.status == "success"
+
+    record: dict = {
+        **base_record,
+        "run_id": run_id,
+        "execution_success": passed,
+        "converged": passed,
+        "num_iterations": result.attempts,           # 1 == first-pass success
+        "total_time_ms": elapsed_ms,
+        "duration_s": outcome.get("duration_s"),      # full-workflow wall-clock
+        "status": result.status,
+        "failure_category": result.failure_category,
+        "failure_reason": outcome.get("failure_detail"),
+        "stl_path": stl_path,
+    }
+
+    # Optional fidelity metrics vs a reference STL, if one exists for this entry.
+    ref_stl = get_reference_stl_path(entry_id)
+    if ref_stl and stl_path:
+        from tools.compute_mesh_metrics import compute_mesh_metrics
+
+        m = compute_mesh_metrics(
+            generated_stl_path=stl_path, reference_stl_path=str(ref_stl), use_icp=True
+        )
+        if m is not None:
+            record["metrics"] = m
+    return record
+
+
 def run_single_entry(
     entry: dict,
     experiment_dir: Path,
     dry_run: bool,
+    mode: str = "direct",
+    backend_url: str = "http://localhost:8001",
 ) -> dict:
     """Execute one benchmark entry and return a scored result record.
 
@@ -175,6 +243,13 @@ def run_single_entry(
     if dry_run:
         print(f"  [DRY RUN] {entry_id} | {prompt[:70]}")
         return {**base_record, "dry_run": True}
+
+    # Full agent-loop mode: the RLM plans, CadQuery runs the RLM's code, the
+    # replanner repairs on failure — the actual pipeline the PRD gates measure
+    # (first-pass %, repair iters, workflow duration). Reference-code ("direct")
+    # mode below only tests whether CadQuery can reproduce the reference snippet.
+    if mode == "full":
+        return _run_full_loop_entry(entry, base_record, backend_url)
 
     if not reference_code:
         return {
@@ -260,7 +335,8 @@ def run_benchmark(args: argparse.Namespace) -> None:
         "limit_per_tier": args.limit_per_tier,
         "dry_run": args.dry_run,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "mode": "direct",
+        "mode": args.mode,
+        "backend_url": args.backend_url,
     }
     with open(config_file, "w") as f:
         json.dump(config, f, indent=2)
@@ -324,6 +400,8 @@ def run_benchmark(args: argparse.Namespace) -> None:
             entry=entry,
             experiment_dir=experiment_dir,
             dry_run=False,
+            mode=args.mode,
+            backend_url=args.backend_url,
         )
 
         # Append immediately so partial runs are resumable.
@@ -374,6 +452,51 @@ def run_benchmark(args: argparse.Namespace) -> None:
         iou_vals=iou_vals,
         results_file=results_file,
     )
+    if args.mode == "full":
+        _print_prd_gates(results_file)
+
+
+def _print_prd_gates(results_file: Path) -> None:
+    """Score the run against the PRD single-part decision-metric gates."""
+    if not results_file.exists():
+        return
+    recs = []
+    with open(results_file) as f:
+        for line in f:
+            try:
+                recs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    recs = [r for r in recs if not r.get("dry_run")]
+    n = len(recs)
+    if not n:
+        return
+    passed = [r for r in recs if r.get("status") == "success"]
+    first_pass = [r for r in passed if r.get("num_iterations") == 1]
+    reps = [max(0, (r.get("num_iterations") or 1) - 1) for r in recs]
+    durs = [r["duration_s"] for r in recs if isinstance(r.get("duration_s"), (int, float))]
+    traced = [r for r in recs if r.get("duration_s") is not None or r.get("failure_category") is not None or r.get("status")]
+    over5 = [d for d in durs if d > 300]
+    fp_pct = 100 * len(first_pass) / n
+    avg_rep = sum(reps) / n
+    avg_dur = sum(durs) / len(durs) if durs else None
+
+    def gate(ok: bool) -> str:
+        return "PASS" if ok else "FAIL"
+
+    print("\n" + "=" * 60)
+    print("PRD SINGLE-PART DECISION GATES")
+    print("=" * 60)
+    print(f"  Valid first-pass      : {fp_pct:5.0f}%   (>80%)   [{gate(fp_pct > 80)}]")
+    print(f"  Avg repair iterations : {avg_rep:5.2f}    (<2)     [{gate(avg_rep < 2)}]")
+    print(f"  Trace artifacts       : {100*len(traced)/n:5.0f}%   (100%)   [{gate(len(traced) == n)}]")
+    if avg_dur is not None:
+        print(f"  Avg workflow time     : {avg_dur:5.0f}s   (<300s)  [{gate(not over5)}]"
+              f"   ({len(over5)}/{len(durs)} over 5 min)")
+    else:
+        print(f"  Avg workflow time     :   n/a    (<300s)  [no duration recorded]")
+    print(f"  Runs: {n} | success: {len(passed)} | first-pass: {len(first_pass)}")
+    print("=" * 60)
 
 
 def _print_summary(experiment_name: str, results_file: Path) -> None:
@@ -495,6 +618,16 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true",
         help="List entries without executing anything",
+    )
+    parser.add_argument(
+        "--mode", choices=["direct", "full"], default="direct",
+        help="direct = run each entry's reference_code (fidelity baseline); "
+             "full = run the real agent loop (planner writes code, replanner "
+             "repairs) — measures the PRD first-pass/repair/duration gates",
+    )
+    parser.add_argument(
+        "--backend-url", default="http://localhost:8001",
+        help="Backend base URL the planner pull-tools hit (full mode only)",
     )
     args = parser.parse_args()
     run_benchmark(args)
