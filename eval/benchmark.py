@@ -124,6 +124,25 @@ def get_reference_stl_path(entry_id: str) -> Optional[Path]:
 # ── Single-entry runner ---------------------------------------------------------
 
 
+def _classify_exception(exc: Exception) -> tuple[str, str]:
+    """Map a thrown exception to a failure category so infra failures (API
+    timeout, rate-limit, connection) are distinguished from geometry failures —
+    they must NOT be counted against the geometry gates."""
+    s = str(exc).lower()
+    if any(k in s for k in ("timeout", "timed out", "deadline exceeded")):
+        return "api_timeout", str(exc)
+    if any(k in s for k in ("rate limit", "429", "quota", "resource exhausted")):
+        return "api_rate_limit", str(exc)
+    if any(k in s for k in ("budget", "max_money", "money spent")):
+        return "budget_exhausted", str(exc)
+    if any(k in s for k in ("connection", "unreachable", "refused", "name resolution",
+                            "502", "503", "504", "bad gateway")):
+        return "infra_error", str(exc)
+    if any(k in s for k in ("did not finish", "function stack", "subagent died", "no final")):
+        return "planner_error", str(exc)
+    return "geometry_invalidity", str(exc)
+
+
 def _run_full_loop_entry(entry: dict, base_record: dict, backend_url: str) -> dict:
     """Run the REAL agent loop (plan -> execute -> inspect -> render -> verify ->
     replan) for one entry and score it against the PRD gates.
@@ -143,11 +162,14 @@ def _run_full_loop_entry(entry: dict, base_record: dict, backend_url: str) -> di
     try:
         result = run_design_sync(prompt, run_id, backend_url)
     except Exception as exc:
+        category, reason = _classify_exception(exc)
         return {
             **base_record,
+            "run_id": run_id,
             "total_time_ms": (time.time() - start_time) * 1000,
-            "failure_category": "geometry_invalidity",
-            "failure_reason": str(exc),
+            "status": "failed",
+            "failure_category": category,
+            "failure_reason": reason,
             "error": str(exc),
         }
 
@@ -396,13 +418,25 @@ def run_benchmark(args: argparse.Namespace) -> None:
             flush=True,
         )
 
-        record = run_single_entry(
-            entry=entry,
-            experiment_dir=experiment_dir,
-            dry_run=False,
-            mode=args.mode,
-            backend_url=args.backend_url,
-        )
+        try:
+            record = run_single_entry(
+                entry=entry,
+                experiment_dir=experiment_dir,
+                dry_run=False,
+                mode=args.mode,
+                backend_url=args.backend_url,
+            )
+        except Exception as exc:
+            # A hard crash in one entry must NEVER stop the sweep — record it as a
+            # harness failure and move on (results are appended so nothing is lost).
+            print(f"  !! harness error on {entry['id']}: {exc}", flush=True)
+            record = {
+                "id": entry["id"], "tier": tier, "prompt": entry.get("prompt", ""),
+                "execution_success": False, "converged": False, "num_iterations": 0,
+                "total_time_ms": 0.0, "status": "failed",
+                "failure_category": "harness_error", "failure_reason": str(exc),
+                "error": str(exc),
+            }
 
         # Append immediately so partial runs are resumable.
         with open(results_file, "a") as f:
@@ -496,6 +530,27 @@ def _print_prd_gates(results_file: Path) -> None:
     else:
         print(f"  Avg workflow time     :   n/a    (<300s)  [no duration recorded]")
     print(f"  Runs: {n} | success: {len(passed)} | first-pass: {len(first_pass)}")
+
+    # Failure breakdown — infra (api_timeout/rate_limit/infra/harness) vs geometry,
+    # so an API-timeout run isn't misread as a geometry-gate miss.
+    fails = [r for r in recs if r.get("status") != "success"]
+    if fails:
+        from collections import Counter
+        by_cat = Counter(r.get("failure_category") or "unknown" for r in fails)
+        infra = {"api_timeout", "api_rate_limit", "infra_error", "harness_error", "budget_exhausted"}
+        print(f"  Failures ({len(fails)}): " + ", ".join(f"{c}={k}" for c, k in by_cat.most_common()))
+        infra_n = sum(k for c, k in by_cat.items() if c in infra)
+        if infra_n:
+            print(f"    ⚠ {infra_n} infra/harness failure(s) — NOT geometry gate misses")
+
+    # Per-tier first-pass (T1/T2/T3 complexity breakdown).
+    tiers = sorted({r.get("tier", "?") for r in recs})
+    if len(tiers) > 1:
+        print("  Per-tier first-pass:")
+        for t in tiers:
+            tr = [r for r in recs if r.get("tier") == t]
+            fp = [r for r in tr if r.get("status") == "success" and r.get("num_iterations") == 1]
+            print(f"    {t}: {100*len(fp)/len(tr):4.0f}%  ({len(fp)}/{len(tr)})")
     print("=" * 60)
 
 
