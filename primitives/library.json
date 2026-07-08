@@ -421,36 +421,65 @@
         "type": "float",
         "description": "Extrusion height along Z",
         "default": 5.0
+      },
+      "smooth": {
+        "type": "boolean",
+        "description": "If true, interpret the profile points as SMOOTH spline control points (true curve) instead of straight polyline segments. Use for curved silhouettes (vase, funnel, blade, round cross-sections). Leave false for genuinely straight-edged sections (rectangles, brackets, gear teeth).",
+        "default": false
       }
     },
-    "template": "cq.Workplane(\"XY\").polyline({profile}).close().extrude({height})"
+    "template": "_profile_wp({profile}, smooth={smooth}).extrude({height})"
   },
   "loft": {
     "name": "loft",
-    "description": "Blend one profile through N stations stacked along Z, each station optionally rotated about Z relative to the base. General-purpose: many stations with increasing rotation gives a continuously twisted blade/vane/propeller — a straight profile_extrude (no twist) and revolve (axisymmetric only) cannot express that. Also covers a simple 2-station taper by using the same profile at both heights (shape stays constant, only rotation varies).",
+    "description": "Blend one profile through N stations stacked along Z, each station optionally rotated about Z relative to the base. General-purpose: many stations with increasing rotation gives a continuously twisted blade/vane/propeller \u2014 a straight profile_extrude (no twist) and revolve (axisymmetric only) cannot express that. Also covers a simple 2-station taper by using the same profile at both heights (shape stays constant, only rotation varies).",
     "parameters": {
       "profile": {
         "type": "profile",
         "description": "Ordered list of [x, y] points (mm) forming the closed cross-section used at EVERY station; do not repeat the first point",
-        "default": [[-10.0, 0.0], [10.0, 0.0], [0.0, 10.0]]
+        "default": [
+          [
+            -10.0,
+            0.0
+          ],
+          [
+            10.0,
+            0.0
+          ],
+          [
+            0.0,
+            10.0
+          ]
+        ]
       },
       "heights": {
         "type": "list",
-        "description": "Z height (mm) of each station, strictly ascending, first value usually 0. Same length as rotations — heights[i] pairs with rotations[i].",
-        "default": [0.0, 20.0]
+        "description": "Z height (mm) of each station, strictly ascending, first value usually 0. Same length as rotations \u2014 heights[i] pairs with rotations[i].",
+        "default": [
+          0.0,
+          20.0
+        ]
       },
       "rotations": {
         "type": "list",
-        "description": "Rotation (degrees, about Z) applied to the profile at each station before blending, same length as heights. Increasing values here are what produces a continuous twist — e.g. [0, 20, 45] over 3 stations twists 45 degrees total by the tip.",
-        "default": [0.0, 45.0]
+        "description": "Rotation (degrees, about Z) applied to the profile at each station before blending, same length as heights. Increasing values here are what produces a continuous twist \u2014 e.g. [0, 20, 45] over 3 stations twists 45 degrees total by the tip.",
+        "default": [
+          0.0,
+          45.0
+        ]
       },
       "ruled": {
         "type": "bool",
         "description": "False (default) = smooth blended loft; True = straight-line (ruled) surfaces between stations",
         "default": false
+      },
+      "smooth": {
+        "type": "boolean",
+        "description": "If true, interpret the profile points as SMOOTH spline control points (true curve) instead of straight polyline segments. Use for curved silhouettes (vase, funnel, blade, round cross-sections). Leave false for genuinely straight-edged sections (rectangles, brackets, gear teeth).",
+        "default": false
       }
     },
-    "template": "_loft({profile}, {heights}, {rotations}, ruled={ruled})"
+    "template": "_loft({profile}, {heights}, {rotations}, ruled={ruled}, smooth={smooth})"
   },
   "sweep": {
     "name": "sweep",
@@ -459,29 +488,84 @@
       "profile": {
         "type": "profile",
         "description": "Ordered list of [x, y] points (mm) forming the closed cross-section, drawn on the XY plane at the path's start; do not repeat the first point",
-        "default": [[-3.0, -3.0], [3.0, -3.0], [3.0, 3.0], [-3.0, 3.0]]
+        "default": [
+          [
+            -3.0,
+            -3.0
+          ],
+          [
+            3.0,
+            -3.0
+          ],
+          [
+            3.0,
+            3.0
+          ],
+          [
+            -3.0,
+            3.0
+          ]
+        ]
       },
       "path": {
         "type": "path3d",
         "description": "Ordered list of [x, y, z] points (mm) the profile is swept along, spline-interpolated; first point should be [0,0,0] (the profile's own plane)",
-        "default": [[0.0, 0.0, 0.0], [0.0, 20.0, 10.0], [0.0, 20.0, 30.0]]
+        "default": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            20.0,
+            10.0
+          ],
+          [
+            0.0,
+            20.0,
+            30.0
+          ]
+        ]
       },
       "multisection": {
         "type": "bool",
-        "description": "False (default) = one fixed profile swept along the path; True = treat profile as the first of multiple sections (advanced — leave False unless blending profiles along the path)",
+        "description": "False (default) = one fixed profile swept along the path; True = treat profile as the first of multiple sections (advanced \u2014 leave False unless blending profiles along the path)",
+        "default": false
+      },
+      "smooth": {
+        "type": "boolean",
+        "description": "If true, interpret the profile points as SMOOTH spline control points (true curve) instead of straight polyline segments. Use for curved silhouettes (vase, funnel, blade, round cross-sections). Leave false for genuinely straight-edged sections (rectangles, brackets, gear teeth).",
         "default": false
       }
     },
-    "template": "_sweep({profile}, {path}, multisection={multisection})"
+    "template": "_sweep({profile}, {path}, multisection={multisection}, smooth={smooth})"
   },
   "taper_extrude": {
     "name": "taper_extrude",
-    "description": "Extrude a closed 2D polygon profile along +Z with a draft/taper angle, so the cross-section shrinks (positive taper) or grows (negative) as it rises. Use for drafted bosses, funnels with straight walls, truncated pyramid-like prisms of ANY cross-section — a plain profile_extrude has no taper, and cone/pyramid only offer fixed circular/rectangular sections.",
+    "description": "Extrude a closed 2D polygon profile along +Z with a draft/taper angle, so the cross-section shrinks (positive taper) or grows (negative) as it rises. Use for drafted bosses, funnels with straight walls, truncated pyramid-like prisms of ANY cross-section \u2014 a plain profile_extrude has no taper, and cone/pyramid only offer fixed circular/rectangular sections.",
     "parameters": {
       "profile": {
         "type": "profile",
         "description": "Ordered list of [x, y] points (mm) forming the closed cross-section at the base; do not repeat the first point",
-        "default": [[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]]
+        "default": [
+          [
+            -10.0,
+            -10.0
+          ],
+          [
+            10.0,
+            -10.0
+          ],
+          [
+            10.0,
+            10.0
+          ],
+          [
+            -10.0,
+            10.0
+          ]
+        ]
       },
       "height": {
         "type": "float",
@@ -498,17 +582,67 @@
   },
   "loft_between": {
     "name": "loft_between",
-    "description": "Loft a smooth solid between two DIFFERENT closed 2D profiles: profile_bottom at Z=0 blending into profile_top at Z=height (optionally rotated about Z). Use for square-to-round adapters, funnels, nozzle transitions, ergonomic grips — any shape-to-shape morph. Distinct from loft (one profile through many twisted stations) and taper_extrude (same shape, straight drafted walls).",
+    "description": "Loft a smooth solid between two DIFFERENT closed 2D profiles: profile_bottom at Z=0 blending into profile_top at Z=height (optionally rotated about Z). Use for square-to-round adapters, funnels, nozzle transitions, ergonomic grips \u2014 any shape-to-shape morph. Distinct from loft (one profile through many twisted stations) and taper_extrude (same shape, straight drafted walls).",
     "parameters": {
       "profile_bottom": {
         "type": "profile",
         "description": "Ordered list of [x, y] points (mm) for the closed cross-section at Z=0; do not repeat the first point",
-        "default": [[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]]
+        "default": [
+          [
+            -10.0,
+            -10.0
+          ],
+          [
+            10.0,
+            -10.0
+          ],
+          [
+            10.0,
+            10.0
+          ],
+          [
+            -10.0,
+            10.0
+          ]
+        ]
       },
       "profile_top": {
         "type": "profile",
         "description": "Ordered list of [x, y] points (mm) for the closed cross-section at Z=height; approximate circles with a 16-24 point polygon",
-        "default": [[6.0, 0.0], [4.24, 4.24], [0.0, 6.0], [-4.24, 4.24], [-6.0, 0.0], [-4.24, -4.24], [0.0, -6.0], [4.24, -4.24]]
+        "default": [
+          [
+            6.0,
+            0.0
+          ],
+          [
+            4.24,
+            4.24
+          ],
+          [
+            0.0,
+            6.0
+          ],
+          [
+            -4.24,
+            4.24
+          ],
+          [
+            -6.0,
+            0.0
+          ],
+          [
+            -4.24,
+            -4.24
+          ],
+          [
+            0.0,
+            -6.0
+          ],
+          [
+            4.24,
+            -4.24
+          ]
+        ]
       },
       "height": {
         "type": "float",
@@ -517,15 +651,25 @@
       },
       "rotation_deg": {
         "type": "float",
-        "description": "Optional rotation (degrees about Z) of the top profile relative to the bottom — adds a twist to the transition",
+        "description": "Optional rotation (degrees about Z) of the top profile relative to the bottom \u2014 adds a twist to the transition",
         "default": 0.0
+      },
+      "smooth_bottom": {
+        "type": "boolean",
+        "description": "Smooth-spline the BOTTOM profile (true curve). False keeps it a straight polygon.",
+        "default": false
+      },
+      "smooth_top": {
+        "type": "boolean",
+        "description": "Smooth-spline the TOP profile (true curve). E.g. the round end of a rect-to-round adapter.",
+        "default": false
       }
     },
-    "template": "_loft_between({profile_bottom}, {profile_top}, {height}, rotation_deg={rotation_deg})"
+    "template": "_loft_between({profile_bottom}, {profile_top}, {height}, rotation_deg={rotation_deg}, smooth_bottom={smooth_bottom}, smooth_top={smooth_top})"
   },
   "tube": {
     "name": "tube",
-    "description": "Hollow circular tube swept along a 3D path: pipes, elbows, ducts, conduits, handles, roll-cage bars. The path is spline-interpolated through the given points; the wall is formed by cutting an inner sweep from an outer one (the safe idiom — sweeping a pre-cut ring is degenerate). For a SOLID bar along a path use sweep instead.",
+    "description": "Hollow circular tube swept along a 3D path: pipes, elbows, ducts, conduits, handles, roll-cage bars. The path is spline-interpolated through the given points; the wall is formed by cutting an inner sweep from an outer one (the safe idiom \u2014 sweeping a pre-cut ring is degenerate). For a SOLID bar along a path use sweep instead.",
     "parameters": {
       "radius": {
         "type": "float",
@@ -540,7 +684,23 @@
       "path": {
         "type": "path3d",
         "description": "Ordered list of [x, y, z] points (mm) the tube's centerline follows, spline-interpolated; first point should be [0,0,0]",
-        "default": [[0.0, 0.0, 0.0], [0.0, 20.0, 10.0], [0.0, 40.0, 40.0]]
+        "default": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            20.0,
+            10.0
+          ],
+          [
+            0.0,
+            40.0,
+            40.0
+          ]
+        ]
       }
     },
     "template": "_tube({radius}, {wall}, {path})"
@@ -602,8 +762,13 @@
         "type": "float",
         "description": "Sweep angle in degrees (360 for a full solid of revolution)",
         "default": 360.0
+      },
+      "smooth": {
+        "type": "boolean",
+        "description": "If true, interpret the profile points as SMOOTH spline control points (true curve) instead of straight polyline segments. Use for curved silhouettes (vase, funnel, blade, round cross-sections). Leave false for genuinely straight-edged sections (rectangles, brackets, gear teeth).",
+        "default": false
       }
     },
-    "template": "cq.Workplane(\"XY\").polyline({profile}).close().revolve({angle}, (0, 0, 0), (0, 1, 0))"
+    "template": "_profile_wp({profile}, smooth={smooth}).revolve({angle}, (0, 0, 0), (0, 1, 0))"
   }
 }

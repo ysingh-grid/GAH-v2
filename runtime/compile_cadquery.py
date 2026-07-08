@@ -55,7 +55,36 @@ def _linear(solid, count, spacing):
     return out
 
 
-def _loft(profile, heights, rotations, ruled=False):
+def _profile_wp(profile, smooth=False, plane="XY"):
+    """A closed 2D profile on a Workplane: straight polyline or a smooth spline.
+
+    smooth=True builds the outline as a spline THROUGH the points (a true curve),
+    so an extrude/revolve/taper of a curved silhouette is a smooth surface, not a
+    run of flat facets. smooth=False keeps the exact polyline — correct for
+    genuinely straight-edged sections (rectangles, brackets, gear teeth). The
+    model lists the SAME control points either way; only the interpolation
+    between them changes.
+    """
+    pts = [tuple(p) for p in profile]
+    wp = cq.Workplane(plane)
+    return (wp.spline(pts) if smooth else wp.polyline(pts)).close()
+
+
+def _sketch_profile(profile, smooth=False):
+    """A closed 2D Sketch FACE: straight polygon or a smooth spline through points.
+
+    The Sketch equivalent of _profile_wp, used by the loft builders (loft needs
+    placeable Sketch faces, not Workplane wires). smooth=True fits a spline and
+    assembles it into a face — this is how a vase silhouette / round adapter end
+    / turbine section stops being a faceted polygon.
+    """
+    pts = [tuple(p) for p in profile]
+    if smooth:
+        return cq.Sketch().spline(pts).close().assemble()
+    return cq.Sketch().polygon(pts)
+
+
+def _loft(profile, heights, rotations, ruled=False, smooth=False):
     """Blend one profile through N stations stacked along Z, each rotated.
 
     `heights[i]`/`rotations[i]` pair up: station i sits at Z=heights[i],
@@ -65,11 +94,14 @@ def _loft(profile, heights, rotations, ruled=False):
     only) cannot express that. (Flat parallel lists rather than a list of
     per-station dicts because PrimitiveStep.parameters — runtime/schema.py
     ParamValue — only accepts scalars/flat-lists/2D-lists, not nested objects.)
+
+    smooth=True interprets `profile` as spline control points (curved section);
+    smooth=False (default) keeps it a straight-edged polygon.
     """
     pts = [tuple(p) for p in profile]
     sketches = []
     for z, rot in zip(heights, rotations):
-        sk = cq.Sketch().polygon(pts)
+        sk = _sketch_profile(pts, smooth)
         sk = sk.moved(cq.Location(z=z, rz=rot))
         sketches.append(sk)
     return cq.Workplane().placeSketch(*sketches).loft(ruled=ruled)
@@ -94,7 +126,7 @@ def _path_wire_and_plane(path):
     return wire, plane
 
 
-def _sweep(profile, path, multisection=False):
+def _sweep(profile, path, multisection=False, smooth=False):
     """Sweep a 2D profile along a 3D path (spline through `path`'s points).
 
     `path` is a list of [x,y,z] GLOBAL points; the profile is drawn on a plane
@@ -102,14 +134,14 @@ def _sweep(profile, path, multisection=False):
     isFrenet keeps the section oriented to the path as it bends. Complements
     _loft: sweep varies POSITION along a path with a fixed profile, loft
     varies PROFILE/rotation across fixed Z stations.
+
+    smooth=True treats `profile` as spline control points (curved section).
     """
     path_wire, plane = _path_wire_and_plane(path)
-    return (
-        cq.Workplane(plane)
-        .polyline([tuple(p) for p in profile])
-        .close()
-        .sweep(path_wire, multisection=multisection, isFrenet=True)
-    )
+    pts = [tuple(p) for p in profile]
+    wp = cq.Workplane(plane)
+    wp = (wp.spline(pts) if smooth else wp.polyline(pts)).close()
+    return wp.sweep(path_wire, multisection=multisection, isFrenet=True)
 
 
 def _tube(radius, wall, path):
@@ -139,7 +171,8 @@ def _helix_sweep(coil_radius, pitch, height, wire_radius):
     )
 
 
-def _loft_between(profile_bottom, profile_top, height, rotation_deg=0.0):
+def _loft_between(profile_bottom, profile_top, height, rotation_deg=0.0,
+                  smooth_bottom=False, smooth_top=False):
     """Loft between two DIFFERENT profiles: funnels, adapters, transitions.
 
     profile_bottom sits at Z=0, profile_top at Z=height (optionally rotated
@@ -148,9 +181,13 @@ def _loft_between(profile_bottom, profile_top, height, rotation_deg=0.0):
     there because ParamValue caps nesting at a 2D list (a list of N profiles
     would be 3 deep), so exactly-two named profile params is the schema-legal
     encoding of shape-to-shape transitions.
+
+    smooth_bottom / smooth_top are PER-END: a rectangular-to-round adapter keeps
+    the rectangle straight (smooth_bottom=False) and makes the round end a true
+    circle-ish spline (smooth_top=True), instead of a faceted polygon.
     """
-    sk1 = cq.Sketch().polygon([tuple(p) for p in profile_bottom])
-    sk2 = cq.Sketch().polygon([tuple(p) for p in profile_top])
+    sk1 = _sketch_profile(profile_bottom, smooth_bottom)
+    sk2 = _sketch_profile(profile_top, smooth_top)
     sk2 = sk2.moved(cq.Location(z=height, rz=rotation_deg))
     return cq.Workplane().placeSketch(sk1, sk2).loft()
 '''
