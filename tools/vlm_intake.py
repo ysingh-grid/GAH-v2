@@ -21,7 +21,9 @@ Return only JSON with this shape:
   "mode": "image" | "text",
   "summary": "short description of the intended part or scene",
   "observations": ["visible or implied facts", "..."],
-  "missing_facts": ["facts that still need clarification", "..."]
+  "missing_facts": ["facts that still need clarification", "..."],
+  "object_type": "the everyday name of the target object (e.g. 'foldable laptop stand')",
+  "required_features": ["short feature phrases the object MUST visibly have", "..."]
 }
 
 Rules:
@@ -30,6 +32,14 @@ Rules:
 - If no image is provided, mentally visualize the text-only request and
   summarize the intended geometry the same way.
 - Keep the summary short, concrete, and geometry-oriented.
+- required_features is a CHECKLIST of the load-bearing, visible features that
+  define this object — the things a person would notice are missing. Each entry
+  MUST embed a rough proportion or spatial relation, not just a name, e.g.
+  "two tall side frames (vertical walls ~40-60% of the base's long dimension)",
+  "a hinge pin spanning both frames", "ventilation slots cut fully through the
+  base". Prefer 3-8 entries; omit trivial finishes (a single fillet is not a
+  required feature). For a plain single primitive, object_type is the shape and
+  required_features may be a single entry or empty.
 - Do not add any prose outside the JSON object.
 """
 
@@ -84,6 +94,14 @@ class VlmIntakeSummary(BaseModel):
     summary: str
     observations: list[str] = Field(default_factory=list)
     missing_facts: list[str] = Field(default_factory=list)
+    # Required-feature checklist — the concrete contract the planner must satisfy
+    # and the verifier checks against. object_type is the everyday name of the
+    # target ("foldable laptop stand"); required_features are short phrases that
+    # each embed a rough proportion/relation ("two tall side frames ~40-60% of
+    # base height"). Defaulted so older summaries (and fail-open fallbacks that
+    # omit them) still validate.
+    object_type: str = ""
+    required_features: list[str] = Field(default_factory=list)
 
 
 def _call_gemini(
@@ -145,7 +163,7 @@ def summarize_design_request(
         system_instruction=INTAKE_INSTRUCTION,
         parts=parts,
         model_env_var="VLM_INTAKE_MODEL",
-        default_model="gemini-3.1-pro-preview",
+        default_model="gemini-2.5-pro",
         max_output_tokens=4096,
     )
     return VlmIntakeSummary.model_validate(_read_json(text)).model_dump()
@@ -183,7 +201,7 @@ def decide_next_intake_move(
         system_instruction=INTAKE_CHAT_INSTRUCTION,
         parts=[types.Part.from_text(text=text)],
         model_env_var="INTAKE_CHAT_MODEL",
-        default_model="gemini-3.5-flash",
+        default_model="gemini-2.5-flash",
         max_output_tokens=2048,
     )
     return IntakeChatMove.model_validate(_read_json(reply)).model_dump()
@@ -229,7 +247,7 @@ def classify_post_design_message(user_text: str, plan_summary: str) -> str:
             system_instruction=CLASSIFY_INSTRUCTION,
             parts=[types.Part.from_text(text=text)],
             model_env_var="INTAKE_CHAT_MODEL",
-            default_model="gemini-3.5-flash",
+            default_model="gemini-2.5-flash",
             max_output_tokens=256,
         )
         return PostDesignClassification.model_validate(_read_json(reply)).kind
@@ -267,13 +285,15 @@ def answer_model_question(
     )
     parts = [types.Part.from_text(text=text)]
     if render_png and Path(render_png).exists():
-        parts.append(types.Part.from_bytes(data=Path(render_png).read_bytes(), mime_type="image/png"))
+        parts.append(
+            types.Part.from_bytes(data=Path(render_png).read_bytes(), mime_type="image/png")
+        )
 
     reply = _call_gemini(
         system_instruction=ANSWER_INSTRUCTION,
         parts=parts,
         model_env_var="INTAKE_CHAT_MODEL",
-        default_model="gemini-3.5-flash",
+        default_model="gemini-2.5-flash",
         max_output_tokens=1024,
         json_response=False,
     )
