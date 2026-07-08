@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import patch
 
 import pytest
 
@@ -52,6 +51,15 @@ class TestDesignInput:
         assert inp.original_prompt == "cube"
         assert inp.plan_dict == {"steps": [1, 2]}
         assert inp.backend_url == "http://test:9999"
+
+    def test_empty_plan_default_and_planner_history(self):
+        # empty plan_dict = "plan inside the workflow" (plan_activity runs first)
+        inp = DesignInput(original_prompt="cube", run_id="r4")
+        assert inp.plan_dict == {}
+        assert inp.planner_history == []
+        ph = [{"role": "user", "content": "make a cube"}]
+        inp2 = DesignInput(original_prompt="cube", run_id="r5", planner_history=ph)
+        assert inp2.planner_history == ph
 
 
 class TestDesignResult:
@@ -218,6 +226,47 @@ class TestRenderActivity:
         out = render_activity(RenderInput(stl_path="/o/solid.stl", run_id="r"))
         assert out.ok is False
         assert out.failure_stage == "cadquery_execute"
+
+
+# ── plan_activity (planning moved INTO the workflow) ─────────────────────────
+
+
+class TestPlanActivity:
+    """plan_activity runs the initial planner on the worker (was in-process)."""
+
+    def test_success_returns_plan_dict(self, monkeypatch):
+        from runtime.schema import PrimitivePlan
+        from temporal import activities as act
+        from temporal.shared import PlanInput
+
+        cube = PrimitivePlan.model_validate(
+            {
+                "part_name": "cube", "units": "mm",
+                "steps": [{"id": "b", "primitive": "box", "operation": "base",
+                           "parameters": {"length": 10, "width": 10, "height": 10}}],
+            }
+        )
+        monkeypatch.setattr(
+            act, "run_planner_turn", lambda prompt, history, backend_url: cube
+        )
+        out = act.plan_activity(
+            PlanInput(original_prompt="a cube", history=[], backend_url="http://b:8001")
+        )
+        assert out.ok is True
+        assert out.plan_dict["part_name"] == "cube"
+        assert out.error == ""
+
+    def test_failure_never_raises(self, monkeypatch):
+        from temporal import activities as act
+        from temporal.shared import PlanInput
+
+        def _boom(prompt, history, backend_url):
+            raise RuntimeError("budget exhausted")
+
+        monkeypatch.setattr(act, "run_planner_turn", _boom)
+        out = act.plan_activity(PlanInput(original_prompt="x"))
+        assert out.ok is False
+        assert "budget exhausted" in out.error
 
 
 # ── docker-compose temporal services ─────────────────────────────────────────

@@ -20,6 +20,7 @@ from temporal.activities import (
     execute_activity,
     generate_activity,
     inspect_activity,
+    plan_activity,
     record_trace_activity,
     render_activity,
     repair_activity,
@@ -37,6 +38,7 @@ log = logging.getLogger(__name__)
 
 import concurrent.futures
 
+
 async def main() -> None:
     client = await get_client()
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as activity_executor:
@@ -45,6 +47,8 @@ async def main() -> None:
             task_queue=_TASK_QUEUE,
             workflows=[DesignWorkflow],
             activities=[
+                # Planning is now the workflow's FIRST activity (was in-process).
+                plan_activity,
                 # Per-step generate activities (split): one timeline event each.
                 compile_activity,
                 execute_activity,
@@ -59,7 +63,11 @@ async def main() -> None:
             ],
             activity_executor=activity_executor,
         ):
-            log.info("Worker running on task queue '%s'. Ctrl-C to stop.", _TASK_QUEUE)
+            log.info(
+                "Worker running on task queue '%s' (BACKEND_URL=%r). Ctrl-C to stop.",
+                _TASK_QUEUE,
+                os.environ.get("BACKEND_URL", ""),
+            )
             await asyncio.Future()  # run forever until cancelled
 
 

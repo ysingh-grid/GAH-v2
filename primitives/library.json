@@ -458,5 +458,64 @@
       }
     },
     "template": "cq.Workplane(\"XY\").polyline({profile}).close().revolve({angle}, (0, 0, 0), (0, 1, 0))"
+  },
+  "rect_to_round": {
+    "name": "rect_to_round",
+    "description": "A lofted transition from a rectangular base to a round top (duct/funnel/adapter). Base centered on XY at Z=0, circular top at Z=height.",
+    "parameters": {
+      "base_length": {
+        "type": "float",
+        "description": "Rectangular base size along X",
+        "default": 40.0
+      },
+      "base_width": {
+        "type": "float",
+        "description": "Rectangular base size along Y",
+        "default": 30.0
+      },
+      "top_diameter": {
+        "type": "float",
+        "description": "Diameter of the circular top",
+        "default": 20.0
+      },
+      "height": {
+        "type": "float",
+        "description": "Transition height along Z",
+        "default": 30.0
+      }
+    },
+    "template": "cq.Workplane(\"XY\").rect({base_length}, {base_width}).workplane(offset={height}).circle({top_diameter}/2.0).loft(combine=True)"
+  },
+  "rect_to_rect": {
+    "name": "rect_to_rect",
+    "description": "A lofted rectangular frustum: rectangular base to a different rectangular top. Base centered on XY at Z=0, top at Z=height.",
+    "parameters": {
+      "base_length": {
+        "type": "float",
+        "description": "Base size along X",
+        "default": 40.0
+      },
+      "base_width": {
+        "type": "float",
+        "description": "Base size along Y",
+        "default": 30.0
+      },
+      "top_length": {
+        "type": "float",
+        "description": "Top size along X",
+        "default": 20.0
+      },
+      "top_width": {
+        "type": "float",
+        "description": "Top size along Y",
+        "default": 20.0
+      },
+      "height": {
+        "type": "float",
+        "description": "Transition height along Z",
+        "default": 30.0
+      }
+    },
+    "template": "cq.Workplane(\"XY\").rect({base_length}, {base_width}).workplane(offset={height}).rect({top_length}, {top_width}).loft(combine=True)"
   }
 }

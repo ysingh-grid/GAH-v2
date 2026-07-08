@@ -17,7 +17,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.schema import FinishOp, FinishStep, Operation, Pattern, PatternType, PrimitivePlan, PrimitiveStep
+from runtime.schema import (
+    FinishOp,
+    FinishStep,
+    Operation,
+    Pattern,
+    PatternType,
+    PrimitivePlan,
+    PrimitiveStep,
+    validate_plan_against_library,
+)
 
 # Helpers injected once at the top of every generated script. Keeping them in
 # the generated code (rather than emitting inline copies per step) keeps the
@@ -163,7 +172,11 @@ def _compile_finish_step_cq(step: FinishStep) -> list[str]:
 
     elif step.op is FinishOp.cbore:
         # value = [clr_dia, bore_dia, bore_depth]
-        v = list(step.value) if isinstance(step.value, list) else [step.value, step.value * 1.5, 3.0]
+        v = (
+            list(step.value)
+            if isinstance(step.value, list)
+            else [step.value, step.value * 1.5, 3.0]
+        )
         clr_d, bore_d, bore_dep = float(v[0]), float(v[1]), float(v[2])
         face_sel = step.face or ">Z"
         if step.positions:
@@ -180,7 +193,11 @@ def _compile_finish_step_cq(step: FinishStep) -> list[str]:
 
     elif step.op is FinishOp.csk:
         # value = [clr_dia, csk_dia, csk_angle_deg]
-        v = list(step.value) if isinstance(step.value, list) else [step.value, step.value * 1.8, 82.0]
+        v = (
+            list(step.value)
+            if isinstance(step.value, list)
+            else [step.value, step.value * 1.8, 82.0]
+        )
         clr_d, csk_d, angle = float(v[0]), float(v[1]), float(v[2])
         face_sel = step.face or ">Z"
         if step.positions:
@@ -219,6 +236,16 @@ def compile_plan_to_cadquery(plan: PrimitivePlan, library: dict[str, Any]) -> st
         CompileError: if a step references a primitive missing from the library,
             a primitive lacks a template, or an unsupported operation is used.
     """
+    # Enforce semantic validation FIRST: unknown/misnamed params (e.g. giving
+    # `pyramid` a `base_length` it doesn't have) would otherwise be silently
+    # ignored by _fill_template and fall back to defaults, producing degenerate
+    # geometry (a 10x10 spike) that fails downstream as "disconnected components".
+    # Raise a primitive_gap CompileError so the loop/preview/temporal all route a
+    # clear, actionable message back to the planner instead of building garbage.
+    errors = validate_plan_against_library(plan, library)
+    if errors:
+        raise CompileError("primitive_gap: " + "; ".join(errors))
+
     body: list[str] = [_PREAMBLE, f"# part: {plan.part_name} (units: {plan.units})"]
     for index, step in enumerate(plan.steps):
         if isinstance(step, FinishStep):

@@ -77,6 +77,12 @@ Each step in a plan must contain:
 > plan, call `preview_plan(plan)` and read `num_components` (should be 1 for a
 > connected part) and each feature's `pct_of_overall_bbox` — resize any feature
 > that is too small to read, then FINAL. Skip this for a lone primitive.
+>
+> If a feature's realized `size_mm` is far SMALLER than you intended, you almost
+> certainly used the WRONG primitive or wrong parameter NAMES (a param the
+> primitive does not have is rejected/ignored) — fix the primitive or the param
+> names, do not just enlarge. For a rectangle→round transition use `rect_to_round`;
+> for a rectangular frustum use `rect_to_rect` (NOT `pyramid`, which tapers to a point).
 
 ---
 
