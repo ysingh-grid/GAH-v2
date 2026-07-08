@@ -217,7 +217,7 @@ async def run_chat_turn(
         # there is NO in-process planner blocking before Temporal (that was the long
         # dead gap after the last answer). Pass no plan + the planner history; the
         # workflow's plan_activity produces the plan.
-        await send({"type": "generating", "stage": "planning"})
+        await send({"type": "generating", "stage": "planning", "run_id": run_id})
         await _run_via_temporal(
             session, None, run_id, send,
             backend_url=backend_url, history=replan_base_history,
@@ -236,7 +236,7 @@ async def run_chat_turn(
             await send({"type": "error", "message": str(exc)})
             return
         session.last_plan = plan_to_dict(plan)
-        await send({"type": "generating", "stage": "cadquery_compile"})
+        await send({"type": "generating", "stage": "cadquery_compile", "run_id": run_id})
         await _run_in_process(
             session,
             plan,
