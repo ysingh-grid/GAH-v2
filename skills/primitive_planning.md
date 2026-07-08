@@ -34,34 +34,6 @@ primitive library. This is **Phase 1 / Steps 2–3** of the RLM pipeline.
   engineering defaults if the prompt does not specify them.
 - All units are **mm**. Never mix units.
 
-## MANDATORY: Hollow / Flow-Through Parts
-
-If the prompt describes (or implies) a part that fluid, air, cable, or another
-part **passes through** — adapter, duct, pipe, tube, nozzle, manifold, funnel,
-sleeve, coupling, bushing, transition, hose fitting, vent — the part **MUST be
-hollow with an open passage**, not a solid block filling the same envelope.
-
-This is easy to miss: a solid block shaped exactly like the part's outer
-envelope renders identically to the correct hollow part from every EXTERIOR
-view, and passes `is_watertight`/`open_holes==0` mesh checks cleanly (those
-checks assert "no leaks," not "matches intent"). It is a real, silent defect —
-verified case: a "rectangular-to-round duct transition adapter" (flange +
-lofted transition + neck) was planned as three solid unioned primitives with
-no hollow feature at all; it passed every check and looked correct from
-outside, but was a solid plug with zero open passage.
-
-**Fix — always include one of:**
-- A `shell` FinishOp on the accumulated body (wall thickness, opens the
-  end face(s) so fluid/air can pass) — the usual choice for a lofted/union body.
-- A hollow primitive for the relevant sections (`tube`, `hollow_cylinder`)
-  instead of their solid counterparts (`sweep`, `cylinder`).
-- A through-cut: subtract a smaller matching solid (scaled-down profile/loft/
-  tube) along the same axis/path as the outer envelope.
-
-Before finalizing any adapter/duct/pipe/tube/nozzle/manifold/funnel plan, ask:
-"does this have an open passage through it, or did I just build a solid shape
-that LOOKS right from outside?" If in doubt, it needs a `shell` or through-cut.
-
 ## CSG Operation Keys
 
 Each step in a plan must contain:
