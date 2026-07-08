@@ -8,46 +8,104 @@ import re
 from pathlib import Path
 from typing import Any
 
+JUDGE_INSTRUCTION = """You are a precise vision-language verifier for generated CAD geometry.
 
-JUDGE_INSTRUCTION = """You are a vision-language judge for generated CAD.
+WHAT YOU RECEIVE
+1. The user's request (natural language).
+2. A required-feature checklist — the concrete, visible features the object MUST
+   have. May be empty (then judge against the request alone).
+3. Deterministic geometry metrics measured from the ACTUAL solid (bounding box in
+   mm, volume, component count, watertight). These are ground truth about scale —
+   trust them over your eyeballing of the render.
+4. A rendered 3-view PNG (isometric, high rear, low front) of the geometry.
+5. (Optional) the specific fix the last replan attempted.
 
-You receive only:
-1. The user's geometry request.
-2. A rendered PNG of the generated geometry.
+HOW TO JUDGE — in this order
+1. GROSS SHAPE: does the render read as the requested object type at all? If it
+   is clearly the wrong kind of thing, that alone is a fail (failure_type
+   "wrong_shape").
+2. PER FEATURE: for EACH required-feature checklist item, decide present / missing
+   / wrong. A feature that is technically in the geometry but too small, thin, or
+   shallow to actually read counts as MISSING or WRONG, not present — use the
+   metrics to sanity-check scale (e.g. a "tall side frame" that is only a few
+   percent of the bounding-box height is effectively missing).
+3. PROPORTION & PLACEMENT: are present features sized and positioned sensibly
+   relative to each other and to the whole (bounding box)?
 
-CRITICAL CHECK FOR JOINED FEATURES:
- your simple task is to judge the given rendered PNG on the basis of user request , whether it is similar or same as what user has asked for , for example if it is chair , u only have to confirm whether it is chair or not , and if not then give the resson behind your thinking and if it is chair then pass it , basically u are reponsible for checking originality of object based on the real world knowledge and the user request 
+FEEDBACK RULES (critical — this drives the fix)
+- Be SPECIFIC and QUANTITATIVE. Never write only "missing X". Say WHAT is wrong and
+  HOW to fix it in plan terms — concrete dimensions / positions / counts. Example:
+  "side frames read as thin rails ~8% of base height; make them vertical walls
+  ~40-60% of the 240mm depth and move them to the two long edges".
+- Reference the metrics when judging scale (bbox dimensions, component count).
+- If num_components > 1 for something meant to be one connected part, call that out
+  (features are only touching, not overlapping/fused).
+- If the last replan's fix is provided, state explicitly whether it landed.
 
-Return only JSON:
+Return ONLY JSON:
 {
   "passed": true | false,
-  "failure_type": "none" | "wrong_shape" | "missing_feature" | "extra_feature" | "wrong_count" | "wrong_placement" | "wrong_proportion" | "unclear",
-  "feedback": "Short explanation for the replanner. If passed, use 'All constraints met.'"
+  "object_ok": true | false,
+  "failure_type": "none" | "wrong_shape" | "missing_feature" | "extra_feature"
+    | "wrong_count" | "wrong_placement" | "wrong_proportion" | "unclear",
+  "feature_findings": [
+    {"feature": "<checklist item or observed feature>",
+     "status": "present" | "missing" | "wrong",
+     "note": "specific, quantitative critique + concrete fix in dimensions/position"}
+  ],
+  "feedback": "1-3 sentence actionable summary for the replanner; 'All constraints met.' if passed."
 }
 """
 
 
 def judge_geometry_render(
-    prompt: str, render_png: str, last_replan_feedback: str | None = None
+    prompt: str,
+    render_png: str,
+    last_replan_feedback: str | None = None,
+    metrics: dict[str, Any] | None = None,
+    feature_checklist: str = "",
+    feedback_history: list[str] | None = None,
 ) -> dict[str, Any]:
     """Judge whether a render matches the user's requested geometry.
 
+    Grounded by three extra inputs beyond the render:
+      - feature_checklist: the required-feature contract from intake (Task 2),
+        so the judge checks each named feature, not a vibe.
+      - metrics: deterministic geometry numbers (bbox/volume/components), so the
+        judge reasons about SCALE from ground truth, not eyeballing pixels.
+      - feedback_history: EVERY prior attempt's failure detail (oldest->newest),
+        so the judge can spot a defect that has survived multiple replans and
+        stop rubber-stamping the same unfixed part as "present".
+
     last_replan_feedback: the failure detail the replanner most recently acted
-    on (None on a first attempt) — lets the judge check whether THAT specific
-    fix landed, not just the original request in isolation.
+    on (None on a first attempt) — lets the judge check whether THAT fix landed.
     """
     if not Path(render_png).exists():
         return _error(f"Render PNG not found: {render_png}", render_png)
 
     try:
-        response_text = _call_vlm(prompt, render_png, last_replan_feedback)
+        response_text = _call_vlm(
+            prompt,
+            render_png,
+            last_replan_feedback,
+            metrics,
+            feature_checklist,
+            feedback_history,
+        )
         return _format_verdict(_read_json(response_text), render_png)
     except Exception as exc:
         return _error(f"VLM judge failed: {exc}", render_png)
 
 
-def _call_vlm(prompt: str, render_png: str, last_replan_feedback: str | None) -> str:
-    """Call the configured vision model with prompt + image."""
+def _call_vlm(
+    prompt: str,
+    render_png: str,
+    last_replan_feedback: str | None,
+    metrics: dict[str, Any] | None = None,
+    feature_checklist: str = "",
+    feedback_history: list[str] | None = None,
+) -> str:
+    """Call the configured vision model with request + checklist + metrics + history + image."""
     from google import genai
     from google.genai import types
 
@@ -59,11 +117,27 @@ def _call_vlm(prompt: str, render_png: str, last_replan_feedback: str | None) ->
         image_bytes = image_file.read()
 
     text = f"USER REQUEST:\n{prompt}"
+    if feature_checklist.strip():
+        text += f"\n\n{feature_checklist.strip()}"
+    if metrics:
+        text += f"\n\nMEASURED GEOMETRY METRICS (ground truth):\n{_format_metrics(metrics)}"
+    # Full replan history (excluding the most recent, shown separately below) so
+    # the judge sees the whole failure trail, not just the last note.
+    prior = [f for f in (feedback_history or []) if f][:-1] if last_replan_feedback else [
+        f for f in (feedback_history or []) if f
+    ]
+    if prior:
+        trail = "\n".join(f"  {i}. {f}" for i, f in enumerate(prior, 1))
+        text += (
+            f"\n\nPRIOR ATTEMPTS ALREADY FAILED FOR (oldest first):\n{trail}\n"
+            f"If any of these defects is STILL visible, do NOT pass — a repeated "
+            f"unfixed failure is a fail, not 'present'."
+        )
     if last_replan_feedback:
         text += (
             f"\n\nTHIS ATTEMPT WAS REPLANNED TO FIX:\n{last_replan_feedback}\n"
             f"Check specifically whether that was addressed, in addition to the "
-            f"original request above."
+            f"original request and checklist above."
         )
 
     client = genai.Client(api_key=api_key)
@@ -136,8 +210,33 @@ def _first_json_object(text: str) -> str:
     raise ValueError("unterminated JSON object")
 
 
+def _format_metrics(metrics: dict[str, Any]) -> str:
+    """Render the deterministic geometry metrics as a compact ground-truth block."""
+    bb = metrics.get("bounding_box") or metrics.get("bbox") or {}
+    parts: list[str] = []
+    if bb:
+        dx = round(float(bb.get("xmax", 0)) - float(bb.get("xmin", 0)), 1)
+        dy = round(float(bb.get("ymax", 0)) - float(bb.get("ymin", 0)), 1)
+        dz = round(float(bb.get("zmax", 0)) - float(bb.get("zmin", 0)), 1)
+        parts.append(f"bbox_size_mm = {dx} x {dy} x {dz}  (X x Y x Z)")
+    if metrics.get("volume_mm3") is not None:
+        parts.append(f"volume_mm3 = {round(float(metrics['volume_mm3']), 1)}")
+    if metrics.get("num_components") is not None:
+        parts.append(f"num_components = {metrics['num_components']}")
+    if metrics.get("is_watertight") is not None:
+        parts.append(f"watertight = {metrics['is_watertight']}")
+    return "\n".join(f"- {p}" for p in parts) or "- (no metrics available)"
+
+
 def _format_verdict(verdict: dict[str, Any], render_png: str) -> dict[str, Any]:
-    """Return the stable payload used by the geometry loop."""
+    """Return the stable payload used by the geometry loop.
+
+    Preserves the historical keys (passed / failure_type / feedback /
+    failure_stage / verifier_ran / render_png) and ADDS the grounded extras
+    (object_ok, feature_findings) that the enriched replan feedback (Task 4)
+    forwards to the replanner. Older callers that ignore the new keys are
+    unaffected.
+    """
     passed = bool(verdict.get("passed"))
     failure_type = str(verdict.get("failure_type") or "wrong_shape")
     if passed:
@@ -147,11 +246,19 @@ def _format_verdict(verdict: dict[str, Any], render_png: str) -> dict[str, Any]:
     if passed:
         feedback = feedback or "All constraints met."
     elif not feedback.startswith("[visual_failure:"):
-        feedback = f"[visual_failure:{failure_type}] {feedback or 'Rendered geometry does not match the request.'}"
+        feedback = (
+            f"[visual_failure:{failure_type}] "
+            f"{feedback or 'Rendered geometry does not match the request.'}"
+        )
+
+    findings = verdict.get("feature_findings")
+    findings = findings if isinstance(findings, list) else []
 
     return {
         "passed": passed,
+        "object_ok": bool(verdict.get("object_ok", passed)),
         "failure_type": failure_type,
+        "feature_findings": findings,
         "feedback": feedback,
         "render_png": render_png,
         "verifier_ran": True,

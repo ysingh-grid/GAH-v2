@@ -65,7 +65,7 @@ def _heartbeating(interval_s: float = _HEARTBEAT_INTERVAL_S):
 # Pure single-attempt helpers shared with the in-process loop (runtime is the
 # canonical, Temporal-free home of stage logic; temporal/ depends on runtime/).
 from runtime.loop import _Artifacts, _run_geometry, _run_verify
-from runtime.planner import run_replanner_turn
+from runtime.planner import run_planner_turn, run_replanner_turn
 from runtime.replan import replan_with_feedback
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from runtime.trace import build_trace, category_for_stage, write_trace
@@ -78,6 +78,8 @@ from temporal.shared import (
     GenerateOutput,
     InspectInput,
     InspectOutput,
+    PlanInput,
+    PlanOutput,
     RenderInput,
     RenderOutput,
     RepairInput,
@@ -175,7 +177,9 @@ def repair_activity(inp: RepairInput) -> RepairOutput:
             failure_stage="mesh_repair",
             failure_detail=collect_feedback_detail("mesh_repair", repair),
         )
-    return RepairOutput(passes=True, mesh_report=after, repaired_stl_path=repair["repaired_stl_path"])
+    return RepairOutput(
+        passes=True, mesh_report=after, repaired_stl_path=repair["repaired_stl_path"]
+    )
 
 
 @activity.defn
@@ -210,15 +214,42 @@ def verify_activity(inp: VerifyInput) -> VerifyOutput:
 
     # Empty code string: verify_geometry keeps `code` in its signature for the
     # in-process loop's call shape but never sends it to the judge — the VLM
-    # reads prompt + render PNG + last feedback only.
+    # reads prompt + render PNG + last feedback only. feature_checklist grounds
+    # the judge per-feature, identically to the in-process loop.
     with _heartbeating():
-        failure = _run_verify(inp.prompt, "", art)
+        failure = _run_verify(inp.prompt, "", art, inp.feature_checklist)
 
     return VerifyOutput(
         passed=failure is None,
         feedback="" if failure is None else failure.detail,
         verdict=art.verdict or {},
     )
+
+
+@activity.defn
+def plan_activity(inp: PlanInput) -> PlanOutput:
+    """PLANNING: produce the initial PrimitivePlan on the worker (fast-rlm turn).
+
+    Moved INTO the workflow (was previously run in-process in the backend BEFORE the
+    workflow started, which created a long dead gap where Temporal showed no activity
+    and, if the planner hung/failed, the workflow never started). Now it is the
+    workflow's first activity: the workflow starts the instant intake completes, and a
+    slow/hung planner is a heartbeated, timed, durable Temporal activity.
+
+    Reaches the backend's pull tools via the WORKER's own BACKEND_URL (like
+    replan_activity), never inp.backend_url (the backend container's self-view).
+    Never raises — ok=False lets the workflow surface a clean failed result.
+    """
+    import os
+
+    try:
+        backend_url = os.environ.get("BACKEND_URL") or inp.backend_url
+        with _heartbeating():
+            plan = run_planner_turn(inp.original_prompt, inp.history, backend_url=backend_url)
+        return PlanOutput(ok=True, plan_dict=plan_to_dict(plan))
+    except Exception as exc:
+        logger.exception("plan_activity failed")
+        return PlanOutput(ok=False, error=str(exc))
 
 
 @activity.defn
