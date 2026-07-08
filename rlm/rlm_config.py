@@ -122,19 +122,17 @@ config.enable_compression_guard = False
 #   without starving the reasoning it genuinely needs. Gemini's OpenAI-compat
 #   endpoint honors reasoning_effort ("low"|"medium"|"high") and maps it to the
 #   thinking budget; it spreads UNTOUCHED through call_llm.ts into every root +
-#   sub-agent call. Override via RLM_REASONING_EFFORT; set to "none"/"" to omit.
+#   sub-agent call.
+#   Owned here as a plain code constant, NOT an env var (team decision — RLM
+#   settings live in rlm_config, not the environment). To change it, edit
+#   REASONING_EFFORT below directly.
+REASONING_EFFORT = "low"
 LLM_KWARGS: dict = {
     "temperature": float(os.environ.get("RLM_TEMPERATURE", "0.1")),
     "top_p": float(os.environ.get("RLM_TOP_P", "0.95")),
 }
-# DEFAULT is "low", NOT unset. With reasoning_effort omitted, gemini-2.5-pro
-# runs DYNAMIC/HIGH thinking = 40-173s PER REPL turn (measured; see the note above),
-# which across 20+ turns is the runaway-latency root cause (1.5h "builds nothing"
-# runs). "low" caps the budget for our structured-extraction planner without starving
-# it. Override via RLM_REASONING_EFFORT ("low"|"medium"|"high"); set "none"/"" to omit.
-_effort = os.environ.get("RLM_REASONING_EFFORT", "low")
-if _effort not in (None, "", "none"):
-    LLM_KWARGS["reasoning_effort"] = _effort
+if REASONING_EFFORT not in (None, "", "none"):
+    LLM_KWARGS["reasoning_effort"] = REASONING_EFFORT
 _seed = os.environ.get("RLM_SEED")
 if _seed not in (None, ""):
     LLM_KWARGS["seed"] = int(_seed)

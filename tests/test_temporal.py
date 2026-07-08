@@ -209,7 +209,7 @@ class TestRenderActivity:
 
         fake = _fake_tool_module(
             "tools.render_views", "render_views",
-            lambda stl, run_id: {"success": True, "png_path": "/o/views.png"},
+            lambda stl, run_id, section=None: {"success": True, "png_path": "/o/views.png"},
         )
         monkeypatch.setitem(sys.modules, "tools.render_views", fake)
         out = render_activity(RenderInput(stl_path="/o/solid.stl", run_id="r"))
@@ -220,7 +220,7 @@ class TestRenderActivity:
 
         fake = _fake_tool_module(
             "tools.render_views", "render_views",
-            lambda stl, run_id: {"success": False, "error": "vtk down"},
+            lambda stl, run_id, section=None: {"success": False, "error": "vtk down"},
         )
         monkeypatch.setitem(sys.modules, "tools.render_views", fake)
         out = render_activity(RenderInput(stl_path="/o/solid.stl", run_id="r"))

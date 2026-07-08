@@ -195,6 +195,7 @@ class RepairOutput:
 class RenderInput:
     stl_path: str
     run_id: str
+    section: dict[str, Any] | None = None
 
 
 @dataclass

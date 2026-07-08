@@ -231,7 +231,7 @@ class DesignWorkflow:
                     self._stage = DesignStage.GENERATING
                     rnd = await workflow.execute_activity(
                         render_activity,
-                        RenderInput(stl_path=stl_path, run_id=inp.run_id),
+                        RenderInput(stl_path=stl_path, run_id=inp.run_id, section=plan_dict.get("section")),
                         schedule_to_close_timeout=_RENDER_TIMEOUT,
                         heartbeat_timeout=_HEARTBEAT_TIMEOUT,
                         retry_policy=_NO_RETRY,

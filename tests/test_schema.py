@@ -200,8 +200,10 @@ def test_int_param_given_float_is_reported():
 def test_load_library_returns_full_catalog():
     library = schema.load_library()
     assert isinstance(library, dict)
-    assert len(library) == 22  # +rect_to_round, +rect_to_rect (loft transitions)
+    assert len(library) == 28  # 20 base + rect_to_round/rect_to_rect + 6 loft/sweep family
     assert "box" in library
     assert "profile_extrude" in library
+    assert "loft" in library
+    assert "sweep" in library
     assert "revolve" in library
     assert "rect_to_round" in library

@@ -8,10 +8,12 @@ from backend.primitives_read import store
 def test_load_all_primitives_returns_full_catalog():
     catalog = store.load_all_primitives()
     assert isinstance(catalog, dict)
-    assert len(catalog) == 22  # 20 base primitives + rect_to_round + rect_to_rect
+    assert len(catalog) == 28  # 20 base + rect_to_round/rect_to_rect + 6 loft/sweep family
     assert "box" in catalog
     assert "rect_to_round" in catalog  # loft-transition primitives (duct adapters)
     assert "rect_to_rect" in catalog
+    assert "loft" in catalog
+    assert "sweep" in catalog
 
 
 def test_get_primitive_with_known_key_returns_spec():

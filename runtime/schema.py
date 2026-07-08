@@ -150,6 +150,23 @@ class PrimitiveStep(BaseModel):
 AnyStep = PrimitiveStep | FinishStep
 
 
+class SectionPlane(BaseModel):
+    """Optional cut plane for the renderer's section view (plan-driven section).
+
+    When present, the renderer slices the part on this plane and shows the
+    cutaway so the verifier can see interior walls/cavities. When absent, the
+    renderer auto-picks a plane through the center of mass with its normal along
+    the shortest bounding-box axis (the most-revealing default). Emit this ONLY
+    when the feature to inspect is OFF-CENTER (an eccentric bore, an internal
+    boss) — for symmetric shells the auto default already bisects the cavity.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    normal: tuple[float, float, float] = (1.0, 0.0, 0.0)  # cut-plane normal
+    point: tuple[float, float, float] = (0.0, 0.0, 0.0)   # a point on the plane (mm)
+
+
 class PrimitivePlan(BaseModel):
     """An ordered CSG recipe that produces one part."""
 
@@ -158,6 +175,7 @@ class PrimitivePlan(BaseModel):
     part_name: str = Field(min_length=1)
     units: str = "mm"
     steps: list[AnyStep] = Field(min_length=1)
+    section: SectionPlane | None = None  # optional plan-driven section cut for render
 
     @field_validator("units")
     @classmethod

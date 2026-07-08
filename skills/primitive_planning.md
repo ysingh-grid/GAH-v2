@@ -142,4 +142,24 @@ Finish steps act on the **whole accumulated body** (not a new primitive). Place 
 - `"%Circle"` — all circular edges
 - `">Z[-2]"` — second-from-top face
 
-Wrong selectors silently no-op on fillet/chamfer (they're skipped, not errors). Pick the obvious one.
+Wrong selectors on fillet/chamfer now RAISE (OCCT StdFail) and route to the replanner — they are NOT silently skipped. Pick the correct selector.
+
+---
+
+## OPTIONAL: Section View (`section`)
+
+Top-level plan key (sibling of `part_name` / `steps`), NOT a step. Tells the
+renderer where to slice the part for the interior "section" view the verifier sees.
+
+```json
+{ "part_name": "...", "steps": [ ... ],
+  "section": { "normal": [1, 0, 0], "point": [0, 0, 0] } }
+```
+
+- `normal` — cut-plane normal `[x, y, z]`.
+- `point`  — a point the plane passes through (mm), usually the center of the feature.
+
+**Emit `section` ONLY when the feature to inspect is OFF-CENTER** (eccentric bore,
+internal boss on one side). For symmetric shells/cavities OMIT it — the renderer
+auto-cuts through the center of mass along the shortest axis, which already
+bisects a centered cavity.

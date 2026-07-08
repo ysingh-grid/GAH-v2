@@ -425,6 +425,153 @@
     },
     "template": "cq.Workplane(\"XY\").polyline({profile}).close().extrude({height})"
   },
+  "loft": {
+    "name": "loft",
+    "description": "Blend one profile through N stations stacked along Z, each station optionally rotated about Z relative to the base. General-purpose: many stations with increasing rotation gives a continuously twisted blade/vane/propeller — a straight profile_extrude (no twist) and revolve (axisymmetric only) cannot express that. Also covers a simple 2-station taper by using the same profile at both heights (shape stays constant, only rotation varies).",
+    "parameters": {
+      "profile": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) forming the closed cross-section used at EVERY station; do not repeat the first point",
+        "default": [[-10.0, 0.0], [10.0, 0.0], [0.0, 10.0]]
+      },
+      "heights": {
+        "type": "list",
+        "description": "Z height (mm) of each station, strictly ascending, first value usually 0. Same length as rotations — heights[i] pairs with rotations[i].",
+        "default": [0.0, 20.0]
+      },
+      "rotations": {
+        "type": "list",
+        "description": "Rotation (degrees, about Z) applied to the profile at each station before blending, same length as heights. Increasing values here are what produces a continuous twist — e.g. [0, 20, 45] over 3 stations twists 45 degrees total by the tip.",
+        "default": [0.0, 45.0]
+      },
+      "ruled": {
+        "type": "bool",
+        "description": "False (default) = smooth blended loft; True = straight-line (ruled) surfaces between stations",
+        "default": false
+      }
+    },
+    "template": "_loft({profile}, {heights}, {rotations}, ruled={ruled})"
+  },
+  "sweep": {
+    "name": "sweep",
+    "description": "Sweep a closed 2D profile along a 3D path (a spline through the given points) to build tubes, rails, pipe bends, or any part whose cross-section rides along a curved centerline. Complements loft: sweep varies POSITION along a path with a fixed profile, loft varies PROFILE/rotation across fixed Z stations.",
+    "parameters": {
+      "profile": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) forming the closed cross-section, drawn on the XY plane at the path's start; do not repeat the first point",
+        "default": [[-3.0, -3.0], [3.0, -3.0], [3.0, 3.0], [-3.0, 3.0]]
+      },
+      "path": {
+        "type": "path3d",
+        "description": "Ordered list of [x, y, z] points (mm) the profile is swept along, spline-interpolated; first point should be [0,0,0] (the profile's own plane)",
+        "default": [[0.0, 0.0, 0.0], [0.0, 20.0, 10.0], [0.0, 20.0, 30.0]]
+      },
+      "multisection": {
+        "type": "bool",
+        "description": "False (default) = one fixed profile swept along the path; True = treat profile as the first of multiple sections (advanced — leave False unless blending profiles along the path)",
+        "default": false
+      }
+    },
+    "template": "_sweep({profile}, {path}, multisection={multisection})"
+  },
+  "taper_extrude": {
+    "name": "taper_extrude",
+    "description": "Extrude a closed 2D polygon profile along +Z with a draft/taper angle, so the cross-section shrinks (positive taper) or grows (negative) as it rises. Use for drafted bosses, funnels with straight walls, truncated pyramid-like prisms of ANY cross-section — a plain profile_extrude has no taper, and cone/pyramid only offer fixed circular/rectangular sections.",
+    "parameters": {
+      "profile": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) forming the closed cross-section at the base; do not repeat the first point",
+        "default": [[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]]
+      },
+      "height": {
+        "type": "float",
+        "description": "Extrusion height along Z",
+        "default": 10.0
+      },
+      "taper_angle": {
+        "type": "float",
+        "description": "Draft angle in degrees; positive tapers inward going up (narrower top), negative flares outward. Keep small enough that the section doesn't collapse before reaching full height.",
+        "default": 10.0
+      }
+    },
+    "template": "cq.Workplane(\"XY\").polyline({profile}).close().extrude({height}, taper={taper_angle})"
+  },
+  "loft_between": {
+    "name": "loft_between",
+    "description": "Loft a smooth solid between two DIFFERENT closed 2D profiles: profile_bottom at Z=0 blending into profile_top at Z=height (optionally rotated about Z). Use for square-to-round adapters, funnels, nozzle transitions, ergonomic grips — any shape-to-shape morph. Distinct from loft (one profile through many twisted stations) and taper_extrude (same shape, straight drafted walls).",
+    "parameters": {
+      "profile_bottom": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) for the closed cross-section at Z=0; do not repeat the first point",
+        "default": [[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]]
+      },
+      "profile_top": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) for the closed cross-section at Z=height; approximate circles with a 16-24 point polygon",
+        "default": [[6.0, 0.0], [4.24, 4.24], [0.0, 6.0], [-4.24, 4.24], [-6.0, 0.0], [-4.24, -4.24], [0.0, -6.0], [4.24, -4.24]]
+      },
+      "height": {
+        "type": "float",
+        "description": "Z height of the top profile above the bottom one",
+        "default": 20.0
+      },
+      "rotation_deg": {
+        "type": "float",
+        "description": "Optional rotation (degrees about Z) of the top profile relative to the bottom — adds a twist to the transition",
+        "default": 0.0
+      }
+    },
+    "template": "_loft_between({profile_bottom}, {profile_top}, {height}, rotation_deg={rotation_deg})"
+  },
+  "tube": {
+    "name": "tube",
+    "description": "Hollow circular tube swept along a 3D path: pipes, elbows, ducts, conduits, handles, roll-cage bars. The path is spline-interpolated through the given points; the wall is formed by cutting an inner sweep from an outer one (the safe idiom — sweeping a pre-cut ring is degenerate). For a SOLID bar along a path use sweep instead.",
+    "parameters": {
+      "radius": {
+        "type": "float",
+        "description": "Outer radius of the tube (mm)",
+        "default": 5.0
+      },
+      "wall": {
+        "type": "float",
+        "description": "Wall thickness (mm); must be smaller than radius",
+        "default": 1.5
+      },
+      "path": {
+        "type": "path3d",
+        "description": "Ordered list of [x, y, z] points (mm) the tube's centerline follows, spline-interpolated; first point should be [0,0,0]",
+        "default": [[0.0, 0.0, 0.0], [0.0, 20.0, 10.0], [0.0, 40.0, 40.0]]
+      }
+    },
+    "template": "_tube({radius}, {wall}, {path})"
+  },
+  "helix_sweep": {
+    "name": "helix_sweep",
+    "description": "A round wire wound into a helix rising along +Z: coil springs, spiral coils, decorative threads, helical channels (as a cut). Total coil turns = height / pitch. For a straight or gently-curved bar use sweep; for a hollow pipe use tube.",
+    "parameters": {
+      "coil_radius": {
+        "type": "float",
+        "description": "Radius of the helix centerline from the Z axis (mm)",
+        "default": 15.0
+      },
+      "pitch": {
+        "type": "float",
+        "description": "Z distance between successive turns (mm); must exceed 2*wire_radius or the coils self-intersect",
+        "default": 10.0
+      },
+      "height": {
+        "type": "float",
+        "description": "Total height of the helix along Z (mm)",
+        "default": 50.0
+      },
+      "wire_radius": {
+        "type": "float",
+        "description": "Radius of the round wire being wound (mm)",
+        "default": 2.0
+      }
+    },
+    "template": "_helix_sweep({coil_radius}, {pitch}, {height}, {wire_radius})"
+  },
   "revolve": {
     "name": "revolve",
     "description": "Revolve a closed 2D profile (list of [x, y] points, all x >= 0) about the Y axis to sweep a solid of revolution. Force-multiplier for bottles, nozzles, flanges, and turned parts.",

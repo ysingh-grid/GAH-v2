@@ -42,6 +42,7 @@ def _llm_kwargs() -> dict:
 from rlm.pull_tools import (
     delegate_features,
     list_skills,
+    list_skills_replan,
     lookup_design_reference,
     lookup_primitive,
     preview_plan,
@@ -70,11 +71,15 @@ _PLANNER_TOOLS = [
 
 _REPLANNER_TOOLS = [
     read_skill,
-    list_skills,
+    list_skills_replan,
     lookup_primitive,
     lookup_design_reference,
     preview_plan,
 ]
+# list_skills_replan (NOT list_skills): the replanner discovers ONLY its own
+# scoped guide catalog (SKILLS_replan.md) — it never sees the planner-only
+# intake/decomposition/verification guides. read_skill stays shared (access is
+# open, discovery is scoped), so a guide listed in both catalogs still resolves.
 # delegate_features intentionally absent: a replan edits ONE existing plan, it
 # never decomposes a new assembly, so the fork tool has no legitimate use here.
 # If you add a new tool to _PLANNER_TOOLS, it does NOT automatically appear here

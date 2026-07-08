@@ -145,6 +145,33 @@ def list_skills() -> list[str]:
             ) from None
 
 
+def list_skills_replan() -> list[str]:
+    """Return the names of every reasoning-guide skill available to the REPLANNER.
+
+    The replanner's live catalog of guides — scoped to revising ONE existing
+    plan (repair/refinement + primitive/dimension reasoning). Planner-only
+    guides (full intake/decomposition/verification playbook) are deliberately
+    NOT listed here. Start with read_skill('playbook_replan').
+    """
+    import os
+
+    import requests
+
+    base = os.environ["DTCM_BACKEND_URL"]
+    url = f"{base}/internal/list-skills-replan"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"list_skills_replan: backend unreachable at {url!r} ({_e})."
+            ) from None
+
+
 def read_skill(name: str) -> str:
     """Load one skill guide into REPL memory `_SKILLS[name]` (and `context['skills'][name]`).
 
