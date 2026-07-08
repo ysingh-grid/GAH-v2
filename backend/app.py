@@ -20,6 +20,7 @@ from backend.skills_read.routes import router as skills_router
 from backend.web_search.routes import router as web_search_router
 
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+_OUTPUTS_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
 
 def _warn_on_misconfiguration() -> None:
@@ -70,11 +71,14 @@ def create_app() -> FastAPI:
         """Runtime config for the frontend.
 
         Reads env vars set by docker-compose so the frontend can embed the
-        ForgeCAD studio iframe without hardcoding URLs at build time.
+        ForgeCAD studio iframe and deep-link into the Temporal Web UI without
+        hardcoding URLs at build time.
         """
         return {
             "forgecad_studio_url": os.environ.get("FORGECAD_STUDIO_URL", ""),
             "backend_url": os.environ.get("BACKEND_URL", ""),
+            "temporal_ui_url": os.environ.get("TEMPORAL_UI_URL", ""),
+            "temporal_namespace": os.environ.get("TEMPORAL_NAMESPACE", "default"),
         }
 
     app.include_router(primitives_router)
@@ -84,6 +88,11 @@ def create_app() -> FastAPI:
     app.include_router(web_search_router)
     app.include_router(designs_router)
     app.include_router(design_reference_router)
+
+    # Read-only access to run artifacts (renders/STL/STEP) for the UI's Render /
+    # Logs / Previous-Run views. NOTE: unauthenticated, consistent with the app.
+    if _OUTPUTS_DIR.exists():
+        app.mount("/outputs", StaticFiles(directory=str(_OUTPUTS_DIR)), name="outputs")
 
     # Serve the Product UI at /ui — same origin as the API, no CORS needed locally.
     if _FRONTEND_DIR.exists():

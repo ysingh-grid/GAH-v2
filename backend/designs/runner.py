@@ -84,8 +84,7 @@ def write_stl_to_studio(run_id: str) -> bool:
         shutil.copy2(stl_source, _FORGECAD_WORKSPACE / "solid.stl")
         stub = _FORGECAD_WORKSPACE / "main.forge.js"
         stub.write_text(
-            f"// run: {run_id}\n"
-            'module.exports = importMesh("./solid.stl");\n',
+            f'// run: {run_id}\nmodule.exports = importMesh("./solid.stl");\n',
             encoding="utf-8",
         )
         log.info("STL copied to studio workspace: %s", stl_source)
@@ -93,6 +92,37 @@ def write_stl_to_studio(run_id: str) -> bool:
     except OSError as exc:
         log.warning("Could not write STL to studio workspace: %s", exc)
         return False
+
+
+async def cancel_run(session: DesignSession) -> dict[str, Any]:
+    """Best-effort cancel of an in-flight run.
+
+    Temporal path: cancels the workflow (its id == run_id) cleanly — this makes
+    the streaming ``handle.result()`` await in ``_run_via_temporal`` raise, so the
+    WS turn emits a terminal event on its own.
+
+    In-process path: only a cooperative flag is set — the geometry loop runs in a
+    thread-pool executor with no cancel token, so a stage already in flight (e.g.
+    a CadQuery subprocess) runs to completion in the background. The session is
+    still marked cancelled so the UI and any post-run logic can react.
+    """
+    session.cancelled = True
+    session.status = "cancelled"
+
+    workflow_cancelled = False
+    if _USE_TEMPORAL and session.run_id:
+        from temporal.client import get_client
+
+        client = await get_client()
+        handle = client.get_workflow_handle(session.run_id)
+        await handle.cancel()
+        workflow_cancelled = True
+
+    return {
+        "status": "cancelled",
+        "run_id": session.run_id,
+        "workflow_cancelled": workflow_cancelled,
+    }
 
 
 async def run_chat_turn(
@@ -182,7 +212,7 @@ async def run_chat_turn(
     run_id = new_run_id(f"design_{session.id[:8]}")
     session.run_id = run_id
 
-    await send({"type": "generating", "stage": "cadquery_compile"})
+    await send({"type": "generating", "stage": "cadquery_compile", "run_id": run_id})
 
     # Base replan history: the pre-planner intake facts ONLY — never the raw
     # chatbot conversation. Replans build plan-lineage state on top of this.
@@ -199,13 +229,22 @@ async def run_chat_turn(
 
     if _USE_TEMPORAL:
         await _run_via_temporal(
-            session, plan, run_id, send,
-            backend_url=backend_url, history=replan_base_history,
+            session,
+            plan,
+            run_id,
+            send,
+            backend_url=backend_url,
+            history=replan_base_history,
         )
     else:
         await _run_in_process(
-            session, plan, run_id, send,
-            backend_url=backend_url, ev_loop=ev_loop, history=replan_base_history,
+            session,
+            plan,
+            run_id,
+            send,
+            backend_url=backend_url,
+            ev_loop=ev_loop,
+            history=replan_base_history,
         )
 
 
@@ -499,7 +538,7 @@ async def _apply_edit(
     session.last_plan = plan_to_dict(plan)
     run_id = new_run_id(f"design_{session.id[:8]}")
     session.run_id = run_id
-    await send({"type": "generating", "stage": "cadquery_compile"})
+    await send({"type": "generating", "stage": "cadquery_compile", "run_id": run_id})
 
     # Fold this edit into intake_context (the same "established facts" field
     # the fresh-design flow uses) so every FUTURE replan/edit in this session
@@ -510,14 +549,12 @@ async def _apply_edit(
         else f"- edit applied: {edit_text}"
     )
 
-    replan_base_history: list[dict[str, str]] = (
-        [
-            {
-                "role": "user",
-                "content": f"Established design facts from intake:\n{session.intake_context}",
-            }
-        ]
-    )
+    replan_base_history: list[dict[str, str]] = [
+        {
+            "role": "user",
+            "content": f"Established design facts from intake:\n{session.intake_context}",
+        }
+    ]
 
     # The VLM verifier only ever sees this single string (no history) — it must
     # spell out the edit directly, or the verifier judges the model against the
@@ -531,13 +568,23 @@ async def _apply_edit(
 
     if _USE_TEMPORAL:
         await _run_via_temporal(
-            session, plan, run_id, send,
-            backend_url=backend_url, history=replan_base_history, verify_prompt=verify_prompt,
+            session,
+            plan,
+            run_id,
+            send,
+            backend_url=backend_url,
+            history=replan_base_history,
+            verify_prompt=verify_prompt,
         )
     else:
         await _run_in_process(
-            session, plan, run_id, send,
-            backend_url=backend_url, ev_loop=ev_loop, history=replan_base_history,
+            session,
+            plan,
+            run_id,
+            send,
+            backend_url=backend_url,
+            ev_loop=ev_loop,
+            history=replan_base_history,
             verify_prompt=verify_prompt,
         )
 

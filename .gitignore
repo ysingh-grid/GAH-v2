@@ -12,6 +12,7 @@ wheels/
 # Env / secrets
 .env
 .env.*
+.architecture
 
 # Logs
 logs/

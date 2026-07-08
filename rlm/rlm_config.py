@@ -23,8 +23,8 @@ config = RLMConfig.default()
 # less of the quadratic prompt-token growth that dominated cost. Trade: pro spends
 # more COMPLETION (reasoning) tokens per call, but prompt_tokens were the bloat.
 # sub_agent (delegate_features children) stays flash for cost — separation of roles.
-config.primary_agent = "gemini-3.1-pro-preview"
-config.sub_agent = "gemini-3.5-flash"
+config.primary_agent = "gemini-2.5-pro"
+config.sub_agent = "gemini-2.5-flash"
 # Hard safety-net cap on REPL steps per agent (the soft target lives in the prompt:
 # root ~5-6 steps, leaf child ~3). Too low STARVES the root orchestrator — it needs
 # probe + read-task + list_primitives + decompose + batch-fork + process + assemble
@@ -53,7 +53,7 @@ config.max_calls_per_subagent = 24
 config.max_prompt_tokens = 1_000_000
 # max_completion_tokens is the cumulative COMPLETION (reasoning + output) budget
 # across the run. RLMConfig.default() is 50_000 — calibrated for GPT-4-class,
-# NON-thinking models. Our root is now gemini-3.1-pro-preview, a THINKING model
+# NON-thinking models. Our root is now gemini-2.5-pro, a THINKING model
 # that spends reasoning tokens on every turn; leaving the 50k default lets a
 # complex part exhaust the budget mid-reason and die. Own it explicitly at 150k
 # (matches the reference run.yaml) so the pro driver has room to finish.
@@ -114,7 +114,7 @@ config.enable_compression_guard = False
 #   OpenAI-compat endpoint MAY ignore it — set it to ATTEMPT repro, do NOT expect
 #   bit-identical runs. Enable by exporting RLM_SEED; unset = normal production.
 # reasoning_effort: THE thinking-budget control for the pro-tier root driver.
-#   gemini-3.1-pro-preview is a THINKING model; with no effort param it defaults to
+#   gemini-2.5-pro is a THINKING model; with no effort param it defaults to
 #   dynamic/HIGH thinking, and each REPL turn spent 40-173s of hidden reasoning on
 #   only 12-14k prompt tokens (MEASURED: a 20-blade part = ~20min across 3 cold
 #   runs, latency almost entirely thinking, not context). The planner is structured
@@ -127,7 +127,7 @@ LLM_KWARGS: dict = {
     "temperature": float(os.environ.get("RLM_TEMPERATURE", "0.1")),
     "top_p": float(os.environ.get("RLM_TOP_P", "0.95")),
 }
-# DEFAULT is "low", NOT unset. With reasoning_effort omitted, gemini-3.1-pro-preview
+# DEFAULT is "low", NOT unset. With reasoning_effort omitted, gemini-2.5-pro
 # runs DYNAMIC/HIGH thinking = 40-173s PER REPL turn (measured; see the note above),
 # which across 20+ turns is the runaway-latency root cause (1.5h "builds nothing"
 # runs). "low" caps the budget for our structured-extraction planner without starving

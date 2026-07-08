@@ -16,6 +16,7 @@ echo "Starting all Docker services for GAH-v2 (Backend, Temporal, Worker, ForgeC
 # zero error and zero Temporal Web UI activity. Don't rely on .env alone.
 FORGECAD_STUDIO_URL=http://localhost:4000 \
 TEMPORAL_HOST=temporal:7233 \
+TEMPORAL_UI_URL=http://localhost:8088 \
   docker compose --profile temporal --profile studio up -d --build
 
 echo "All services are starting in the background. Use 'docker compose logs -f' to view logs."

@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from backend.designs.intake import IntakeState
 
-DesignStatus = Literal["chatting", "generating", "done", "failed", "needs_user"]
+DesignStatus = Literal["chatting", "generating", "done", "failed", "needs_user", "cancelled"]
 
 
 @dataclass
@@ -41,9 +41,11 @@ class DesignSession:
     # Empty = not currently clarifying an edit. Distinguishes a "needs_user"
     # caused by an edit clarification from one caused by the original intake.
     pending_edit_text: str = ""
-    created_at: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    # Set True by an explicit user cancel. Best-effort for in-process runs
+    # (the thread-pool geometry loop can't be force-killed mid-stage); the
+    # Temporal path cancels the workflow cleanly.
+    cancelled: bool = False
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +59,7 @@ class DesignSession:
             "last_plan": self.last_plan,
             "run_id": self.run_id,
             "pending_edit_text": self.pending_edit_text,
+            "cancelled": self.cancelled,
             "created_at": self.created_at,
         }
 

@@ -37,7 +37,11 @@ services:
       # Set by temporal profile; empty = in-process fallback
       TEMPORAL_HOST: "${TEMPORAL_HOST:-}"
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
+      # Browser-facing Temporal Web UI URL for the frontend's deep-link button
+      # (temporal-ui container publishes :8088). Empty = button stays disabled.
+      TEMPORAL_UI_URL: "${TEMPORAL_UI_URL:-}"
     volumes:
+      - ./frontend:/app/frontend  # live UI — edits show on container recreate, no image rebuild
       - ./artifacts:/app/artifacts
       - ./outputs:/app/outputs    # run artifacts (STL/STEP/renders/trace.json) persisted to host
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log
@@ -75,6 +79,7 @@ services:
       FORGECAD_STUDIO_URL: "${FORGECAD_STUDIO_URL:-}"
       TEMPORAL_HOST: "${TEMPORAL_HOST:-}"
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-gah-design}"
+      TEMPORAL_UI_URL: "${TEMPORAL_UI_URL:-}"
     volumes:
       # live source — overrides what was COPY'd into the image
       - ./backend:/app/backend
@@ -85,6 +90,7 @@ services:
       - ./skills:/app/skills
       - ./KB:/app/KB
       - ./temporal:/app/temporal
+      - ./frontend:/app/frontend
       # runtime artifacts (same as prod)
       - ./artifacts:/app/artifacts
       - ./outputs:/app/outputs

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def client():
     return TestClient(create_app())
@@ -28,6 +29,7 @@ def compose() -> dict:
 
 
 # ── docker-compose.yml structure ──────────────────────────────────────────────
+
 
 def test_compose_file_exists():
     assert (ROOT / "docker-compose.yml").exists()
@@ -74,6 +76,7 @@ def test_compose_backend_passes_forgecad_studio_url(compose):
 
 # ── Dockerfile structure ──────────────────────────────────────────────────────
 
+
 def test_dockerfile_exists():
     assert (ROOT / "Dockerfile").exists()
 
@@ -105,6 +108,7 @@ def test_dockerignore_excludes_venv():
 
 # ── /config endpoint ──────────────────────────────────────────────────────────
 
+
 def test_config_endpoint_returns_200(client):
     resp = client.get("/config")
     assert resp.status_code == 200
@@ -130,3 +134,31 @@ def test_config_endpoint_empty_when_unset(client, monkeypatch):
     monkeypatch.delenv("FORGECAD_STUDIO_URL", raising=False)
     body = client.get("/config").json()
     assert body["forgecad_studio_url"] == ""
+
+
+def test_config_endpoint_has_temporal_ui_url_key(client):
+    body = client.get("/config").json()
+    assert "temporal_ui_url" in body
+
+
+def test_config_endpoint_has_temporal_namespace_key(client):
+    body = client.get("/config").json()
+    assert "temporal_namespace" in body
+
+
+def test_config_endpoint_temporal_ui_url_from_env(client, monkeypatch):
+    monkeypatch.setenv("TEMPORAL_UI_URL", "http://temporal.test:8088")
+    body = client.get("/config").json()
+    assert body["temporal_ui_url"] == "http://temporal.test:8088"
+
+
+def test_config_endpoint_temporal_ui_url_empty_when_unset(client, monkeypatch):
+    monkeypatch.delenv("TEMPORAL_UI_URL", raising=False)
+    body = client.get("/config").json()
+    assert body["temporal_ui_url"] == ""
+
+
+def test_config_endpoint_temporal_namespace_defaults(client, monkeypatch):
+    monkeypatch.delenv("TEMPORAL_NAMESPACE", raising=False)
+    body = client.get("/config").json()
+    assert body["temporal_namespace"] == "default"

@@ -18,7 +18,6 @@ htmlcov/
 # Secrets
 .env
 .env.*
-
 # Artifacts (mounted at runtime)
 artifacts/
 

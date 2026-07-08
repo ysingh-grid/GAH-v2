@@ -120,7 +120,7 @@ def _call_vlm(
 
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
-        model=os.environ.get("VLM_JUDGE_MODEL", "gemini-3.1-pro-preview"),
+        model=os.environ.get("VLM_JUDGE_MODEL", "gemini-2.5-pro"),
         contents=[
             types.Part.from_text(text=text),
             types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
@@ -128,7 +128,7 @@ def _call_vlm(
         config=types.GenerateContentConfig(
             system_instruction=JUDGE_INSTRUCTION,
             response_mime_type="application/json",
-            # gemini-3.1-pro-preview is a THINKING model — with no budget set,
+            # gemini-2.5-pro is a THINKING model — with no budget set,
             # internal reasoning tokens can exhaust the default output cap before
             # the actual JSON gets written, truncating it mid-object ("unterminated
             # JSON object"). thinking_budget=0 and ThinkingLevel.MINIMAL are BOTH

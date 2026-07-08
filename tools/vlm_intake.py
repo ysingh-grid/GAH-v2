@@ -163,7 +163,7 @@ def summarize_design_request(
         system_instruction=INTAKE_INSTRUCTION,
         parts=parts,
         model_env_var="VLM_INTAKE_MODEL",
-        default_model="gemini-3.1-pro-preview",
+        default_model="gemini-2.5-pro",
         max_output_tokens=4096,
     )
     return VlmIntakeSummary.model_validate(_read_json(text)).model_dump()
@@ -201,7 +201,7 @@ def decide_next_intake_move(
         system_instruction=INTAKE_CHAT_INSTRUCTION,
         parts=[types.Part.from_text(text=text)],
         model_env_var="INTAKE_CHAT_MODEL",
-        default_model="gemini-3.5-flash",
+        default_model="gemini-2.5-flash",
         max_output_tokens=2048,
     )
     return IntakeChatMove.model_validate(_read_json(reply)).model_dump()
@@ -247,7 +247,7 @@ def classify_post_design_message(user_text: str, plan_summary: str) -> str:
             system_instruction=CLASSIFY_INSTRUCTION,
             parts=[types.Part.from_text(text=text)],
             model_env_var="INTAKE_CHAT_MODEL",
-            default_model="gemini-3.5-flash",
+            default_model="gemini-2.5-flash",
             max_output_tokens=256,
         )
         return PostDesignClassification.model_validate(_read_json(reply)).kind
@@ -293,7 +293,7 @@ def answer_model_question(
         system_instruction=ANSWER_INSTRUCTION,
         parts=parts,
         model_env_var="INTAKE_CHAT_MODEL",
-        default_model="gemini-3.5-flash",
+        default_model="gemini-2.5-flash",
         max_output_tokens=1024,
         json_response=False,
     )
