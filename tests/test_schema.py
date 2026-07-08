@@ -48,10 +48,16 @@ def test_plan_with_no_base_step_raises():
         plan_from_dict(bad)
 
 
-def test_plan_with_two_base_steps_raises():
-    bad = {"part_name": "x", "steps": [_box_base("a"), _box_base("b")]}
-    with pytest.raises(ValidationError, match="exactly one 'base'"):
-        plan_from_dict(bad)
+def test_plan_with_two_base_steps_coerces_extra_to_union():
+    # A multi-body plan (e.g. bolt+nut) naturally reads each body's root as
+    # 'base'. Rather than bounce it through an expensive replan for a mechanical
+    # rule, the schema deterministically folds every base after the first into a
+    # 'union' (see PrimitivePlan._coerce_extra_bases). Only the FIRST stays base.
+    coerced = plan_from_dict(
+        {"part_name": "x", "steps": [_box_base("a"), _box_base("b")]}
+    )
+    ops = [s.operation for s in coerced.steps]
+    assert ops == [Operation.base, Operation.union]
 
 
 def test_base_step_not_first_raises():

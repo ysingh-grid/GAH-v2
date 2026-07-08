@@ -210,9 +210,10 @@ def verify_activity(inp: VerifyInput) -> VerifyOutput:
 
     # Empty code string: verify_geometry keeps `code` in its signature for the
     # in-process loop's call shape but never sends it to the judge — the VLM
-    # reads prompt + render PNG + last feedback only.
+    # reads prompt + render PNG + last feedback only. feature_checklist grounds
+    # the judge per-feature, identically to the in-process loop.
     with _heartbeating():
-        failure = _run_verify(inp.prompt, "", art)
+        failure = _run_verify(inp.prompt, "", art, inp.feature_checklist)
 
     return VerifyOutput(
         passed=failure is None,

@@ -108,22 +108,80 @@ _VERIFIER_ERROR_NOTE = (
 )
 
 
+def format_feature_findings(findings: list[dict[str, Any]]) -> str:
+    """Render per-feature verifier findings as an actionable block.
+
+    findings come from the grounded judge (Task 3): each is
+    {feature, status: present|missing|wrong, note: specific fix}. This turns
+    the replanner's input from a single vague sentence into a per-feature to-do
+    list with concrete dimensional/positional fixes. Returns "" when empty.
+    """
+    rows: list[str] = []
+    for f in findings or []:
+        if not isinstance(f, dict):
+            continue
+        feature = str(f.get("feature", "")).strip() or "(unnamed feature)"
+        status = str(f.get("status", "")).strip().upper() or "?"
+        note = str(f.get("note", "")).strip()
+        rows.append(f"- {feature}: {status}" + (f" — {note}" if note else ""))
+    if not rows:
+        return ""
+    return "Per-feature verifier findings (fix the MISSING/WRONG ones):\n" + "\n".join(rows)
+
+
+def _plan_step_inventory(last_plan: PrimitivePlan) -> str:
+    """A compact id → operation → primitive map so findings map to steps to edit."""
+    rows: list[str] = []
+    for step in plan_to_dict(last_plan).get("steps", []):
+        if "operation" in step:  # PrimitiveStep
+            rows.append(f"- {step.get('id')}: {step.get('operation')} {step.get('primitive')}")
+        else:  # FinishStep
+            rows.append(f"- {step.get('id')}: finish {step.get('op')}")
+    if not rows:
+        return ""
+    return "Current plan steps (id: operation primitive) — edit these:\n" + "\n".join(rows)
+
+
 def build_feedback_message(failure_stage: str, detail: str, last_plan: PrimitivePlan) -> str:
     """Compose the corrective instruction handed back to the replanner."""
+    from pathlib import Path
+
     # Compact separators, not indent=2: this string is read only by the LLM, and
     # pretty-printing costs ~55% more bytes on every replan attempt for nothing.
     plan_json = json.dumps(plan_to_dict(last_plan), separators=(",", ":"))
-    index = "\n".join(f"- {name}: {desc}" for name, desc in REPLAN_SKILLS)
+    skill_name = STAGE_TO_SKILL.get(failure_stage, "playbook_replan")
+
+    skills_dir = Path(__file__).resolve().parent.parent / "skills"
+
+    try:
+        playbook_text = (skills_dir / "playbook_replan.md").read_text(encoding="utf-8")
+    except Exception as e:
+        playbook_text = f"Error loading replan playbook: {e}"
+
+    try:
+        guide_text = (skills_dir / f"{skill_name}.md").read_text(encoding="utf-8")
+    except Exception as e:
+        guide_text = f"Error loading skill guide {skill_name}: {e}"
+
     note = _VERIFIER_ERROR_NOTE if failure_stage == "verifier_error" else ""
+    step_inventory = _plan_step_inventory(last_plan)
+    inventory_block = (
+        f"=== CURRENT PLAN STEPS ===\n{step_inventory}\n\n" if step_inventory else ""
+    )
     return (
         f"Your previous PrimitivePlan failed at stage '{failure_stage}'.\n"
         f"Failure detail:\n{detail}\n"
-        f"{note}\n"
-        f"Available guides:\n{index}\n\n"
-        f"Read whichever guide matches this failure, then return a corrected "
-        f"plan_ready that fixes it. You must resolve this yourself using the "
-        f"guides, context, and reasonable defaults — there is no option to ask "
-        f"the user.\n\n"
+        f"{note}\n\n"
+        f"=== REPLAN PLAYBOOK ===\n"
+        f"{playbook_text}\n\n"
+        f"=== SPECIFIC GUIDANCE ({skill_name}) ===\n"
+        f"{guide_text}\n\n"
+        f"{inventory_block}"
+        f"Please analyze the failure, apply the minimal targeted fix, and return "
+        f"the corrected JSON plan.\n"
+        f"Do NOT call read_skill() as the guides have been preloaded above for you. "
+        f"Resolve this yourself using the guides and reasonable defaults — there is "
+        f"no option to ask the user.\n\n"
         f"Previous plan was:\n{plan_json}"
     )
 
@@ -181,7 +239,7 @@ def _retry_planner_call(
             logger.warning(
                 "replan call attempt %d/%d failed: %s", attempt, max_attempts, exc,
             )
-    assert last_exc is not None  # loop always runs >=1 time (max_attempts >= 1)
+    assert last_exc is not None  # noqa: S101 — loop always runs >=1 time (max_attempts >= 1)
     raise last_exc
 
 
@@ -238,7 +296,9 @@ def replan_for_edit(
 def collect_feedback_detail(stage: str, payload: dict[str, Any]) -> str:
     """Extract a human-readable failure detail from a stage's result payload."""
     if stage == "visual_mismatch":
-        return str(payload.get("feedback", "verifier rejected the geometry"))
+        base = str(payload.get("feedback", "verifier rejected the geometry"))
+        findings = format_feature_findings(payload.get("feature_findings") or [])
+        return f"{base}\n\n{findings}" if findings else base
     if stage == "mesh_repair":
         # repair_mesh returns {success, after, actions, ...} with NO error/feedback
         # key when it ran but the mesh still didn't pass. Surface the actual mesh

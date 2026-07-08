@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.design_reference.routes import router as design_reference_router
 from backend.designs.routes import router as designs_router
 from backend.kb_read.routes import router as kb_router
+from backend.preview.routes import router as preview_router
 from backend.primitives_read.routes import router as primitives_router
 from backend.skills_read.routes import router as skills_router
 from backend.web_search.routes import router as web_search_router
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
 
     app.include_router(primitives_router)
     app.include_router(skills_router)
+    app.include_router(preview_router)
     app.include_router(kb_router)
     app.include_router(web_search_router)
     app.include_router(designs_router)

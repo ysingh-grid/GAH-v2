@@ -13,6 +13,93 @@ from backend.designs.intake import (
     start_or_resume_intake,
 )
 
+# ── required-feature checklist (Task 2) ──────────────────────────────────────
+
+
+def test_vlm_intake_summary_defaults_checklist_fields_for_backward_compat() -> None:
+    """Older summaries / fail-open fallbacks omit the new fields — must still validate."""
+    from tools.vlm_intake import VlmIntakeSummary
+
+    s = VlmIntakeSummary.model_validate({"mode": "text", "summary": "a cube"})
+    assert s.object_type == ""
+    assert s.required_features == []
+
+
+def test_vlm_intake_summary_accepts_checklist_fields() -> None:
+    from tools.vlm_intake import VlmIntakeSummary
+
+    s = VlmIntakeSummary.model_validate(
+        {
+            "mode": "text",
+            "summary": "a foldable laptop stand",
+            "object_type": "foldable laptop stand",
+            "required_features": ["two tall side frames", "a hinge pin", "angle slots"],
+        }
+    )
+    assert s.object_type == "foldable laptop stand"
+    assert "a hinge pin" in s.required_features
+
+
+def test_format_feature_checklist_lists_object_and_features() -> None:
+    from backend.designs.intake import format_feature_checklist
+
+    block = format_feature_checklist(
+        "laptop stand", ["two side frames (tall walls)", "hinge pins"]
+    )
+    assert "Required-feature checklist" in block
+    assert "target object: laptop stand" in block
+    assert "two side frames (tall walls)" in block
+    assert "hinge pins" in block
+
+
+def test_format_feature_checklist_empty_is_blank() -> None:
+    from backend.designs.intake import format_feature_checklist
+
+    assert format_feature_checklist("", []) == ""
+    assert format_feature_checklist("  ", [" ", ""]) == ""
+
+
+def test_build_intake_context_includes_feature_checklist() -> None:
+    from backend.designs.intake import build_intake_context
+
+    state = IntakeState(
+        source="text",
+        visual_summary="a foldable laptop stand",
+        object_type="foldable laptop stand",
+        required_features=["two side frames", "hinge pins", "ventilation cutouts"],
+        vlm_summary={},
+    )
+    ctx = build_intake_context(user_prompt="make a laptop stand", state=state)
+    assert "Required-feature checklist" in ctx
+    assert "two side frames" in ctx
+    assert "hinge pins" in ctx
+    assert "ventilation cutouts" in ctx
+
+
+@patch("backend.designs.intake.decide_next_intake_move")
+@patch("backend.designs.intake.summarize_request_with_vlm")
+def test_start_new_intake_populates_feature_checklist(mock_summarize, mock_move) -> None:
+    """The checklist from the VLM summary flows into the planner-facing context."""
+    mock_summarize.return_value = {
+        "mode": "text",
+        "summary": "a foldable laptop stand",
+        "observations": [],
+        "missing_facts": [],
+        "object_type": "foldable laptop stand",
+        "required_features": ["two side frames", "hinge pins", "angle slots"],
+    }
+    mock_move.return_value = {"satisfied": True, "question": "", "facts": []}
+
+    outcome = start_or_resume_intake(
+        user_prompt="make a foldable laptop stand 300mm wide",  # digits -> no catch-all
+        incoming_text="make a foldable laptop stand 300mm wide",
+        attachments=[],
+        state=None,
+    )
+    assert outcome.status == "ready"
+    assert "Required-feature checklist" in outcome.intake_context
+    assert "hinge pins" in outcome.intake_context
+
 
 def test_normalize_clarification_answer_maps_vague_answers_to_defaults() -> None:
     assert normalize_clarification_answer("  use defaults  ") == "use sensible standard defaults"

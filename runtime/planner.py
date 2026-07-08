@@ -41,12 +41,10 @@ def _llm_kwargs() -> dict:
 # can extract their source; they must stay self-contained (see rlm/pull_tools).
 from rlm.pull_tools import (
     delegate_features,
-    fetch_kb_sections,
-    list_kb_index,
-    list_primitives,
     list_skills,
     lookup_design_reference,
     lookup_primitive,
+    preview_plan,
     read_skill,
 )
 from runtime.schema import PrimitivePlan
@@ -57,11 +55,9 @@ if TYPE_CHECKING:
 _PLANNER_TOOLS = [
     read_skill,
     list_skills,
-    list_primitives,
     lookup_primitive,
-    list_kb_index,
-    fetch_kb_sections,
     lookup_design_reference,
+    preview_plan,
     delegate_features,
 ]
 # delegate_stage is intentionally NOT exposed. Measured: per-stage child delegation
@@ -75,11 +71,9 @@ _PLANNER_TOOLS = [
 _REPLANNER_TOOLS = [
     read_skill,
     list_skills,
-    list_primitives,
     lookup_primitive,
-    list_kb_index,
-    fetch_kb_sections,
     lookup_design_reference,
+    preview_plan,
 ]
 # delegate_features intentionally absent: a replan edits ONE existing plan, it
 # never decomposes a new assembly, so the fork tool has no legitimate use here.
@@ -94,13 +88,46 @@ def parse_planner_result(result: Any) -> PrimitivePlan:
     return PrimitivePlan.model_validate(result)
 
 
+def _load_core_skills() -> dict[str, str]:
+    """Load core skills from the skills directory directly to avoid REPL roundtrips."""
+    import os
+    skills_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills")
+    loaded = {}
+    for name in ["playbook", "primitive_planning"]:
+        path = os.path.join(skills_dir, f"{name}.md")
+        try:
+            with open(path, encoding="utf-8") as f:
+                loaded[name] = f.read()
+        except Exception as e:
+            logger.warning(f"Failed to pre-load skill {name}: {e}")
+    return loaded
+
+
+def _load_available_primitives() -> dict[str, str]:
+    """Load available primitives with 1-line descriptions from library.json to build the Rich Menu."""
+    from runtime.schema import load_library
+    try:
+        lib = load_library()
+        return {name: spec.get("description", "") for name, spec in lib.items()}
+    except Exception as e:
+        logger.warning(f"Failed to build Rich Menu: {e}")
+        return {}
+
+
 PLANNER_TASK = """\
 You are the PLANNER. Turn the user's request (original_prompt, plus any
 chat_history) into ONE validated PrimitivePlan.
 
-Load your playbook guide first — it has your operating steps, skill read order,
-and output contract. Resolve ambiguity with reasonable defaults; there is no
-option to ask the user. Emit FINAL in as few REPL steps as possible.
+Your playbook and core skills are already loaded in `context['preloaded_skills']`.
+Read them directly from context. Do NOT call `read_skill()` for 'playbook' or
+'primitive_planning'—they are already available. Resolve ambiguity with
+reasonable defaults; there is no option to ask the user.
+
+For a TRIVIAL single-primitive part, emit FINAL in one block. For a COMPLEX part
+(a real assembly, or many features/patterns/stacked parts), you MUST call
+`preview_plan(plan_dict)` to check the REAL geometry BEFORE FINAL — fix any
+disconnected (num_components > 1) or mis-sized feature it reveals — bounded to at
+most 2 preview calls. See the GROUNDED SELF-CHECK section of the playbook.
 """
 
 
@@ -108,19 +135,15 @@ def build_planner_query(
     original_prompt: str,
     chat_history: list[dict[str, str]],
     *,
-    available_primitives: list[str] | None = None,
-    kb_index: dict[str, Any] | None = None,
+    available_primitives: dict[str, str] | None = None,
+    preloaded_skills: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assemble the structured context dict handed to the RLM for one turn.
 
-    MENU by value, CONTENT by reference. available_primitives (20 catalog keys) and
-    kb_index (a compact section menu) are tiny — pre-fetching them once and embedding
-    them here is cheaper than making the monolithic root spend extra REPL steps to
-    pull them (each added step re-sends the whole transcript — quadratic cost; this
-    was MEASURED: removing the menu pushed a complex part from 326k → 464k tokens).
-    The LARGE data — full primitive specs and KB section bodies — is NOT injected;
-    the planner still pulls only what it needs via lookup_primitive()/
-    fetch_kb_sections(). Omitted (None) → the planner falls back to the tools.
+    MENU by value, CONTENT by reference. available_primitives (a Rich Menu of keys and 
+    1-line descriptions) is preloaded on the host — cheaper than making the monolithic 
+    root spend extra REPL steps to pull it. The large primitive schemas are pulled 
+    by reference only when needed via lookup_primitive().
     """
     # task = the planner's standing instruction; the user's actual request lives
     # ONLY in original_prompt/chat_history. (task used to duplicate original_prompt
@@ -132,8 +155,8 @@ def build_planner_query(
     }
     if available_primitives is not None:
         query["available_primitives"] = available_primitives
-    if kb_index is not None:
-        query["kb_index"] = kb_index
+    if preloaded_skills is not None:
+        query["preloaded_skills"] = preloaded_skills
     return query
 
 
@@ -171,27 +194,20 @@ def run_planner_turn(
 
         config = default_config
 
-    # Pre-fetch the tiny MENUS once (catalog keys + KB section index) and embed them
-    # so the monolithic root skips the list_primitives()/list_kb_index() REPL steps —
-    # cheaper than the extra growing-context round-trips (measured). The large CONTENT
-    # is still pulled by reference inside the REPL. The pull tools read
-    # DTCM_BACKEND_URL from the env, so set it before the host-side pre-fetch.
+    # Pre-fetch the Rich Menu (catalog keys + 1-line descriptions) and embed them
+    # so the monolithic root skips list_primitives() — cheaper than REPL round-trips.
+    # The large schemas are still pulled by reference inside the REPL via lookup_primitive().
     os.environ["DTCM_BACKEND_URL"] = backend_url
-    try:
-        available_primitives: list[str] | None = list_primitives()
-    except Exception:
-        available_primitives = None
-    try:
-        kb_index: dict[str, Any] | None = list_kb_index()
-    except Exception:
-        kb_index = None
+    available_primitives = _load_available_primitives()
+
+    preloaded_skills = _load_core_skills()
 
     result = fast_rlm.run(
         build_planner_query(
             original_prompt,
             chat_history,
             available_primitives=available_primitives,
-            kb_index=kb_index,
+            preloaded_skills=preloaded_skills,
         ),
         config=config,
         tools=_PLANNER_TOOLS,
@@ -208,9 +224,15 @@ REPLANNER_TASK = """\
 You are the REPLANNER. A plan already exists and needs ONE revision — the request
 is in the last message of chat_history, along with the current plan.
 
-Load your replan playbook guide first — it has your steps and output contract.
-Change only what the request calls for; keep every other step unchanged. Emit
-FINAL in as few REPL steps as possible.
+Your playbook and core skills are already loaded in `context['preloaded_skills']`.
+Read them directly from context. Do NOT call `read_skill()` for 'playbook' or
+'primitive_planning'—they are already available. Change only what the request
+calls for; keep every other step unchanged.
+
+If your fix materially changes the geometry of a COMPLEX part (moves/resizes a
+feature, adds/removes a body), verify it with `preview_plan(plan_dict)` before
+FINAL — confirm num_components and the changed feature's size are right — bounded
+to at most 2 preview calls. A one-parameter tweak to a simple part needs no preview.
 """
 
 
@@ -249,24 +271,19 @@ def run_replanner_turn(
     if backend_url:
         os.environ["DTCM_BACKEND_URL"] = backend_url
 
-    # Pre-fetch ONLY the primitive-catalog menu (the same measured win as the
-    # planner's pre-inject: skips a list_primitives() REPL step whose growing-
-    # transcript resend costs far more than these ~20 keys). kb_index is NOT
-    # injected — a replan edits an existing plan and rarely needs the KB menu;
-    # the tool remains available if it does.
-    available_primitives: list[str] | None = None
-    if backend_url:
-        try:
-            available_primitives = list_primitives()
-        except Exception:
-            available_primitives = None
+    # Pre-fetch the Rich Menu (catalog keys + 1-line descriptions) and embed them
+    # so the monolithic root skips list_primitives() — cheaper than REPL round-trips.
+    # The large schemas are still pulled by reference inside the REPL via lookup_primitive().
+    available_primitives = _load_available_primitives()
+    preloaded_skills = _load_core_skills()
 
     query: dict[str, Any] = {
         "task": REPLANNER_TASK,
         "original_prompt": original_prompt,
         "chat_history": chat_history,
+        "preloaded_skills": preloaded_skills,
     }
-    if available_primitives is not None:
+    if available_primitives:
         query["available_primitives"] = available_primitives
     result = fast_rlm.run(
         query,

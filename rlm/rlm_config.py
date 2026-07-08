@@ -38,7 +38,11 @@ config.sub_agent = "gemini-3.5-flash"
 # Now paired with the pro-tier root driver, which reasons more per turn and should
 # finish in far fewer turns, so 20 is the bet: bounds runaway AND should suffice for
 # complex. If a complex part dies here, the pro driver still needs >20 turns — raise.
-config.max_calls_per_subagent = 20
+# BUMPED 20 -> 24: the grounded self-check (Task 6) adds up to 2 preview_plan turns
+# (+ a fix turn) on COMPLEX plans before FINAL. 24 keeps the same runaway bound while
+# giving the pro driver headroom to build -> preview -> fix -> preview -> FINAL. Simple
+# parts don't preview, so their turn count is unchanged. max_depth=1 still caps fan-out.
+config.max_calls_per_subagent = 24
 # max_prompt_tokens is a CUMULATIVE budget across all LLM calls in one run
 # (not a per-call context limit). The fast-rlm default (200k) was calibrated
 # for GPT-4 class models. Gemini Flash has a 1M token context window; our
@@ -123,7 +127,12 @@ LLM_KWARGS: dict = {
     "temperature": float(os.environ.get("RLM_TEMPERATURE", "0.1")),
     "top_p": float(os.environ.get("RLM_TOP_P", "0.95")),
 }
-_effort = os.environ.get("RLM_REASONING_EFFORT", "none")
+# DEFAULT is "low", NOT unset. With reasoning_effort omitted, gemini-3.1-pro-preview
+# runs DYNAMIC/HIGH thinking = 40-173s PER REPL turn (measured; see the note above),
+# which across 20+ turns is the runaway-latency root cause (1.5h "builds nothing"
+# runs). "low" caps the budget for our structured-extraction planner without starving
+# it. Override via RLM_REASONING_EFFORT ("low"|"medium"|"high"); set "none"/"" to omit.
+_effort = os.environ.get("RLM_REASONING_EFFORT", "low")
 if _effort not in (None, "", "none"):
     LLM_KWARGS["reasoning_effort"] = _effort
 _seed = os.environ.get("RLM_SEED")

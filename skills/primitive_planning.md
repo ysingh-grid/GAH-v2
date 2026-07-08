@@ -26,8 +26,8 @@ primitive library. This is **Phase 1 / Steps 2–3** of the RLM pipeline.
 
 ## Primitive Selection Rules
 
-- Match the physical description to the closest schema in `primitives/library.json`.
-  (e.g., use `cone` for cones, `cylinder` for shafts, `box` for blocks)
+- Match the physical description to the closest schema in the `context["available_primitives"]` Rich Menu (which maps shape keys to descriptions).
+- Once you select candidate shapes from the Rich Menu, write a **single python loop block** to call `lookup_primitive` for all of them in exactly one turn (e.g. `for s in ['cylinder', 'cone']: print(lookup_primitive(s))`). Do NOT do sequential, multi-turn lookups!
 - If a shape cannot map to a single primitive, use CSG: combine multiple
   primitives with `union` (add) and `cut` (subtract) operations.
 - Every parameter in the schema **must** have a numeric value. Infer sensible
@@ -72,6 +72,41 @@ Each step in a plan must contain:
 
 > **Critical**: Position offsets must correctly stack primitives to avoid
 > overlaps or gaps. Apply `dimension_reasoning` rules when computing `position`.
+
+> **Verify scale on complex parts**: after building a multi-feature/assembly
+> plan, call `preview_plan(plan)` and read `num_components` (should be 1 for a
+> connected part) and each feature's `pct_of_overall_bbox` — resize any feature
+> that is too small to read, then FINAL. Skip this for a lone primitive.
+
+---
+
+## Non-boxy silhouettes: `profile_extrude` and `revolve`
+
+When a part's cross-section is NOT a stock primitive — an L/T/U bracket, a cam,
+a gear-ish outline, a channel — do NOT approximate it by stacking thin boxes.
+Use `profile_extrude`: give it the closed 2D outline as `[[x, y], ...]` points
+(mm, do not repeat the first point) and a `height` to extrude along +Z.
+
+```json
+{ "id": "bracket", "primitive": "profile_extrude", "operation": "base",
+  "parameters": { "profile": [[0,0],[80,0],[80,10],[10,10],[10,60],[0,60]],
+                  "height": 5.0 } }
+```
+That single step is a clean L cross-section (an 80×10 foot + a 10×60 leg)
+extruded 5mm — one watertight solid, no tangent-face fusion risk.
+
+For anything turned about an axis — bottles, nozzles, flanges, pulleys — use
+`revolve`: a profile with all `x >= 0` swept about the Y axis (`angle` 360 for
+a full solid).
+
+```json
+{ "id": "flange", "primitive": "revolve", "operation": "base",
+  "parameters": { "profile": [[0,0],[25,0],[25,4],[10,4],[10,20],[0,20]],
+                  "angle": 360.0 } }
+```
+
+Rule of thumb: if you find yourself unioning 3+ boxes just to fake one flat
+outline, replace them with ONE `profile_extrude`. Preview_plan it to confirm.
 
 ---
 

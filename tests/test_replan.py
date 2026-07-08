@@ -8,6 +8,7 @@ from runtime.replan import (
     build_feedback_message,
     cap_for_stage,
     collect_feedback_detail,
+    format_feature_findings,
     is_exhausted,
     replan_for_edit,
     replan_with_feedback,
@@ -74,6 +75,48 @@ def test_collect_feedback_detail_prefers_verifier_feedback_for_visual():
 
 def test_collect_feedback_detail_uses_error_for_other_stages():
     assert collect_feedback_detail("cadquery_compile", {"error": "boom"}) == "boom"
+
+
+# ── Task 4: enriched replan feedback (per-feature findings + step inventory) ──
+
+
+def test_format_feature_findings_renders_status_and_note():
+    block = format_feature_findings(
+        [
+            {"feature": "side frames", "status": "wrong", "note": "too thin; make ~50mm walls"},
+            {"feature": "hinge pin", "status": "missing", "note": "add a 5mm cylinder"},
+            {"feature": "base plate", "status": "present", "note": ""},
+        ]
+    )
+    assert "side frames: WRONG — too thin; make ~50mm walls" in block
+    assert "hinge pin: MISSING — add a 5mm cylinder" in block
+    assert "base plate: PRESENT" in block
+
+
+def test_format_feature_findings_empty_is_blank():
+    assert format_feature_findings([]) == ""
+    assert format_feature_findings(None) == ""  # type: ignore[arg-type]
+
+
+def test_collect_feedback_detail_visual_appends_findings_when_present():
+    detail = collect_feedback_detail(
+        "visual_mismatch",
+        {
+            "feedback": "[visual_failure:missing_feature] frames missing",
+            "feature_findings": [
+                {"feature": "side frames", "status": "missing", "note": "add two tall walls"}
+            ],
+        },
+    )
+    assert "frames missing" in detail
+    assert "Per-feature verifier findings" in detail
+    assert "side frames: MISSING — add two tall walls" in detail
+
+
+def test_feedback_message_includes_step_inventory():
+    msg = build_feedback_message("visual_mismatch", "frames too thin", _CUBE)
+    assert "CURRENT PLAN STEPS" in msg
+    assert "b: base box" in msg  # the _CUBE step: id 'b', base, box
 
 
 def test_replan_appends_system_feedback_and_calls_planner():

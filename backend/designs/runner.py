@@ -154,6 +154,8 @@ async def run_chat_turn(
 
     if intake.intake_context:
         session.intake_context = intake.intake_context
+    if intake.feature_checklist:
+        session.feature_checklist = intake.feature_checklist
     session.intake_state = None
 
     planner_history = build_planner_history(
@@ -185,7 +187,12 @@ async def run_chat_turn(
     # Base replan history: the pre-planner intake facts ONLY — never the raw
     # chatbot conversation. Replans build plan-lineage state on top of this.
     replan_base_history: list[dict[str, str]] = (
-        [{"role": "user", "content": f"Established design facts from intake:\n{session.intake_context}"}]
+        [
+            {
+                "role": "user",
+                "content": f"Established design facts from intake:\n{session.intake_context}",
+            }
+        ]
         if session.intake_context
         else []
     )
@@ -233,6 +240,7 @@ async def _run_in_process(
                 library=library,
                 run_id=run_id,
                 history=history,
+                feature_checklist=session.feature_checklist,
             ),
         )
     except Exception as exc:
@@ -276,6 +284,7 @@ async def _run_via_temporal(
         run_id=run_id,
         backend_url=backend_url,
         history=list(history or []),
+        feature_checklist=session.feature_checklist,
     )
 
     try:
@@ -460,7 +469,12 @@ async def _apply_edit(
     write_stl_to_studio always points ForgeCAD Studio at the newest one)."""
     last_plan = PrimitivePlan.model_validate(session.last_plan)
     prior_history: list[dict[str, str]] = (
-        [{"role": "user", "content": f"Established design facts from intake:\n{session.intake_context}"}]
+        [
+            {
+                "role": "user",
+                "content": f"Established design facts from intake:\n{session.intake_context}",
+            }
+        ]
         if session.intake_context
         else []
     )
@@ -497,7 +511,12 @@ async def _apply_edit(
     )
 
     replan_base_history: list[dict[str, str]] = (
-        [{"role": "user", "content": f"Established design facts from intake:\n{session.intake_context}"}]
+        [
+            {
+                "role": "user",
+                "content": f"Established design facts from intake:\n{session.intake_context}",
+            }
+        ]
     )
 
     # The VLM verifier only ever sees this single string (no history) — it must

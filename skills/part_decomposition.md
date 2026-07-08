@@ -103,3 +103,51 @@ A single connected body with many features — however many fillets, shells,
 patterns, or holes — is NOT a hand-off case. Design it in one context. Only
 a true multi-solid assembly (Case A) warrants a hand-off, and even then only
 after you've fixed the shared anchors every piece must agree on.
+
+---
+
+## Case A hand-off with `delegate_features` (worked example)
+
+For a genuine multi-body assembly, use `delegate_features(features, shared_frame)`.
+It plans each body in a parallel child agent, then you FLATTEN the results.
+
+**1. Fix the shared frame first** — the anchors every body must agree on:
+
+```python
+shared_frame = {
+    "leaf_thickness": 4.0, "leaf_len": 40.0, "leaf_w": 30.0,
+    "pin_axis_z": 4.0, "pin_radius": 2.5, "knuckle_overlap_mm": 1.0,
+}
+bodies = await delegate_features(
+    features=[
+        {"name": "leaf_a", "operation": "base",  "placement": [-20, 0, 0],
+         "candidate_primitives": ["box", "filleted_box"], "notes": "left leaf"},
+        {"name": "leaf_b", "operation": "union", "placement": [ 20, 0, 0],
+         "candidate_primitives": ["box", "filleted_box"], "notes": "right leaf"},
+        {"name": "pin",    "operation": "union", "placement": [0, 0, 4],
+         "candidate_primitives": ["cylinder"],
+         "notes": "spans both leaves along X; extend 1mm into each knuckle"},
+    ],
+    shared_frame=shared_frame,
+)
+```
+
+**2. Flatten in order** — concatenate every body's steps into one `steps` list.
+Each child returns a valid plan starting with its own `base`; when concatenated
+the 2nd+ bases are auto-coerced to `union` (a union of disjoint solids is one
+legal compound). So you get exactly one `base`, the rest `union`.
+
+**3. Preview the assembly, then FINAL:**
+
+```python
+plan = {"part_name": "hinge", "steps": [s for body in bodies for s in body]}
+ev = preview_plan(plan)
+# If ev["num_components"] > 1, the bodies only TOUCH — grow the pin / leaf overlap
+# at the knuckles by ~1mm (use shared_frame["knuckle_overlap_mm"]) and re-preview.
+FINAL(plan)
+```
+
+> **Why per-body children help:** each body is planned in a clean context with
+> only its own concern + the shared frame, so a 4-body assembly does not blow up
+> one monolithic context. The shared_frame is what keeps them aligned; the
+> assembly preview is what proves they actually fuse.

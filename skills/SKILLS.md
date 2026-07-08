@@ -2,12 +2,12 @@
 
 Use `read_skill(name)` to load any skill file.
 
-**Start here:** read `playbook` FIRST — it gives your role, tools, the skill read-order, and the full program flow.
+**Core skills** (like `playbook` and `primitive_planning`) are pre-loaded in `context['preloaded_skills']` on startup. Read them directly. Do NOT call `read_skill()` for these core guides!
 
-- `playbook`   ← read first, every run
+- `playbook`   ← preloaded
 - `intent_extraction`
 - `part_decomposition`
-- `primitive_planning`
+- `primitive_planning` ← preloaded
 - `dimension_reasoning`
 - `verification_planning`
 - `repair_guidance`

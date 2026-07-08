@@ -216,6 +216,7 @@ class DesignWorkflow:
                         mesh_report=mesh_report,
                         renders=renders,
                         prior_feedback=list(feedback_log),
+                        feature_checklist=inp.feature_checklist,
                     ),
                     schedule_to_close_timeout=_VERIFY_TIMEOUT,
                     heartbeat_timeout=_HEARTBEAT_TIMEOUT,

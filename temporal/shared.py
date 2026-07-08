@@ -44,6 +44,9 @@ class DesignInput:
     # chatbot conversation). The workflow appends each round's failed plan +
     # failure on top, so every replan sees the full plan lineage.
     history: list[dict[str, str]] = field(default_factory=list)
+    # Required-feature checklist (Task 2/3) used to ground the verifier per-feature
+    # — threaded to VerifyInput so the Temporal path judges identically to in-process.
+    feature_checklist: str = ""
 
 
 @dataclass
@@ -183,6 +186,8 @@ class VerifyInput:
     mesh_report: dict[str, Any]
     renders: dict[str, Any]
     prior_feedback: list[str] = field(default_factory=list)
+    # Required-feature checklist to ground the judge per-feature (Task 3 parity).
+    feature_checklist: str = ""
 
 
 @dataclass

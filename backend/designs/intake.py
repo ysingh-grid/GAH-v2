@@ -80,6 +80,12 @@ class IntakeState:
     visual_summary: str = ""
     observations: list[str] = field(default_factory=list)
     missing_facts: list[str] = field(default_factory=list)
+    # Required-feature checklist extracted by the intake VLM (see
+    # tools.vlm_intake.VlmIntakeSummary). object_type is the everyday name;
+    # required_features are the visible, load-bearing features the planner must
+    # build and the verifier will check against.
+    object_type: str = ""
+    required_features: list[str] = field(default_factory=list)
     answers: list[dict[str, str]] = field(default_factory=list)
     attachment_names: list[str] = field(default_factory=list)
     # The conversational bits: the question currently awaiting the user's reply,
@@ -101,6 +107,7 @@ class IntakeOutcome:
     suggested_options: list[str] = field(default_factory=list)
     state: IntakeState | None = None
     intake_context: str = ""
+    feature_checklist: str = ""
 
 
 def normalize_clarification_answer(answer: str | None) -> str | None:
@@ -230,6 +237,8 @@ def _start_new_intake(
         visual_summary=str(summary.get("summary") or "").strip(),
         observations=_clean_summary_values(summary.get("observations")),
         missing_facts=_clean_summary_values(summary.get("missing_facts")),
+        object_type=str(summary.get("object_type") or "").strip(),
+        required_features=_clean_summary_values(summary.get("required_features")),
         answers=[],
         attachment_names=[attachment.filename for attachment in attachments],
         vlm_summary=dict(summary),
@@ -256,6 +265,9 @@ def _start_new_intake(
         return IntakeOutcome(
             status="ready",
             intake_context=build_intake_context(user_prompt=user_prompt, state=state),
+            feature_checklist=format_feature_checklist(
+                state.object_type, state.required_features
+            ),
         )
 
     state.pending_question = move["question"]
@@ -284,6 +296,9 @@ def _resume_intake(
         return IntakeOutcome(
             status="ready",
             intake_context=build_intake_context(user_prompt=user_prompt, state=state),
+            feature_checklist=format_feature_checklist(
+                state.object_type, state.required_features
+            ),
         )
 
     move = _next_move(user_prompt, state)
@@ -294,6 +309,9 @@ def _resume_intake(
         return IntakeOutcome(
             status="ready",
             intake_context=build_intake_context(user_prompt=user_prompt, state=state),
+            feature_checklist=format_feature_checklist(
+                state.object_type, state.required_features
+            ),
         )
 
     state.pending_question = move["question"]
@@ -373,6 +391,25 @@ def build_edit_context(*, edit_text: str, state: IntakeState) -> str:
     return "\n".join(lines)
 
 
+def format_feature_checklist(object_type: str, required_features: list[str]) -> str:
+    """Render the required-feature checklist as a compact text block.
+
+    Pure and dependency-free so it can be reused verbatim by the verifier
+    (Task 3) and any preview tooling. Returns "" when there is nothing to list,
+    so callers can unconditionally concatenate it.
+    """
+    object_type = (object_type or "").strip()
+    features = [f.strip() for f in (required_features or []) if f and f.strip()]
+    if not object_type and not features:
+        return ""
+    lines = ["Required-feature checklist:"]
+    if object_type:
+        lines.append(f"- target object: {object_type}")
+    for feat in features:
+        lines.append(f"- [ ] {feat}")
+    return "\n".join(lines)
+
+
 def build_intake_context(user_prompt: str, state: IntakeState) -> str:
     """Build the text block handed to the planner as immutable intake facts."""
     lines = [
@@ -395,6 +432,10 @@ def build_intake_context(user_prompt: str, state: IntakeState) -> str:
     if state.answers:
         lines.append("- clarified answers:")
         lines.extend(_answer_lines(state.answers))
+    checklist = format_feature_checklist(state.object_type, state.required_features)
+    if checklist:
+        lines.append("")
+        lines.append(checklist)
     return "\n".join(lines)
 
 

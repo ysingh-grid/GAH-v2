@@ -47,7 +47,7 @@ def test_plan_with_no_steps_raises():
         parse_planner_result({"part_name": "x", "steps": []})
 
 
-def test_plan_with_two_base_steps_raises():
+def test_plan_with_two_base_steps_coerced():
     bad = {
         "part_name": "x",
         "steps": [
@@ -55,8 +55,9 @@ def test_plan_with_two_base_steps_raises():
             {"id": "b", "primitive": "box", "operation": "base"},
         ],
     }
-    with pytest.raises(ValidationError, match="exactly one 'base'"):
-        parse_planner_result(bad)
+    res = parse_planner_result(bad)
+    assert res.steps[0].operation == "base"
+    assert res.steps[1].operation == "union"
 
 
 def test_extra_fields_forbidden():
@@ -80,15 +81,12 @@ def test_build_planner_query_shape():
 
 
 def test_build_planner_query_forwards_both_menus():
-    """kb_index was fetched then silently dropped before reaching the query —
-    regression guard that both pre-injected menus land in the dict when supplied."""
+    """Regression guard: pre-injected rich primitive schemas land in the query dict."""
     q = build_planner_query(
         "make a cube", [],
-        available_primitives=["box"],
-        kb_index={"cadquery": {"3d-operations": "..."}},
+        available_primitives={"box": "A 3D box"},
     )
-    assert q["available_primitives"] == ["box"]
-    assert q["kb_index"] == {"cadquery": {"3d-operations": "..."}}
+    assert q["available_primitives"] == {"box": "A 3D box"}
 
 
 def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
@@ -101,8 +99,9 @@ def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
         return {"results": _CUBE_PLAN}
 
     monkeypatch.setattr(fast_rlm, "run", fake_run)
-    monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box"])
-    monkeypatch.setattr("runtime.planner.list_kb_index", lambda: {})
+    monkeypatch.setattr(
+        "runtime.planner._load_available_primitives", lambda: {"box": "A 3D box"}
+    )
 
     out = run_planner_turn(
         "make a 60mm cube",
@@ -132,7 +131,10 @@ def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
         return {"results": _CUBE_PLAN}
 
     monkeypatch.setattr(fast_rlm, "run", fake_run)
-    monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box", "cylinder"])
+    monkeypatch.setattr(
+        "runtime.planner._load_available_primitives",
+        lambda: {"box": "A box", "cylinder": "A cylinder"},
+    )
 
     out = run_replanner_turn(
         "make a 60mm cube",
@@ -142,7 +144,7 @@ def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
     )
 
     assert out.part_name == "cube"
-    assert captured["query"]["available_primitives"] == ["box", "cylinder"]
+    assert captured["query"]["available_primitives"] == {"box": "A box", "cylinder": "A cylinder"}
     assert "kb_index" not in captured["query"]
     assert captured["output_schema"] is PrimitivePlan
 
@@ -173,8 +175,9 @@ def test_run_planner_turn_propagates_exception(monkeypatch):
         raise RuntimeError("budget exhausted")
 
     monkeypatch.setattr(fast_rlm, "run", fake_run)
-    monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box"])
-    monkeypatch.setattr("runtime.planner.list_kb_index", lambda: {})
+    # NOTE: run_planner_turn no longer calls list_primitives/list_kb_index — it
+    # preloads the Rich Menu from the filesystem (_load_available_primitives) and
+    # fast_rlm.run raises before any REPL tool runs, so no tool patching is needed.
 
     with pytest.raises(RuntimeError, match="budget exhausted"):
         run_planner_turn(

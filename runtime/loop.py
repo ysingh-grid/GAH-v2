@@ -117,7 +117,9 @@ def _run_geometry(
     return None
 
 
-def _run_verify(prompt: str, plan_code: str, art: _Artifacts) -> _StageFailure | None:
+def _run_verify(
+    prompt: str, plan_code: str, art: _Artifacts, feature_checklist: str = ""
+) -> _StageFailure | None:
     """Run the multimodal verifier; returns a visual_mismatch failure or None."""
     from tools.verify_geometry import verify_geometry
 
@@ -127,7 +129,12 @@ def _run_verify(prompt: str, plan_code: str, art: _Artifacts) -> _StageFailure |
     metrics = _merge_metrics(exec_result, mesh)
     png = (art.renders or {}).get("png_path", "")
     art.verdict = verify_geometry(
-        prompt, plan_code, metrics, png, prior_feedback=art.feedback_log or None
+        prompt,
+        plan_code,
+        metrics,
+        png,
+        prior_feedback=art.feedback_log or None,
+        feature_checklist=feature_checklist,
     )
     if not art.verdict.get("passed"):
         failure_stage = str(art.verdict.get("failure_stage") or "visual_mismatch")
@@ -187,6 +194,7 @@ def run_geometry_loop(
     run_id: str,
     verify: bool = True,
     history: list[dict[str, str]] | None = None,
+    feature_checklist: str = "",
 ) -> LoopResult:
     """Run the bounded plan->verify->repair loop, returning a traced outcome.
 
@@ -198,6 +206,8 @@ def run_geometry_loop(
         run_id: Artifact run id (all outputs land in outputs/{run_id}/).
         verify: If False, skip the multimodal verifier (geometry-only runs).
         history: Conversation history to thread into replans.
+        feature_checklist: The required-feature checklist text (Task 2) used to
+            ground the verifier per-feature; "" falls back to prompt-only judging.
 
     Returns:
         A LoopResult with status success | failed, always with a trace written
@@ -228,7 +238,7 @@ def run_geometry_loop(
             art = _Artifacts(feedback_log=art.feedback_log)
             failure = _run_geometry(plan, library, run_id, art)
         if failure is None and verify:
-            failure = _run_verify(original_prompt, art.code or "", art)
+            failure = _run_verify(original_prompt, art.code or "", art, feature_checklist)
 
         attempts = inner_attempts + outer_attempts + 1
         if failure is None:

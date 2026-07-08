@@ -14,6 +14,7 @@ def list_primitives() -> list[str]:
     DTCM_BACKEND_URL is injected via fast-rlm's env_variables, not hardcoded.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -39,6 +40,7 @@ def lookup_primitive(key: str) -> dict:
     parameter names and constraints to fill the plan correctly.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -67,6 +69,56 @@ def lookup_primitive(key: str) -> dict:
             ) from None
 
 
+def preview_plan(plan: dict, critique: bool = False) -> dict:
+    """Preview a candidate PrimitivePlan with REAL geometry BEFORE you FINAL it.
+
+    Compiles and builds the plan on the host and returns structured evidence:
+      - compiles / executes: did it turn into valid geometry at all (+ error text)
+      - watertight, num_components, disconnected(+hint): is it ONE fused solid?
+        (num_components > 1 means features only touch instead of overlapping —
+        the single most common complex-part defect)
+      - bbox, volume_mm3: overall scale sanity
+      - per_feature: each step's REAL size — {id, operation, primitive, size_mm
+        [dx,dy,dz], pct_of_overall_bbox} — so you can see if a feature that should
+        be prominent is actually tiny (e.g. side frames at 3% of the bbox).
+    Set critique=True to ALSO render it and get a VLM per-feature verdict (slower;
+    use sparingly).
+
+    USE THIS to sanity-check a COMPLEX / multi-feature / assembly plan and fix
+    mis-sized or detached features before emitting FINAL. Do NOT preview a trivial
+    single-primitive plan — it just costs time.
+
+    HARD-CAPPED: at most 2 previews per plan (DTCM_PREVIEW_BUDGET). Once the cap is
+    hit the tool REFUSES further previews and returns {"budget_exhausted": True} —
+    do not rely on repeated previews; FINAL with your best current plan instead.
+    """
+    import os
+
+    import requests
+
+    # Code-level cap: the sandbox globals persist across REPL turns within one run,
+    # so this counter bounds previews no matter what the prompt says (prompt limits
+    # alone were ignored — the model previewed 15-24x, causing runaway latency).
+    g = globals()
+    budget = int(os.environ.get("DTCM_PREVIEW_BUDGET", "2"))
+    used = g.get("_PREVIEW_CALLS", 0)
+    if used >= budget:
+        return {
+            "budget_exhausted": True,
+            "message": (
+                f"preview_plan budget exhausted ({budget} max per plan). Do NOT "
+                "preview again — emit FINAL now with your best current plan."
+            ),
+        }
+    g["_PREVIEW_CALLS"] = used + 1
+
+    base = os.environ["DTCM_BACKEND_URL"]
+    url = f"{base}/internal/preview-plan"
+    resp = requests.post(url, json={"plan": plan, "critique": critique}, timeout=180)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def list_skills() -> list[str]:
     """Return the names of every reasoning-guide skill available.
 
@@ -75,6 +127,7 @@ def list_skills() -> list[str]:
     even before the playbook mentions them.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -95,11 +148,13 @@ def list_skills() -> list[str]:
 def read_skill(name: str) -> str:
     """Load one skill guide into REPL memory `_SKILLS[name]` (and `context['skills'][name]`).
 
-    ALWAYS call read_skill('playbook') as your FIRST action — it contains your
-    operating instructions, tool list, skill read order, and output contract.
-    After reading the playbook, follow its skill read order for subsequent reads.
+    Note: Core skills like 'playbook' and 'primitive_planning' are already pre-loaded
+    under `context['preloaded_skills']`. Do NOT call read_skill for these;
+    instead, read them directly from context. Use this function only to fetch any
+    other specialized skill guides if needed.
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -194,6 +249,7 @@ def list_kb_index() -> dict:
         }
     """
     import os
+
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -331,7 +387,12 @@ async def delegate_features(features: list[dict], shared_frame: dict) -> list[li
 
     Returns:
         A list of step-lists (one list of CSG step dicts per feature), in the exact
-        order requested. Flatten these into your main steps array.
+        order requested. FLATTEN them into your main `steps` array in order: the
+        first body stays as-is (its 'base' is the plan's base); every later body
+        also starts with a 'base', which the schema deterministically coerces to
+        'union' (a union of disjoint solids is one legal multi-component compound).
+        Then preview_plan the flattened assembly once (num_components should be 1 if
+        the bodies are meant to touch) and FINAL.
     """
     _llm_query = globals()["llm_query"]
     _batch_query = globals()["batch_llm_query"]
@@ -339,15 +400,22 @@ async def delegate_features(features: list[dict], shared_frame: dict) -> list[li
     _lookup_ref = globals()["lookup_design_reference"]
 
     step_schema = {"type": "array", "items": {"type": "object"}}
+    # Children get ONLY the read tools — NOT preview_plan. preview runs real host
+    # geometry; giving it to every child caused runaway latency (children burned
+    # turns previewing dummy shapes). The ROOT previews the flattened assembly once.
     child_tools = [_lookup_prim, _lookup_ref]
 
     queries = []
     for feat in features:
         q_context = {
             "task": (
-                "Build ONLY this feature/solid IN THE SHARED FRAME given. Use the "
-                "absolute position + operation provided — do NOT change any shared "
-                "anchor. Use lookup_primitive(key) for exact param names. Return a "
+                "Build ONLY this ONE body/feature IN THE SHARED FRAME given, as a "
+                "VALID standalone plan: its FIRST step is operation 'base' (this "
+                "body's root solid), any extra steps are union/cut on top. Use the "
+                "absolute placement + the shared_frame anchors EXACTLY — never move a "
+                "shared anchor. Where this body meets another at an interface, extend "
+                "it ~0.5-1mm INTO the neighbour so the assembly fuses (no floating "
+                "gaps). Use lookup_primitive(key) for exact param names. Return a "
                 "JSON list of step objects: {id, primitive, operation, parameters, "
                 "position:[x,y,z], orientation:[rx,ry,rz], pattern?}."
             ),
