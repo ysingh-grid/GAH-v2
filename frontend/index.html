@@ -1,136 +1,579 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GAH — Text-to-CAD</title>
-  <!--
-    Override before app.js loads:
-      window.BACKEND_URL         = 'http://localhost:8001';
-      window.FORGECAD_STUDIO_URL = 'http://localhost:4000';
-  -->
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GAH — Text to CAD</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        fontFamily: {
+          display: ['"Space Grotesk"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        },
+        colors: { ink: '#02030a', glow1: '#6d5bd0', glow2: '#1f3a80', glow3: '#123c4f' },
+        keyframes: {
+          rise: { '0%': { opacity: '0', transform: 'translateY(12px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+        },
+        animation: { rise: 'rise 0.4s cubic-bezier(0.22,1,0.36,1) both' },
+      } },
+    };
+  </script>
+
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
+
+  <style>
+    html, body, #root { height: 100%; margin: 0; }
+    body {
+      background:
+        radial-gradient(1200px 820px at 78% -18%, #0b0a24 0%, transparent 60%),
+        radial-gradient(980px 700px at 3% 118%, #04101c 0%, transparent 60%),
+        #02030a;
+      color: #dfe3ee; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased; overflow: hidden;
+    }
+    .font-display { font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 9px; height: 9px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.09); border-radius: 999px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* cinematic vignette for depth-of-field feel */
+    .vignette { position: fixed; inset: 0; z-index: 6; pointer-events: none;
+      background: radial-gradient(125% 95% at 50% 42%, transparent 52%, rgba(2,3,10,0.62) 100%); }
+
+    .glass {
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(26px) saturate(150%);
+      -webkit-backdrop-filter: blur(26px) saturate(150%);
+      border: 1px solid rgba(255,255,255,0.07);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 48px rgba(0,0,0,0.5);
+    }
+
+    /* HUD toggle button with glowing conic border-trace on hover */
+    @property --hud-a { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+    .hud-btn { position: relative; overflow: hidden; transition: transform .2s ease, box-shadow .25s ease, background .2s ease; }
+    .hud-btn::after {
+      content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+      background: conic-gradient(from var(--hud-a), transparent 0%, rgba(167,139,250,0.95) 10%, rgba(56,189,248,0.7) 20%, transparent 32%);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor; mask-composite: exclude;
+      opacity: 0; transition: opacity .35s ease;
+    }
+    .hud-btn:not(:disabled):hover::after { opacity: 1; animation: hudtrace 2.2s linear infinite; }
+    @keyframes hudtrace { to { --hud-a: 360deg; } }
+    .hud-btn:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 10px 30px rgba(80,110,255,0.18); background: rgba(255,255,255,0.09); }
+    .hud-btn:not(:disabled):active { transform: translateY(0) scale(0.97); }
+
+    /* sheen for primary/gradient buttons */
+    .grad-anim { background-size: 200% 200%; animation: gradmove 6s ease infinite; }
+    @keyframes gradmove { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+
+    /* translucent, softly glowing HUD hero */
+    .hero-hud {
+      color: rgba(228,232,255,0.80);
+      text-shadow: 0 0 22px rgba(139,92,246,0.35), 0 0 60px rgba(70,100,220,0.16);
+      letter-spacing: -0.015em;
+    }
+
+    .input-glass:focus-within { box-shadow: 0 0 0 1px rgba(139,92,246,0.45), 0 14px 50px rgba(80,110,255,0.28); border-color: rgba(139,92,246,0.35); }
+
+    .typing span { display:inline-block; width:6px; height:6px; margin:0 2px; border-radius:50%; background:#a9b6ff; animation: blink 1.2s infinite both; }
+    .typing span:nth-child(2){ animation-delay:.2s } .typing span:nth-child(3){ animation-delay:.4s }
+    @keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+  </style>
 </head>
 <body>
+  <div id="root"><div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-family:system-ui;font-size:14px">Loading…</div></div>
 
-  <!-- Full-viewport main area -->
-  <div id="ga-main">
+  <script>
+    (function () {
+      function show(msg) {
+        var r = document.getElementById('root');
+        if (r) r.innerHTML = '<pre style="margin:0;padding:24px;color:#fca5a5;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:13px;line-height:1.5">UI failed to load:\n\n' + String(msg).replace(/</g,'&lt;') + '</pre>';
+      }
+      window.addEventListener('error', function (e) { show(e.message || e.error || 'script error'); });
+      window.addEventListener('unhandledrejection', function (e) { show((e.reason && e.reason.message) || e.reason || 'promise rejection'); });
+    })();
+  </script>
 
-    <!-- Hero — until first design -->
-    <div id="ga-hero">
-      <div class="ga-hero-inner">
-        <div class="ga-hero-logo">✦</div>
-        <h1>Text to <span class="ga-grad">CAD</span></h1>
-        <p>Describe a part — AI clarifies dimensions, geometry checks it, ForgeCAD renders it.</p>
-        <div class="ga-hero-hint">Click <span class="ga-hint-key">✦</span> to start</div>
-      </div>
-    </div>
+  <script type="text/babel" data-presets="react">
+    /** @jsxRuntime classic */
+    const { useState, useEffect, useRef, useCallback } = React;
 
-    <!-- ForgeCAD Studio iframe (visible when FORGECAD_STUDIO_URL is set) -->
-    <div id="ga-studio" style="display:none; width:100%; height:100%;">
-      <iframe
-        id="ga-iframe"
-        src="about:blank"
-        title="ForgeCAD Studio"
-        sandbox="allow-scripts allow-same-origin allow-forms"
-        style="width:100%;height:100%;border:none;"
-      ></iframe>
-    </div>
+    const BACKEND = window.BACKEND_URL || window.location.origin;
+    const LS_ID = 'gah_design_id', LS_MSGS = 'gah_messages';
+    const STAGE_MAP = { planning:'PLANNING', generating:'GENERATING', inspecting:'GENERATING', repairing:'GENERATING', verifying:'VERIFYING', replanning:'PLANNING', done:'DONE' };
+    const STAGES = ['PLANNING','GENERATING','VERIFYING','DONE'];
+    const STAGE_ICON = { PLANNING:'🧠', GENERATING:'⚙️', VERIFYING:'🔍', DONE:'✅', FAILED:'❌' };
+    const nowTime = () => new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
 
-    <!-- .forge.js code view (fallback when studio not configured) -->
-    <div id="ga-code" style="display:none;">
-      <div class="ga-code-bar">
-        <div class="ga-dots-row">
-          <span class="ga-tdot red"></span>
-          <span class="ga-tdot amber"></span>
-          <span class="ga-tdot green"></span>
+    const MOUSE = { x: window.innerWidth/2, y: window.innerHeight/2, nx: 0, ny: 0 };
+    window.addEventListener('mousemove', (e) => {
+      MOUSE.x = e.clientX; MOUSE.y = e.clientY;
+      MOUSE.nx = (e.clientX / window.innerWidth) * 2 - 1;
+      MOUSE.ny = (e.clientY / window.innerHeight) * 2 - 1;
+    });
+
+    // Cinematic dim Milky-Way: core glow + dim spiral arms + volumetric dust sprites + starfield + fog.
+    function ThreeBackground() {
+      const ref = useRef(null);
+      useEffect(() => {
+        const THREE = window.THREE;
+        if (!THREE || !ref.current) return;
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x02030a, 0.026);
+        const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 240);
+        camera.position.set(0, 3.2, 12.5);
+        const renderer = new THREE.WebGLRenderer({ canvas: ref.current, alpha: true, antialias: true });
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+        // soft radial sprite texture (core glow + dust puffs)
+        const cnv = document.createElement('canvas'); cnv.width = cnv.height = 128;
+        const ctx = cnv.getContext('2d');
+        const grd = ctx.createRadialGradient(64,64,0,64,64,64);
+        grd.addColorStop(0,'rgba(255,255,255,1)'); grd.addColorStop(0.35,'rgba(255,255,255,0.32)'); grd.addColorStop(1,'rgba(255,255,255,0)');
+        ctx.fillStyle = grd; ctx.fillRect(0,0,128,128);
+        const soft = new THREE.CanvasTexture(cnv);
+
+        const galaxy = new THREE.Group(); scene.add(galaxy);
+        galaxy.rotation.x = 0.5;
+
+        const core = new THREE.Sprite(new THREE.SpriteMaterial({ map: soft, color: 0x9a86ff, transparent: true, opacity: 0.20, blending: THREE.AdditiveBlending, depthWrite: false }));
+        core.scale.set(7.5, 7.5, 1); galaxy.add(core);
+
+        const COUNT = 16000, RADIUS = 18, BRANCHES = 5, SPIN = 1.05, RAND = 0.6, RANDPOW = 2.7;
+        const gpos = new Float32Array(COUNT*3), gcol = new Float32Array(COUNT*3);
+        const cInside = new THREE.Color(0x6d5bd0), cMid = new THREE.Color(0x2f3f86), cOutside = new THREE.Color(0x164a6b);
+        for (let i=0;i<COUNT;i++) {
+          const i3 = i*3;
+          const r = Math.pow(Math.random(), 1.5) * RADIUS;
+          const branch = ((i % BRANCHES) / BRANCHES) * Math.PI * 2;
+          const spin = r * SPIN;
+          const rx = Math.pow(Math.random(), RANDPOW) * (Math.random()<0.5?1:-1) * RAND * r * 0.35;
+          const ry = Math.pow(Math.random(), RANDPOW) * (Math.random()<0.5?1:-1) * RAND * r * 0.09;
+          const rz = Math.pow(Math.random(), RANDPOW) * (Math.random()<0.5?1:-1) * RAND * r * 0.35;
+          gpos[i3] = Math.cos(branch+spin)*r + rx; gpos[i3+1] = ry; gpos[i3+2] = Math.sin(branch+spin)*r + rz;
+          const c = cInside.clone(); const tt = r / RADIUS;
+          c.lerp(cMid, Math.min(tt*1.6, 1)); c.lerp(cOutside, Math.max((tt-0.5)*2, 0));
+          gcol[i3]=c.r; gcol[i3+1]=c.g; gcol[i3+2]=c.b;
+        }
+        const ggeo = new THREE.BufferGeometry();
+        ggeo.setAttribute('position', new THREE.BufferAttribute(gpos, 3));
+        ggeo.setAttribute('color', new THREE.BufferAttribute(gcol, 3));
+        const gmat = new THREE.PointsMaterial({ size: 0.045, sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true, transparent: true, opacity: 0.55 });
+        galaxy.add(new THREE.Points(ggeo, gmat));
+
+        // volumetric dust clouds
+        const dustColors = [0x3a2f6e, 0x22305c, 0x123c4f];
+        const dust = [];
+        for (let i=0;i<26;i++) {
+          const rr = 3 + Math.random()*13, a = Math.random()*Math.PI*2;
+          const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: soft, color: dustColors[i%3], transparent: true, opacity: 0.05 + Math.random()*0.07, blending: THREE.AdditiveBlending, depthWrite: false }));
+          sp.position.set(Math.cos(a)*rr, (Math.random()-0.5)*1.5, Math.sin(a)*rr);
+          const sc = 4 + Math.random()*6; sp.scale.set(sc, sc, 1);
+          galaxy.add(sp); dust.push(sp);
+        }
+
+        const SC = 3000, spos = new Float32Array(SC*3);
+        for (let i=0;i<SC;i++) { const i3=i*3; const rr=48+Math.random()*100, th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1); spos[i3]=rr*Math.sin(ph)*Math.cos(th); spos[i3+1]=rr*Math.cos(ph); spos[i3+2]=rr*Math.sin(ph)*Math.sin(th); }
+        const sgeo = new THREE.BufferGeometry(); sgeo.setAttribute('position', new THREE.BufferAttribute(spos, 3));
+        const stars = new THREE.Points(sgeo, new THREE.PointsMaterial({ color: 0x9fb0d4, size: 0.07, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }));
+        scene.add(stars);
+
+        let raf, t = 0;
+        const onResize = () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); };
+        addEventListener('resize', onResize);
+        (function loop(){
+          t += 0.0013;
+          galaxy.rotation.y = t;
+          galaxy.rotation.x = 0.5 + Math.sin(t*0.25)*0.05;
+          stars.rotation.y = -t*0.02;
+          camera.position.x += (MOUSE.nx*1.8 - camera.position.x) * 0.035;
+          camera.position.y += (3.2 + (-MOUSE.ny*1.2) - camera.position.y) * 0.035;
+          camera.lookAt(0, 0, 0);
+          renderer.render(scene, camera);
+          raf = requestAnimationFrame(loop);
+        })();
+        return () => { cancelAnimationFrame(raf); removeEventListener('resize', onResize); ggeo.dispose(); gmat.dispose(); sgeo.dispose(); soft.dispose(); renderer.dispose(); };
+      }, []);
+      return <canvas ref={ref} className="fixed inset-0 -z-30" style={{ width:'100%', height:'100%' }} />;
+    }
+
+    function MouseSpotlight() {
+      const ref = useRef(null);
+      useEffect(() => {
+        let raf;
+        const loop = () => {
+          if (ref.current) ref.current.style.background = `radial-gradient(500px circle at ${MOUSE.x}px ${MOUSE.y}px, rgba(120,110,255,0.07), transparent 72%)`;
+          raf = requestAnimationFrame(loop);
+        };
+        loop();
+        return () => cancelAnimationFrame(raf);
+      }, []);
+      return <div ref={ref} className="fixed inset-0 -z-10 pointer-events-none" />;
+    }
+
+    function Background() {
+      return (
+        <div className="fixed inset-0 -z-20 overflow-hidden pointer-events-none">
+          <div className="absolute -top-52 -left-44 h-[48rem] w-[48rem] rounded-full bg-glow1/10 blur-[180px]" />
+          <div className="absolute -bottom-60 right-1/4 h-[46rem] w-[46rem] rounded-full bg-glow3/10 blur-[190px]" />
         </div>
-        <span class="ga-code-label">generated_part.forge.js</span>
-        <button id="ga-copy-btn" onclick="window.__gah.copyCode()">Copy</button>
-      </div>
-      <div class="ga-code-scroll"><pre id="ga-code-pre"></pre></div>
-    </div>
+      );
+    }
 
-  </div><!-- #ga-main -->
+    function NavBar(p) {
+      const btn = "hud-btn px-3.5 py-2 rounded-xl text-[13px] font-medium border border-white/10";
+      const active = "bg-white/[0.05] text-gray-100";
+      const muted = "bg-white/[0.02] text-gray-600 cursor-not-allowed";
+      const dot = { connected:'bg-emerald-400', connecting:'bg-amber-400', error:'bg-rose-500' }[p.conn] || 'bg-gray-500';
+      const gate = (ok, on) => ({ className: `${btn} ${ok ? active : muted}`, onClick: ok ? on : undefined, disabled: !ok });
+      return (
+        <nav className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-3 glass border-x-0 border-t-0 rounded-none">
+          <div className="flex items-center gap-3">
+            <span className="text-xl drop-shadow-[0_0_12px_rgba(139,92,246,0.6)]">✦</span>
+            <span className="font-display font-semibold tracking-tight text-[15px] text-gray-200">GAH <span className="text-gray-500 font-normal">· Text to CAD</span></span>
+            <span className={`ml-2 h-2 w-2 rounded-full ${dot} shadow-[0_0_8px_currentColor]`} title={p.conn} />
+          </div>
+          <div className="flex items-center gap-2">
+            <button className={`${btn} ${active}`} onClick={p.onPrevRun}>Previous Run</button>
+            <button className={`${btn} ${active}`} onClick={p.onNewRun}>New Run</button>
+            <button {...gate(!!p.runId, p.onLogs)}>Logs</button>
+            <button {...gate(!!p.runId, p.onRender)}>Render</button>
+            <button {...gate(p.temporalReady, p.onTemporal)} title="Open this run in the Temporal Web UI">Temporal UI</button>
+            <button className={`hud-btn px-3.5 py-2 rounded-xl text-[13px] font-medium border ${p.canHandoff ? 'grad-anim bg-gradient-to-r from-violet-700 to-indigo-700 hover:from-violet-600 hover:to-indigo-600 text-white border-violet-400/25' : 'bg-white/[0.02] text-gray-600 border-white/10 cursor-not-allowed'}`}
+              onClick={p.canHandoff ? p.onHandoff : undefined} disabled={!p.canHandoff}
+              title={p.canHandoff ? 'Render the STL in ForgeCAD Studio' : 'Enabled after a successful generation'}>Handoff to ForgeCAD</button>
+          </div>
+        </nav>
+      );
+    }
 
-  <!-- FAB -->
-  <button id="ga-fab" onclick="window.__gah.toggle()" title="AI Design Assistant" aria-label="AI Design Assistant">
-    <span id="ga-fab-icon">✦</span>
-    <span id="ga-notif"></span>
-  </button>
-
-  <!-- Sliding panel (forge-assistant.js style) -->
-  <div id="ga-panel" role="complementary" aria-label="Design assistant">
-
-    <!-- Header -->
-    <div id="ga-header">
-      <div class="ga-header-left">
-        <div class="ga-title">🔬 Measurement Assistant <span class="ga-badge">AI</span></div>
-        <div class="ga-sub">Clarifies dimensions before CAD generation</div>
-      </div>
-      <div class="ga-header-right">
-        <span id="ga-conn-dot" class="ga-conn-dot" title="Disconnected"></span>
-        <button id="ga-close" onclick="window.__gah.toggle()" aria-label="Close">✕</button>
-      </div>
-    </div>
-
-    <!-- Params strip -->
-    <div id="ga-params">
-      <div class="ga-params-title">✓ Captured measurements</div>
-      <div id="ga-chips" class="ga-chips"></div>
-    </div>
-
-    <!-- Message body -->
-    <div id="ga-body" role="log" aria-live="polite">
-      <div class="ga-msg assistant">
-        <div class="ga-bubble">
-          👋 Hi! I'm your <strong>measurement assistant</strong>.<br><br>
-          Tell me what part you want to design and I'll ask the right questions to nail down every dimension — then generate it directly in ForgeCAD.
+    function Drawer({ open, title, onClose, children }) {
+      if (!open) return null;
+      return (
+        <div className="fixed inset-0 z-40 flex bg-black/45 backdrop-blur-sm" onClick={onClose}>
+          <div className="ml-auto h-full w-[440px] max-w-[92vw] glass rounded-none border-y-0 border-r-0 p-5 overflow-y-auto animate-rise" onClick={(e)=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-lg font-semibold text-gray-200">{title}</h2>
+              <button className="text-gray-400 hover:text-white text-lg" onClick={onClose}>✕</button>
+            </div>
+            {children}
+          </div>
         </div>
-        <div class="ga-time">Just now</div>
-      </div>
-    </div>
+      );
+    }
 
-    <!-- Suggestion chips -->
-    <div id="ga-suggestions">
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A mounting bracket with 4 bolt holes</button>
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A hexagonal knob, M6 through-hole</button>
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">A flanged cylinder, DN25 pipe</button>
-      <button class="ga-sugg" onclick="window.__gah.suggest(this)">An enclosure box with lid</button>
-    </div>
+    function Progress({ stage }) {
+      if (!stage) return null;
+      const idx = STAGES.indexOf(stage);
+      return (
+        <div className="flex items-center gap-2 justify-center mb-4 animate-rise">
+          {STAGES.map((s,i) => {
+            const done = stage!=='FAILED' && i<idx, cur = s===stage;
+            const cls = cur ? 'bg-violet-600/25 border-violet-400/45 text-violet-100 shadow-[0_0_16px_rgba(139,92,246,0.25)]'
+              : done ? 'bg-emerald-500/12 border-emerald-400/25 text-emerald-200'
+              : 'bg-white/[0.03] border-white/10 text-gray-500';
+            return <span key={s} className={`text-xs px-3 py-1 rounded-full border font-medium ${cls}`}>{STAGE_ICON[s]} {s}</span>;
+          })}
+        </div>
+      );
+    }
 
-    <!-- Progress panel (visible during generating) -->
-    <div id="ga-progress">
-      <div class="ga-prog-header">
-        <span>Generating…</span>
-        <span id="ga-prog-stage"></span>
-      </div>
-      <div id="ga-stage-row" class="ga-stage-row"></div>
-      <div id="ga-prog-msg"></div>
-    </div>
+    function Message({ m }) {
+      const mine = m.role==='user', sys = m.role==='system';
+      const html = (m.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code class="px-1 rounded bg-black/30">$1</code>').replace(/\n/g,'<br/>');
+      return (
+        <div className={`flex ${mine?'justify-end':'justify-start'} animate-rise`}>
+          <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed border ${mine?'bg-gradient-to-br from-violet-700/30 to-indigo-700/20 border-violet-400/20 text-violet-50':sys?'bg-rose-500/10 border-rose-400/20 text-rose-100':'glass text-gray-100'}`}>
+            <div dangerouslySetInnerHTML={{ __html: html }} />
+            <div className="mt-1 text-[10px] text-gray-400/70">{m.time}</div>
+          </div>
+        </div>
+      );
+    }
 
-    <!-- Done banner -->
-    <div id="ga-done">
-      <div class="ga-done-title">✅ Design complete!</div>
-      <div class="ga-done-sub">ForgeCAD is updating your viewport…</div>
-      <div class="ga-done-file" id="ga-done-file"></div>
-    </div>
+    function ArtifactView({ artifacts }) {
+      if (!artifacts) return <p className="text-sm text-gray-400">No artifacts yet — run a design first.</p>;
+      const renders = artifacts.renders||[], stl = artifacts.stl||[], step = artifacts.step||[];
+      return (
+        <div className="space-y-4">
+          {renders.length === 0 && <p className="text-sm text-gray-400">No render images found for this run.</p>}
+          {renders.map((u) => (<img key={u} src={BACKEND+u} alt="render" className="w-full rounded-xl border border-white/10 bg-black/30" />))}
+          {(stl.length || step.length) ? (
+            <div className="pt-2 border-t border-white/10">
+              <div className="text-xs text-gray-400 mb-2">Downloads</div>
+              <div className="flex flex-wrap gap-2">
+                {stl.concat(step).map((u) => (<a key={u} href={BACKEND+u} download className="hud-btn px-3 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10">{u.split('/').pop()}</a>))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
 
-    <!-- Input row -->
-    <div id="ga-input-row">
-      <textarea
-        id="ga-input"
-        rows="1"
-        placeholder="Describe your part or answer a question…"
-        oninput="window.__gah.resize(this)"
-        onkeydown="window.__gah.key(event)"
-        aria-label="Message input"
-      ></textarea>
-      <button id="ga-send" onclick="window.__gah.send()" aria-label="Send">➤</button>
-    </div>
+    function LogsView({ stageLog, trace }) {
+      const outcome = (trace && trace.outcome) || null;
+      return (
+        <div className="space-y-4">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-gray-400 mb-2">Live steps</div>
+            {stageLog.length === 0 ? <p className="text-sm text-gray-500">No steps yet.</p> : (
+              <ol className="space-y-1">
+                {stageLog.map((s,i) => (<li key={i} className="text-sm flex gap-2"><span className="text-gray-500 w-14 shrink-0">{s.time}</span><span>{s.label}</span></li>))}
+              </ol>
+            )}
+          </div>
+          {outcome && (
+            <div className="pt-3 border-t border-white/10 text-sm space-y-1">
+              <div className="text-xs uppercase tracking-wider text-gray-400 mb-1">Trace outcome</div>
+              <div>status: <span className={outcome.status==='success'?'text-emerald-300':'text-rose-300'}>{outcome.status}</span></div>
+              <div>attempts: {outcome.attempts}</div>
+              {outcome.failure_category && <div>category: {outcome.failure_category}</div>}
+            </div>
+          )}
+          {trace && trace.code && (
+            <div className="pt-3 border-t border-white/10">
+              <div className="text-xs uppercase tracking-wider text-gray-400 mb-2">CadQuery code</div>
+              <pre className="text-[11px] bg-black/40 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">{trace.code}</pre>
+            </div>
+          )}
+        </div>
+      );
+    }
 
-  </div><!-- #ga-panel -->
+    function App() {
+      const [cfg, setCfg] = useState({});
+      const [designId, setDesignId] = useState(null);
+      const [conn, setConn] = useState('connecting');
+      const [messages, setMessages] = useState(() => { try { return JSON.parse(localStorage.getItem(LS_MSGS)) || []; } catch (e) { return []; } });
+      const [input, setInput] = useState('');
+      const [status, setStatus] = useState('idle');
+      const [stage, setStage] = useState(null);
+      const [typing, setTyping] = useState(false);
+      const [canHandoff, setCanHandoff] = useState(false);
+      const [runId, setRunId] = useState(null);
+      const [studioUrl, setStudioUrl] = useState(null);
+      const [panel, setPanel] = useState('none');
+      const [prevRuns, setPrevRuns] = useState([]);
+      const [prevDetail, setPrevDetail] = useState(null);
+      const [stageLog, setStageLog] = useState([]);
+      const [trace, setTrace] = useState(null);
+      const [artifacts, setArtifacts] = useState(null);
 
-  <script src="app.js"></script>
+      const wsRef = useRef(null), logRef = useRef(null), cfgRef = useRef({}), parallaxRef = useRef(null);
+
+      const push = useCallback((role, text) => setMessages((p)=>[...p, { role, text, time: nowTime() }]), []);
+      const logStep = useCallback((label) => setStageLog((p)=>[...p, { label, time: nowTime() }]), []);
+
+      useEffect(() => { try { localStorage.setItem(LS_MSGS, JSON.stringify(messages.slice(-50))); } catch(e){} }, [messages]);
+      useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [messages, typing, stage]);
+
+      // Parallax: UI layer eases opposite the galaxy for depth (direct DOM, no re-render).
+      useEffect(() => {
+        let raf;
+        const loop = () => {
+          if (parallaxRef.current) parallaxRef.current.style.transform = `translate3d(${MOUSE.nx*-10}px, ${MOUSE.ny*-8}px, 0)`;
+          raf = requestAnimationFrame(loop);
+        };
+        loop();
+        return () => cancelAnimationFrame(raf);
+      }, []);
+
+      const fetchTrace = useCallback(async (id) => { try { const r = await fetch(`${BACKEND}/designs/${id}/trace`); return r.ok ? await r.json() : null; } catch(e){ return null; } }, []);
+      const fetchArtifacts = useCallback(async (id) => { try { const r = await fetch(`${BACKEND}/designs/${id}/artifacts`); return r.ok ? await r.json() : null; } catch(e){ return null; } }, []);
+
+      const handleEvent = useCallback((evt) => {
+        switch (evt.type) {
+          case 'thinking': setTyping(true); setStatus('thinking'); break;
+          case 'ask_user': setTyping(false); push('assistant', evt.question || ''); break;
+          case 'generating':
+            setTyping(false); setStatus('generating'); setStage('PLANNING');
+            if (evt.run_id) setRunId(evt.run_id);
+            setTrace(null); setArtifacts(null); setStageLog([{ label: 'Generation started', time: nowTime() }]);
+            break;
+          case 'stage': { const chip = STAGE_MAP[evt.stage]; if (chip) setStage(chip); logStep('stage → ' + evt.stage); break; }
+          case 'success':
+            setTyping(false); setStatus('done'); setStage('DONE'); setCanHandoff(true);
+            if (evt.run_id) { setRunId(evt.run_id); fetchArtifacts(evt.run_id).then(setArtifacts); fetchTrace(evt.run_id).then(setTrace); }
+            logStep('✅ success');
+            push('assistant', '✅ Design ready. Use **Handoff to ForgeCAD**, or the **Render**/**Logs** buttons.');
+            if (cfgRef.current.forgecad_studio_url) setStudioUrl(cfgRef.current.forgecad_studio_url);
+            break;
+          case 'answer': setTyping(false); push('assistant', evt.text || ''); break;
+          case 'needs_user': setTyping(false); setStage(null); push('assistant', evt.question || 'I need more information to continue.'); break;
+          case 'failed': setTyping(false); setStatus('failed'); setStage('FAILED'); logStep('❌ failed: '+(evt.category||'')); push('system', `Generation failed [${evt.category||'unknown'}]: ${evt.message||''}`); if (runId) fetchTrace(runId).then(setTrace); break;
+          case 'error': setTyping(false); setStatus('failed'); setStage(null); logStep('⚠️ error'); push('system', `⚠️ Server error: ${evt.message||'unknown'}`); break;
+          default: break;
+        }
+      }, [push, logStep, fetchArtifacts, fetchTrace, runId]);
+
+      const connectWs = useCallback((id) => {
+        const ws = new WebSocket(`${BACKEND.replace(/^http/,'ws')}/designs/${id}/chat`);
+        wsRef.current = ws; setConn('connecting');
+        ws.onopen = () => setConn('connected');
+        ws.onmessage = (e) => { try { handleEvent(JSON.parse(e.data)); } catch(_){} };
+        ws.onerror = () => setConn('error');
+        ws.onclose = () => setConn((c)=> c==='connected' ? 'error' : c);
+      }, [handleEvent]);
+
+      const createSession = useCallback(async () => {
+        try { const d = await (await fetch(`${BACKEND}/designs`, { method:'POST' })).json(); localStorage.setItem(LS_ID, d.design_id); setDesignId(d.design_id); connectWs(d.design_id); }
+        catch(e){ setConn('error'); }
+      }, [connectWs]);
+
+      useEffect(() => {
+        let cancelled = false;
+        (async () => {
+          let config = {}; try { config = await (await fetch(`${BACKEND}/config`)).json(); } catch(e){}
+          if (cancelled) return; setCfg(config); cfgRef.current = config;
+          const saved = localStorage.getItem(LS_ID);
+          if (saved) {
+            try {
+              const r = await fetch(`${BACKEND}/designs/${saved}`);
+              if (r.ok) {
+                const s = await r.json();
+                const hist = (s.history||[]).map((h)=>({ role: h.role==='user'?'user':'assistant', text: h.content, time: '' }));
+                if (hist.length) setMessages(hist);
+                if (s.status==='done') { setCanHandoff(true); setStatus('done'); }
+                if (s.run_id) { setRunId(s.run_id); fetchArtifacts(s.run_id).then(setArtifacts); }
+                setDesignId(saved); connectWs(saved); return;
+              }
+            } catch(e){}
+          }
+          await createSession();
+        })();
+        return () => { cancelled = true; };
+      }, []);
+
+      const send = useCallback(() => {
+        const text = input.trim();
+        if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+        wsRef.current.send(JSON.stringify({ type:'message', text })); push('user', text); setInput(''); setTyping(true);
+      }, [input, push]);
+
+      const onNewRun = useCallback(async () => {
+        try { wsRef.current && wsRef.current.close(); } catch(e){}
+        setMessages([]); setStatus('idle'); setStage(null); setTyping(false); setCanHandoff(false);
+        setRunId(null); setStudioUrl(null); setTrace(null); setArtifacts(null); setStageLog([]);
+        localStorage.removeItem(LS_MSGS); await createSession();
+      }, [createSession]);
+
+      const onPrevRun = useCallback(async () => {
+        try { setPrevRuns(await (await fetch(`${BACKEND}/designs`)).json()); } catch(e){ setPrevRuns([]); }
+        setPrevDetail(null); setPanel('prev');
+      }, []);
+      const pickPrev = useCallback(async (run) => {
+        const results = await Promise.all([fetchTrace(run.run_id), fetchArtifacts(run.run_id)]);
+        setPrevDetail({ run, trace: results[0], artifacts: results[1] });
+      }, [fetchTrace, fetchArtifacts]);
+
+      const onLogs = useCallback(async () => { if (runId && !trace) fetchTrace(runId).then(setTrace); setPanel('logs'); }, [runId, trace, fetchTrace]);
+      const onRender = useCallback(async () => { if (runId && !artifacts) fetchArtifacts(runId).then(setArtifacts); setPanel('render'); }, [runId, artifacts, fetchArtifacts]);
+
+      const temporalReady = !!cfg.temporal_ui_url;
+      const temporalLink = (rid) => `${cfg.temporal_ui_url}/namespaces/${cfg.temporal_namespace||'default'}/workflows${rid ? "/" + rid : ""}`;
+      const onTemporal = useCallback(() => { if (temporalReady) window.open(temporalLink(runId), '_blank'); }, [temporalReady, cfg, runId]);
+
+      const onHandoff = useCallback(async () => {
+        if (!canHandoff || !designId) return;
+        try { const r = await fetch(`${BACKEND}/designs/${designId}/handoff`, { method:'POST' }); if (r.ok && cfg.forgecad_studio_url) setStudioUrl(cfg.forgecad_studio_url); } catch(e){}
+      }, [canHandoff, designId, cfg]);
+
+      const onCancel = useCallback(async () => {
+        if (!designId) return;
+        try { await fetch(`${BACKEND}/designs/${designId}/cancel`, { method:'POST' }); } catch(e){}
+        setStatus('cancelled'); setStage(null); setTyping(false); push('system', '⏹ Run cancelled.');
+      }, [designId, push]);
+
+      const busy = status==='generating' || status==='thinking' || typing;
+      const empty = messages.length === 0;
+
+      return (
+        <div className="flex flex-col h-full">
+          <ThreeBackground />
+          <Background />
+          <MouseSpotlight />
+          <div className="vignette" />
+          <NavBar conn={conn} runId={runId} canHandoff={canHandoff} temporalReady={temporalReady}
+            onNewRun={onNewRun} onPrevRun={onPrevRun} onLogs={onLogs} onRender={onRender} onTemporal={onTemporal} onHandoff={onHandoff} />
+
+          <Drawer open={panel==='prev'} title={prevDetail ? 'Run detail' : 'Previous Runs'} onClose={()=>setPanel('none')}>
+            {!prevDetail ? (
+              prevRuns.length===0 ? <p className="text-sm text-gray-400">No previous runs found.</p> : (
+                <div className="space-y-2">
+                  {prevRuns.map((r)=>(
+                    <button key={r.run_id} onClick={()=>pickPrev(r)} className="hud-btn w-full text-left p-3 rounded-xl border border-white/10 bg-white/[0.03]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium truncate">{r.prompt || r.part_name || r.run_id}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${r.status==='success'?'bg-emerald-500/20 text-emerald-300':'bg-rose-500/20 text-rose-300'}`}>{r.status}</span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-gray-500 truncate">{r.run_id}</div>
+                    </button>
+                  ))}
+                </div>
+              )
+            ) : (
+              <div className="space-y-4">
+                <button className="text-xs text-violet-300 hover:text-violet-200" onClick={()=>setPrevDetail(null)}>← all runs</button>
+                <div className="text-sm text-gray-300">{prevDetail.run.prompt}</div>
+                {cfg.temporal_ui_url && <a className="hud-btn inline-block text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10" href={temporalLink(prevDetail.run.run_id)} target="_blank">Open in Temporal UI</a>}
+                <LogsView stageLog={[]} trace={prevDetail.trace} />
+                <ArtifactView artifacts={prevDetail.artifacts} />
+              </div>
+            )}
+          </Drawer>
+
+          <Drawer open={panel==='logs'} title="Logs" onClose={()=>setPanel('none')}><LogsView stageLog={stageLog} trace={trace} /></Drawer>
+          <Drawer open={panel==='render'} title="Render Images" onClose={()=>setPanel('none')}><ArtifactView artifacts={artifacts} /></Drawer>
+
+          {studioUrl ? (
+            <div className="flex-1 relative pt-14">
+              <iframe src={studioUrl} title="ForgeCAD Studio" sandbox="allow-scripts allow-same-origin allow-forms" className="absolute inset-0 w-full h-full border-0" />
+              <button onClick={()=>setStudioUrl(null)} className="hud-btn absolute top-16 left-3 px-3 py-1.5 rounded-lg text-xs glass">← Back to chat</button>
+            </div>
+          ) : (
+            <main className="flex-1 flex flex-col items-center justify-center px-4 pt-16 overflow-hidden">
+              <div ref={parallaxRef} className="w-full max-w-3xl flex flex-col h-full py-6" style={{ willChange:'transform' }}>
+                <div className={`text-center transition-all duration-500 ${empty?'my-auto':'mb-4'}`}>
+                  <h1 className={`font-display font-semibold tracking-tight hero-hud ${empty?'text-5xl sm:text-6xl':'text-2xl'}`}>What can I design for you</h1>
+                  {empty && <p className="mt-4 text-gray-500 text-[15px]">Describe a part — AI clarifies dimensions, geometry checks it, ForgeCAD renders it.</p>}
+                </div>
+                {!empty && (
+                  <div ref={logRef} className="flex-1 overflow-y-auto space-y-3 pr-1 pb-4">
+                    {messages.map((m,i)=><Message key={i} m={m} />)}
+                    {typing && <div className="flex justify-start"><div className="rounded-2xl px-4 py-3 glass typing"><span></span><span></span><span></span></div></div>}
+                  </div>
+                )}
+                <Progress stage={stage} />
+                <div className="input-glass glass rounded-full px-2 py-1.5 flex items-center gap-2 transition-all">
+                  <textarea rows={1} value={input} onChange={(e)=>setInput(e.target.value)}
+                    onKeyDown={(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); } }}
+                    placeholder="Describe your part or answer a question…"
+                    className="flex-1 resize-none bg-transparent outline-none px-4 py-2 text-sm placeholder-gray-500 max-h-40 leading-6" />
+                  {busy && <button onClick={onCancel} className="hud-btn px-4 py-2 rounded-full text-sm font-medium bg-rose-600/80 hover:bg-rose-600 text-white">Cancel</button>}
+                  <button onClick={send} disabled={!input.trim()} className={`hud-btn h-9 w-9 flex items-center justify-center rounded-full text-sm font-medium ${input.trim()?'grad-anim bg-gradient-to-br from-violet-600 to-indigo-600 text-white':'bg-white/5 text-gray-600 cursor-not-allowed'}`}>➤</button>
+                </div>
+                <p className="mt-2 text-center text-[11px] text-gray-600">{conn==='connected'?'Connected':conn==='connecting'?'Connecting…':'Disconnected — try New Run'}</p>
+              </div>
+            </main>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
 </body>
-</html>
+</htm
