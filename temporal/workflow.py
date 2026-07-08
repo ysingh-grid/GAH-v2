@@ -31,6 +31,7 @@ with workflow.unsafe.imports_passed_through():
         compile_activity,
         execute_activity,
         inspect_activity,
+        plan_activity,
         record_trace_activity,
         render_activity,
         repair_activity,
@@ -44,6 +45,7 @@ with workflow.unsafe.imports_passed_through():
         DesignStage,
         ExecuteInput,
         InspectInput,
+        PlanInput,
         RenderInput,
         RepairInput,
         ReplanInput,
@@ -54,6 +56,9 @@ with workflow.unsafe.imports_passed_through():
 # Per-step timeouts. The old monolithic generate is now five activities; each is
 # small except execute (CadQuery/OCCT) and render (VTK). verify is one Gemini
 # multimodal call; replan is one full-tool Gemini turn.
+# Planning is the workflow's first activity now (fast-rlm turn on the worker). Generous
+# schedule_to_close ceiling; the 60s heartbeat below is the real hung-planner guard.
+_PLAN_TIMEOUT = timedelta(minutes=30)
 _COMPILE_TIMEOUT = timedelta(minutes=1)
 _EXECUTE_TIMEOUT = timedelta(minutes=6)
 _INSPECT_TIMEOUT = timedelta(minutes=2)
@@ -101,6 +106,39 @@ class DesignWorkflow:
     @workflow.run
     async def run(self, inp: DesignInput) -> DesignResult:
         plan_dict = inp.plan_dict
+
+        # ── PLAN (first activity when no plan was supplied) ───────────────────
+        # Empty plan_dict means "plan inside the workflow" — so the workflow starts
+        # the instant intake completes (no in-process pre-Temporal gap). A ready
+        # plan (edit path) skips this. self._stage already defaults to PLANNING, so
+        # the current_stage query shows PLANNING immediately.
+        if not plan_dict:
+            self._stage = DesignStage.PLANNING
+            pl = await workflow.execute_activity(
+                plan_activity,
+                PlanInput(
+                    original_prompt=inp.original_prompt,
+                    history=inp.planner_history,
+                    backend_url=inp.backend_url,
+                ),
+                schedule_to_close_timeout=_PLAN_TIMEOUT,
+                heartbeat_timeout=_HEARTBEAT_TIMEOUT,
+                retry_policy=_NO_RETRY,
+            )
+            if not pl.ok:
+                self._stage = DesignStage.FAILED
+                await self._record(
+                    inp, {}, "", {}, {}, {}, {}, status="failed", attempts=0,
+                    failure_stage="plan_error", failure_detail=pl.error,
+                )
+                return DesignResult(
+                    status="failed",
+                    run_id=inp.run_id,
+                    failure_category=category_for_stage("plan_error").value,
+                    message=pl.error or "planner failed to produce a plan",
+                )
+            plan_dict = pl.plan_dict
+
         feedback_log: list[str] = []    # verifier feedback accumulated across outer attempts
         # Replan state: seeded with the pre-planner intake facts (inp.history),
         # then each round appends its failed plan + failure — full plan lineage.
@@ -184,7 +222,8 @@ class DesignWorkflow:
                         if rep_mesh.mesh_report:
                             mesh_report = rep_mesh.mesh_report
                         if not rep_mesh.passes:
-                            failure_stage, failure_detail = rep_mesh.failure_stage, rep_mesh.failure_detail
+                            failure_stage = rep_mesh.failure_stage
+                            failure_detail = rep_mesh.failure_detail
                         else:
                             stl_path = rep_mesh.repaired_stl_path
 

@@ -194,25 +194,10 @@ async def run_chat_turn(
         intake_context=session.intake_context,
     )
 
-    # ── 1. Planner turn (blocking RLM call → thread) ──────────────────────────
-    try:
-        plan = await ev_loop.run_in_executor(
-            None,
-            lambda: run_planner_turn(
-                session.original_prompt, planner_history, backend_url=backend_url
-            ),
-        )
-    except Exception as exc:
-        await send({"type": "error", "message": str(exc)})
-        return
-
-    # ── 2. plan → geometry loop ──────────────────────────────────────────────
+    # ── Geometry pipeline ─────────────────────────────────────────────────────
     session.status = "generating"
-    session.last_plan = plan_to_dict(plan)
     run_id = new_run_id(f"design_{session.id[:8]}")
     session.run_id = run_id
-
-    await send({"type": "generating", "stage": "cadquery_compile", "run_id": run_id})
 
     # Base replan history: the pre-planner intake facts ONLY — never the raw
     # chatbot conversation. Replans build plan-lineage state on top of this.
@@ -228,15 +213,30 @@ async def run_chat_turn(
     )
 
     if _USE_TEMPORAL:
+        # Temporal PLANS as its first activity — start the workflow immediately so
+        # there is NO in-process planner blocking before Temporal (that was the long
+        # dead gap after the last answer). Pass no plan + the planner history; the
+        # workflow's plan_activity produces the plan.
+        await send({"type": "generating", "stage": "planning"})
         await _run_via_temporal(
-            session,
-            plan,
-            run_id,
-            send,
-            backend_url=backend_url,
-            history=replan_base_history,
+            session, None, run_id, send,
+            backend_url=backend_url, history=replan_base_history,
+            planner_history=planner_history,
         )
     else:
+        # In-process fallback: run the planner locally, then the geometry loop.
+        try:
+            plan = await ev_loop.run_in_executor(
+                None,
+                lambda: run_planner_turn(
+                    session.original_prompt, planner_history, backend_url=backend_url
+                ),
+            )
+        except Exception as exc:
+            await send({"type": "error", "message": str(exc)})
+            return
+        session.last_plan = plan_to_dict(plan)
+        await send({"type": "generating", "stage": "cadquery_compile"})
         await _run_in_process(
             session,
             plan,
@@ -292,13 +292,14 @@ async def _run_in_process(
 
 async def _run_via_temporal(
     session: DesignSession,
-    plan: PrimitivePlan,
+    plan: PrimitivePlan | None,
     run_id: str,
     send: SendFn,
     *,
     backend_url: str,
     history: list[dict[str, str]] | None = None,
     verify_prompt: str | None = None,
+    planner_history: list[dict[str, str]] | None = None,
 ) -> None:
     """Temporal path: start the workflow, stream its coarse-stage progress, await result.
 
@@ -308,6 +309,9 @@ async def _run_via_temporal(
     step with the Temporal UI timeline. When the workflow finishes we map its
     DesignResult to the terminal WS event.
 
+    plan: a ready PrimitivePlan (edit path) → the workflow skips planning. None
+    (fresh design) → plan_dict is empty and the workflow's plan_activity produces
+    the plan as its FIRST stage, so the workflow starts the instant intake completes.
     verify_prompt: see _run_in_process — same edit-aware grounding, threaded
     into DesignInput.original_prompt so the activity-side verifier sees it.
     """
@@ -317,22 +321,25 @@ async def _run_via_temporal(
     from temporal.shared import DesignInput
     from temporal.workflow import DesignWorkflow
 
+    task_queue = os.environ.get("TEMPORAL_TASK_QUEUE", "design")
     inp = DesignInput(
         original_prompt=verify_prompt or session.original_prompt,
-        plan_dict=plan_to_dict(plan),
         run_id=run_id,
+        plan_dict=plan_to_dict(plan) if plan is not None else {},
         backend_url=backend_url,
         history=list(history or []),
         feature_checklist=session.feature_checklist,
+        planner_history=list(planner_history or []),
     )
 
     try:
         client = await get_client()
+        log.info("Starting DesignWorkflow %s on task queue %r", run_id, task_queue)
         handle = await client.start_workflow(
             DesignWorkflow.run,
             inp,
             id=run_id,
-            task_queue=os.environ.get("TEMPORAL_TASK_QUEUE", "design"),
+            task_queue=task_queue,
         )
     except Exception as exc:
         session.status = "failed"
@@ -363,6 +370,10 @@ async def _run_via_temporal(
     # Map DesignResult dataclass → terminal WS event
     if result_dc.status == "success":
         session.status = "done"
+        # The workflow may have PRODUCED the plan (plan_activity), so persist the
+        # final plan onto the session — post-design edits/questions depend on it.
+        if result_dc.final_plan:
+            session.last_plan = result_dc.final_plan
         write_stl_to_studio(run_id)
         await send(
             {
@@ -373,6 +384,8 @@ async def _run_via_temporal(
         )
     else:
         session.status = "failed"
+        if result_dc.final_plan:
+            session.last_plan = result_dc.final_plan
         await send(
             {
                 "type": "failed",

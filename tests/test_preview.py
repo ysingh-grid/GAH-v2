@@ -121,6 +121,32 @@ def test_preview_plan_on_profile_extrude_l_bracket_is_valid():
     assert ev["num_components"] == 1
 
 
+def test_preview_plan_on_rect_to_round_is_valid():
+    """Representation (loft primitive): a rectangle->round duct adapter builds ONE
+    watertight solid — previously impossible (pyramid collapsed it to a spike)."""
+    from backend.preview.store import preview_plan
+
+    plan = {
+        "part_name": "duct_adapter",
+        "steps": [
+            {
+                "id": "body",
+                "primitive": "rect_to_round",
+                "operation": "base",
+                "parameters": {
+                    "base_length": 70.0, "base_width": 50.0,
+                    "top_diameter": 30.0, "height": 50.0,
+                },
+            }
+        ],
+    }
+    ev = preview_plan(plan, run_id="test_preview_rect_to_round")
+    assert ev["compiles"] is True
+    assert ev["executes"] is True
+    assert ev["watertight"] is True
+    assert ev["num_components"] == 1
+
+
 # ── endpoint wiring ──────────────────────────────────────────────────────────
 
 

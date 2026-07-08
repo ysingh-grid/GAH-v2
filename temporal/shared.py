@@ -36,9 +36,12 @@ class DesignInput:
     """Everything the DesignWorkflow needs to produce a part."""
 
     original_prompt: str
-    # PrimitivePlan serialised via runtime.schema.plan_to_dict() — JSON-safe.
-    plan_dict: dict[str, Any]
     run_id: str
+    # PrimitivePlan serialised via runtime.schema.plan_to_dict() — JSON-safe.
+    # EMPTY {} means "plan INSIDE the workflow" (plan_activity runs first, so the
+    # workflow starts the instant intake completes). A non-empty plan_dict is a
+    # ready plan (the edit path) and skips planning.
+    plan_dict: dict[str, Any] = field(default_factory=dict)
     backend_url: str = "http://localhost:8001"
     # Base replan history: the pre-planner intake facts ONLY (never the raw
     # chatbot conversation). The workflow appends each round's failed plan +
@@ -47,6 +50,9 @@ class DesignInput:
     # Required-feature checklist (Task 2/3) used to ground the verifier per-feature
     # — threaded to VerifyInput so the Temporal path judges identically to in-process.
     feature_checklist: str = ""
+    # Full planner history (intake_context folded into the last user message) for
+    # the initial plan_activity when plan_dict is empty. Distinct from `history`.
+    planner_history: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -58,6 +64,33 @@ class DesignResult:
     run_id: str = ""
     failure_category: str = ""
     message: str = ""
+
+
+@dataclass
+class PlanInput:
+    """Input to plan_activity: produce the initial PrimitivePlan on the worker.
+
+    `history` is the full planner history (intake_context folded in). backend_url
+    lets the worker-side planner's pull tools reach the backend (resolved from the
+    worker's own BACKEND_URL env at runtime, like replan_activity).
+    """
+
+    original_prompt: str
+    history: list[dict[str, str]] = field(default_factory=list)
+    backend_url: str = ""
+
+
+@dataclass
+class PlanOutput:
+    """plan_activity outcome: a validated plan dict, or a categorized failure.
+
+    ok=False means the planner could not produce a plan (exception/budget/no FINAL);
+    the workflow surfaces it as a clean "failed" result rather than crashing.
+    """
+
+    ok: bool
+    plan_dict: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
 
 
 # ── Per-activity I/O contracts ──────────────────────────────────────────────────

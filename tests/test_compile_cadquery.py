@@ -40,6 +40,30 @@ def _cube_plan(size: float = 60.0):
 # ── pure compile-output tests ────────────────────────────────────────────────
 
 
+def test_compile_rejects_unknown_param_as_primitive_gap():
+    """A misnamed param (pyramid given base_length it lacks) must raise a clear
+    primitive_gap error, NOT silently fall back to defaults and build a spike."""
+    bad = plan_from_dict(
+        {
+            "part_name": "adapter",
+            "steps": [
+                {
+                    "id": "t",
+                    "primitive": "pyramid",
+                    "operation": "base",
+                    "parameters": {"base_length": 100.0, "top_width": 80.0, "height": 86.0},
+                }
+            ],
+        }
+    )
+    with pytest.raises(CompileError) as exc:
+        compile_plan_to_cadquery(bad, LIBRARY)
+    msg = str(exc.value)
+    assert "primitive_gap" in msg
+    assert "base_length" in msg  # names the offending param
+    assert "pyramid" in msg
+
+
 def test_compile_cube_emits_runnable_skeleton():
     code = compile_plan_to_cadquery(_cube_plan(), LIBRARY)
     assert "import cadquery as cq" in code
