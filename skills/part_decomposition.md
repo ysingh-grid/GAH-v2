@@ -21,6 +21,12 @@ token_budget: low   # ~400 tokens — load only for multi-primitive shapes
 Decompose complex 3D geometry into a **CSG construction tree** before building
 the PrimitivePlan. Used for multi-primitive shapes in **Phase 1**.
 
+**Before decomposing from scratch, check the reference for a proven precedent.**
+The reference includes past designs a user confirmed correct, keyed by their
+original request. If one matches (or closely resembles) the current part, start
+from its construction tree and adapt it — re-parametrise, add or drop features —
+rather than re-deriving the whole tree. Reuse a known-good decomposition first.
+
 Most complex mechanical parts follow this pattern:
 
 ```

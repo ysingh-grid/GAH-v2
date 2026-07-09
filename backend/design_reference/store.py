@@ -1,15 +1,22 @@
 """Data access for the design-reference catalog (fastener dims + recipes).
 
-The ONLY place that reads primitives/design_reference.json. A keyword query
-returns the matching recipe templates plus the always-useful fastener dimension
-tables, kept compact so a planner call never balloons the token budget.
+The ONLY place that reads primitives/design_reference.json. Exposed as an
+index/fetch pair (mirroring backend/kb_read) so the planner sees a compact menu
+of reusable references and pulls only the entries it needs — instead of the
+whole file. The index/fetch MERGE the runtime approved-designs store
+(backend/approved_store), so past USER-APPROVED full designs appear as reference
+keys (`approved__*`) alongside the curated recipes and dimension tables.
 """
 
 import json
 from pathlib import Path
 
+from backend.approved_store import store as approved_store
+
 # store.py -> design_reference -> backend -> repo root, then primitives/.
 _REFERENCE_PATH = Path(__file__).resolve().parents[2] / "primitives" / "design_reference.json"
+
+_FASTENER_KEY = "fastener_dims"
 
 
 def _load() -> dict:
@@ -18,34 +25,38 @@ def _load() -> dict:
         return json.load(f)
 
 
-def search_reference(query: str, max_recipes: int = 3) -> dict:
-    """Return fastener dims + recipe templates relevant to a keyword query.
+def index_reference() -> dict[str, str]:
+    """Compact menu of every reusable reference as {key: one-line description}.
 
-    Args:
-        query: Free-text hint, e.g. "M6 counterbored bolt holes on a flange".
-        max_recipes: Cap on returned recipes (token hygiene; default 3).
-
-    Returns:
-        {"fastener_dims": {...}, "recipes": {name: {...}}}. Recipes are scored by
-        keyword overlap with the query; the fastener tables are always included
-        because dimensions are useful for nearly every metal part.
+    Covers the curated CSG recipes, the always-useful `fastener_dims` tables, and
+    (merged in) the newest USER-APPROVED past designs from the approved store.
+    This is the INDEX, not the content — the planner reads it, picks keys, then
+    calls fetch_reference() for just those.
     """
     doc = _load()
-    fastener_dims = doc.get("fastener_dims", {})
-    all_recipes: dict = doc.get("recipes", {})
+    idx: dict[str, str] = {
+        name: str(r.get("description", ""))[:140]
+        for name, r in doc.get("recipes", {}).items()
+    }
+    idx[_FASTENER_KEY] = "metric fastener clearance / tap / counterbore dimension tables"
+    idx.update(approved_store.index_approved())  # past approved designs
+    return idx
 
-    q_words = {w.strip(".,/()").lower() for w in query.split() if w.strip()}
 
-    def score(recipe: dict) -> int:
-        kws = {k.lower() for k in recipe.get("keywords", [])}
-        # +2 per exact keyword hit, +1 for any query word appearing in a keyword.
-        hits = sum(2 for k in kws if k in q_words)
-        hits += sum(1 for k in kws for w in q_words if w in k)
-        return hits
+def fetch_reference(keys: list[str]) -> dict[str, dict]:
+    """Fetch specific references by key from index_reference().
 
-    ranked = sorted(all_recipes.items(), key=lambda kv: score(kv[1]), reverse=True)
-    # Keep only positively-scored recipes; if nothing matches, return none (the
-    # planner still gets the dims and can proceed with raw primitives).
-    chosen = {name: r for name, r in ranked[:max_recipes] if score(r) > 0}
-
-    return {"fastener_dims": fastener_dims, "recipes": chosen}
+    Recipe keys return {description, keywords, steps}; `fastener_dims` returns the
+    dimension tables; `approved__*` keys delegate to the approved store and return
+    {description, original_prompt, steps}. Unknown keys are silently omitted.
+    """
+    doc = _load()
+    recipes: dict = doc.get("recipes", {})
+    out: dict[str, dict] = {}
+    for key in keys:
+        if key == _FASTENER_KEY:
+            out[key] = doc.get("fastener_dims", {})
+        elif key in recipes:
+            out[key] = recipes[key]
+    out.update(approved_store.fetch_approved(keys))
+    return out

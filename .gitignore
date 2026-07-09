@@ -19,6 +19,9 @@ logs/
 # Outputs
 outputs/
 
+# Trace-flywheel store (runtime-appended, per-deployment)
+data/
+
 # OS
 .DS_Store
 

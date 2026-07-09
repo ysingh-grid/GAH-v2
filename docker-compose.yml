@@ -45,6 +45,7 @@ services:
       - ./artifacts:/app/artifacts
       - ./outputs:/app/outputs    # run artifacts (STL/STEP/renders/trace.json) persisted to host
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log
+      - ./data:/app/data    # trace-flywheel: user-approved designs (approved_designs.json) — survives recreate
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8001/health" ]

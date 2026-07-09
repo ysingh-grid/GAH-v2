@@ -251,6 +251,9 @@
             <button {...gate(!!p.runId, p.onLogs)}>Logs</button>
             <button {...gate(!!p.runId, p.onRender)}>Render</button>
             <button {...gate(p.temporalReady, p.onTemporal)} title="Open this run in the Temporal Web UI">Temporal UI</button>
+            <button className={`hud-btn px-3.5 py-2 rounded-xl text-[13px] font-medium border ${p.canApprove ? 'grad-anim bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 text-white border-emerald-400/25' : 'bg-white/[0.02] text-gray-600 border-white/10 cursor-not-allowed'}`}
+              onClick={p.canApprove ? p.onApprove : undefined} disabled={!p.canApprove}
+              title={p.canApprove ? 'Mark this design correct — save it as a reference for future generations' : 'Enabled after a successful generation'}>Approve</button>
             <button className={`hud-btn px-3.5 py-2 rounded-xl text-[13px] font-medium border ${p.canHandoff ? 'grad-anim bg-gradient-to-r from-violet-700 to-indigo-700 hover:from-violet-600 hover:to-indigo-600 text-white border-violet-400/25' : 'bg-white/[0.02] text-gray-600 border-white/10 cursor-not-allowed'}`}
               onClick={p.canHandoff ? p.onHandoff : undefined} disabled={!p.canHandoff}
               title={p.canHandoff ? 'Render the STL in ForgeCAD Studio' : 'Enabled after a successful generation'}>Handoff to ForgeCAD</button>
@@ -363,6 +366,7 @@
       const [stage, setStage] = useState(null);
       const [typing, setTyping] = useState(false);
       const [canHandoff, setCanHandoff] = useState(false);
+      const [canApprove, setCanApprove] = useState(false);
       const [runId, setRunId] = useState(null);
       const [studioUrl, setStudioUrl] = useState(null);
       const [panel, setPanel] = useState('none');
@@ -405,13 +409,14 @@
             break;
           case 'stage': { const chip = STAGE_MAP[evt.stage]; if (chip) setStage(chip); logStep('stage → ' + evt.stage); break; }
           case 'success':
-            setTyping(false); setStatus('done'); setStage('DONE'); setCanHandoff(true);
+            setTyping(false); setStatus('done'); setStage('DONE'); setCanHandoff(true); setCanApprove(true);
             if (evt.run_id) { setRunId(evt.run_id); fetchArtifacts(evt.run_id).then(setArtifacts); fetchTrace(evt.run_id).then(setTrace); }
             logStep('✅ success');
-            push('assistant', '✅ Design ready. Use **Handoff to ForgeCAD**, or the **Render**/**Logs** buttons.');
+            push('assistant', '✅ Design ready. **Approve** it to save as a reference, **Handoff to ForgeCAD**, or use **Render**/**Logs**.');
             if (cfgRef.current.forgecad_studio_url) setStudioUrl(cfgRef.current.forgecad_studio_url);
             break;
           case 'answer': setTyping(false); push('assistant', evt.text || ''); break;
+          case 'approved': setTyping(false); push('assistant', '✅ Saved as a reference pattern for future designs.'); break;
           case 'needs_user': setTyping(false); setStage(null); push('assistant', evt.question || 'I need more information to continue.'); break;
           case 'failed': setTyping(false); setStatus('failed'); setStage('FAILED'); logStep('❌ failed: '+(evt.category||'')); push('system', `Generation failed [${evt.category||'unknown'}]: ${evt.message||''}`); if (runId) fetchTrace(runId).then(setTrace); break;
           case 'error': setTyping(false); setStatus('failed'); setStage(null); logStep('⚠️ error'); push('system', `⚠️ Server error: ${evt.message||'unknown'}`); break;
@@ -446,7 +451,7 @@
                 const s = await r.json();
                 const hist = (s.history||[]).map((h)=>({ role: h.role==='user'?'user':'assistant', text: h.content, time: '' }));
                 if (hist.length) setMessages(hist);
-                if (s.status==='done') { setCanHandoff(true); setStatus('done'); }
+                if (s.status==='done') { setCanHandoff(true); setCanApprove(true); setStatus('done'); }
                 if (s.run_id) { setRunId(s.run_id); fetchArtifacts(s.run_id).then(setArtifacts); }
                 setDesignId(saved); connectWs(saved); return;
               }
@@ -465,7 +470,7 @@
 
       const onNewRun = useCallback(async () => {
         try { wsRef.current && wsRef.current.close(); } catch(e){}
-        setMessages([]); setStatus('idle'); setStage(null); setTyping(false); setCanHandoff(false);
+        setMessages([]); setStatus('idle'); setStage(null); setTyping(false); setCanHandoff(false); setCanApprove(false);
         setRunId(null); setStudioUrl(null); setTrace(null); setArtifacts(null); setStageLog([]);
         localStorage.removeItem(LS_MSGS); await createSession();
       }, [createSession]);
@@ -491,6 +496,14 @@
         try { const r = await fetch(`${BACKEND}/designs/${designId}/handoff`, { method:'POST' }); if (r.ok && cfg.forgecad_studio_url) setStudioUrl(cfg.forgecad_studio_url); } catch(e){}
       }, [canHandoff, designId, cfg]);
 
+      const onApprove = useCallback(async () => {
+        if (!canApprove || !designId) return;
+        try {
+          const r = await fetch(`${BACKEND}/designs/${designId}/approve`, { method:'POST' });
+          if (r.ok) { setCanApprove(false); push('assistant', '✅ Saved as a reference pattern for future designs.'); }
+        } catch(e){}
+      }, [canApprove, designId, push]);
+
       const onCancel = useCallback(async () => {
         if (!designId) return;
         try { await fetch(`${BACKEND}/designs/${designId}/cancel`, { method:'POST' }); } catch(e){}
@@ -506,8 +519,8 @@
           <Background />
           <MouseSpotlight />
           <div className="vignette" />
-          <NavBar conn={conn} runId={runId} canHandoff={canHandoff} temporalReady={temporalReady}
-            onNewRun={onNewRun} onPrevRun={onPrevRun} onLogs={onLogs} onRender={onRender} onTemporal={onTemporal} onHandoff={onHandoff} />
+          <NavBar conn={conn} runId={runId} canHandoff={canHandoff} canApprove={canApprove} temporalReady={temporalReady}
+            onNewRun={onNewRun} onPrevRun={onPrevRun} onLogs={onLogs} onRender={onRender} onTemporal={onTemporal} onHandoff={onHandoff} onApprove={onApprove} />
 
           <Drawer open={panel==='prev'} title={prevDetail ? 'Run detail' : 'Previous Runs'} onClose={()=>setPanel('none')}>
             {!prevDetail ? (

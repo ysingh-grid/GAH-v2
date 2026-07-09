@@ -11,6 +11,7 @@ Event protocol (Server → Client, JSON):
   {"type": "failed", "category", "message"}       — exhausted / permanent error
   {"type": "error", "message"}                    — unexpected exception
   {"type": "answer", "text"}                      — post-design Q&A reply, no geometry change
+  {"type": "approved", "run_id", "status"}        — design saved to the flywheel reference store
   {"type": "ask_user", "question", "options"}     — pre-planner intake OR edit clarification
 
 The planner/replanner never ask the user a clarifying question — they always
@@ -19,9 +20,10 @@ The ONLY user-facing questions come from the intake chatbot, either before the
 first plan (fresh design) or before an edit replan (post-design edit request).
 
 Once a design reaches "done"/"failed", the session does NOT reset — the next
-message is classified as either a QUESTION about the current model (answered
-directly, no regeneration) or an EDIT request (clarified via the same intake
-engine, then applied via replan_for_edit on a fresh run_id).
+message is classified as a QUESTION about the current model (answered directly),
+an EDIT request (clarified via the same intake engine, then applied via
+replan_for_edit on a fresh run_id), or an APPROVAL (a pure positive sign-off →
+the design is persisted to the flywheel reference store for future planning).
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from backend.designs.intake import (
     start_or_resume_edit_intake,
     start_or_resume_intake,
 )
+from backend.approved_store.store import append_approved
 from backend.designs.models import DesignSession
 from runtime.loop import LoopResult, run_geometry_loop
 from runtime.planner import run_planner_turn, run_replanner_turn
@@ -123,6 +126,37 @@ async def cancel_run(session: DesignSession) -> dict[str, Any]:
         "run_id": session.run_id,
         "workflow_cancelled": workflow_cancelled,
     }
+
+
+def _persist_approval(session: DesignSession) -> dict[str, Any]:
+    """Write the current successful design to the flywheel store (sync; run in an
+    executor). Stores last_plan + run_id as a pair so the plan matches its
+    outputs/{run_id}/ artifacts. Idempotent by run_id inside append_approved.
+
+    Guards on status=="done" itself (belt-and-braces: the chat approval branch
+    runs inside _run_post_design_turn, which also fires after a FAILED run — must
+    never store a stale/failed plan). Returns {"status": "not_approvable"} if so.
+    """
+    if session.status != "done" or not session.run_id or not session.last_plan:
+        return {"status": "not_approvable", "run_id": session.run_id}
+    return append_approved(
+        run_id=session.run_id,
+        original_prompt=session.original_prompt,
+        plan=session.last_plan,
+        intake_context=session.intake_context,
+        feature_checklist=session.feature_checklist,
+    )
+
+
+async def approve_run(session: DesignSession) -> dict[str, Any]:
+    """Persist the current successful design as a reusable reference (flywheel).
+
+    Backs POST /designs/{id}/approve. The route gates on a finished run (like
+    handoff); the append itself is idempotent by run_id, so re-approving returns
+    'already_approved'. File I/O runs in the default executor.
+    """
+    ev_loop = asyncio.get_running_loop()
+    return await ev_loop.run_in_executor(None, lambda: _persist_approval(session))
 
 
 async def run_chat_turn(
@@ -465,6 +499,22 @@ async def _run_post_design_turn(
             return
         session.history.append({"role": "planner", "content": answer})
         await send({"type": "answer", "text": answer})
+        return
+
+    if kind == "approval":
+        # A pure positive sign-off → persist the design as a reusable reference.
+        # Re-check the gate here (this turn also runs after a FAILED run) so a
+        # stale/failed plan never enters the flywheel.
+        if session.status != "done" or not session.run_id or not session.last_plan:
+            msg = "Nothing to approve yet — the last design didn't finish successfully."
+            session.history.append({"role": "planner", "content": msg})
+            await send({"type": "answer", "text": msg})
+            return
+        result = await ev_loop.run_in_executor(None, lambda: _persist_approval(session))
+        session.history.append(
+            {"role": "planner", "content": "Approved — saved as a reference pattern for future designs."}
+        )
+        await send({"type": "approved", "run_id": session.run_id, "status": result.get("status", "approved")})
         return
 
     session.pending_edit_text = user_text

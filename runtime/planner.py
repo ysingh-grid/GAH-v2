@@ -40,12 +40,13 @@ def _llm_kwargs() -> dict:
 # Tools the planner may call inside its REPL. Imported as objects so fast-rlm
 # can extract their source; they must stay self-contained (see rlm/pull_tools).
 from rlm.pull_tools import (
+    fetch_design_reference,
     fetch_kb_sections,
+    list_design_reference_index,
     list_kb_index,
     list_primitives,
     list_skills,
     list_skills_replan,
-    lookup_design_reference,
     lookup_primitive,
     read_skill,
 )
@@ -61,7 +62,8 @@ _PLANNER_TOOLS = [
     lookup_primitive,
     list_kb_index,
     fetch_kb_sections,
-    lookup_design_reference,
+    list_design_reference_index,
+    fetch_design_reference,
 ]
 # NO child-delegation tools. Both were removed after measurement:
 #   - delegate_stage (per-stage fork) — pure overhead over tiny per-stage context;
@@ -79,7 +81,8 @@ _REPLANNER_TOOLS = [
     lookup_primitive,
     list_kb_index,
     fetch_kb_sections,
-    lookup_design_reference,
+    list_design_reference_index,
+    fetch_design_reference,
 ]
 # list_skills_replan (NOT list_skills): the replanner discovers ONLY its own
 # scoped guide catalog (SKILLS_replan.md) — it never sees the planner-only

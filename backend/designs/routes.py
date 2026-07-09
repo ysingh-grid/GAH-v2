@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from backend.designs import store
 from backend.designs.history import list_previous_runs
-from backend.designs.runner import cancel_run, run_chat_turn, write_stl_to_studio
+from backend.designs.runner import approve_run, cancel_run, run_chat_turn, write_stl_to_studio
 from tools.load_trace import load_trace
 
 router = APIRouter()
@@ -100,6 +100,28 @@ def handoff_design(design_id: str) -> dict[str, Any]:
 
     ok = write_stl_to_studio(session.run_id)
     return {"status": "handed_off" if ok else "failed", "run_id": session.run_id}
+
+
+@router.post("/designs/{design_id}/approve")
+async def approve_design(design_id: str) -> dict[str, Any]:
+    """Persist the current successful design to the flywheel reference store.
+
+    Gated on a finished, successful run — 400 if there is nothing to approve.
+    Backs the UI's 'Approve' button (enabled only after a success event).
+    Idempotent by run_id: re-approving returns status 'already_approved'.
+    """
+    try:
+        session = store.get_session(design_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if session.status != "done" or not session.run_id or not session.last_plan:
+        raise HTTPException(
+            status_code=400,
+            detail="no successful run to approve — generate a design first",
+        )
+
+    return await approve_run(session)
 
 
 @router.websocket("/designs/{design_id}/chat")

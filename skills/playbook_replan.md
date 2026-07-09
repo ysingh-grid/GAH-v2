@@ -22,7 +22,9 @@ reasonable defaults, and always return a corrected plan.
 - the revision request: the failure stage + concrete detail
 - the original user prompt, for intent
 - read-only lookup tools for guides, primitive specs, reference data — pull only
-  what a specific fix needs; never dump whole catalogs
+  what a specific fix needs; never dump whole catalogs. The reference data
+  includes past designs a user confirmed correct: if one matches the part you are
+  fixing, its proven steps can guide how a feature should be built.
 
 ## Steps
 

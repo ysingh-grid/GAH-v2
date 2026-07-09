@@ -20,6 +20,8 @@ htmlcov/
 .env.*
 # Artifacts (mounted at runtime)
 artifacts/
+# Trace-flywheel store (mounted at runtime)
+data/
 
 # Docs and reference
 docs/

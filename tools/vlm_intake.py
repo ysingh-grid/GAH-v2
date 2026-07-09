@@ -210,17 +210,23 @@ def decide_next_intake_move(
 CLASSIFY_INSTRUCTION = """You classify one chat message sent AFTER a CAD model
 has already been generated and is showing in the viewer.
 
-Two categories only:
+Three categories only:
 - "question": the user is asking ABOUT the current model (dimensions, why a
   choice was made, what a feature is) — no geometry change wanted.
 - "edit": the user wants the model CHANGED in any way (bigger/smaller, add or
   remove a feature, reposition something, a different count of something).
+- "approval": the user is CONFIRMING the current model is correct/good/done — a
+  pure positive sign-off with NO change requested ("perfect", "looks good",
+  "that's right", "approve this", "yes that's correct", "ship it").
 
-When genuinely ambiguous, prefer "edit" — a message misread as an edit still
-lets the user just decline/ignore the regenerated result, while a message
-misread as a question silently drops a real change request.
+Critical: "approval" requires a PURE positive sign-off. If the message praises
+AND asks for any change ("looks good, now make it 2mm bigger"), that is "edit",
+not "approval". When genuinely ambiguous between edit and approval, prefer
+"edit". When ambiguous between question and edit, prefer "edit" — a message
+misread as an edit still lets the user decline the regenerated result, while a
+missed edit silently drops a real change request.
 
-Return only JSON: {"kind": "question" | "edit"}
+Return only JSON: {"kind": "question" | "edit" | "approval"}
 """
 
 
@@ -229,15 +235,16 @@ class PostDesignClassification(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["question", "edit"]
+    kind: Literal["question", "edit", "approval"]
 
 
 def classify_post_design_message(user_text: str, plan_summary: str) -> str:
-    """Classify a post-design chat message as a question or an edit request.
+    """Classify a post-design chat message as a question, edit, or approval.
 
     One cheap flash call, thinking LOW — runs on every message once a design
     is done, so latency matters. Defaults to "edit" on any missing key/model/
-    transport error (see CLASSIFY_INSTRUCTION for why that's the safer default).
+    transport error — never "approval", so a transport hiccup can never silently
+    record a spurious approval into the flywheel store.
     """
     from google.genai import types
 

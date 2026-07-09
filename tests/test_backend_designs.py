@@ -114,7 +114,7 @@ def test_post_designs_creates_retrievable_session(client):
 
 # ── WebSocket tests ───────────────────────────────────────────────────────────
 
-_TERMINAL_EVENT_TYPES = {"success", "failed", "error", "ask_user", "answer"}
+_TERMINAL_EVENT_TYPES = {"success", "failed", "error", "ask_user", "answer", "approved"}
 
 
 def _collect_ws_events(ws_session, max_events: int = 20) -> list[dict]:
@@ -475,6 +475,67 @@ def test_ws_post_design_ambiguous_edit_asks_for_clarification(
     session = design_store.get_session(design_id)
     assert session.status == "needs_user"
     assert session.pending_edit_text == "make it bigger"
+
+
+# ── Trace flywheel: approval (REST + chat) ────────────────────────────────────
+
+
+@pytest.fixture()
+def _tmp_approved(tmp_path, monkeypatch):
+    from backend.approved_store import store as astore
+
+    monkeypatch.setattr(astore, "_APPROVED_PATH", tmp_path / "approved_designs.json")
+    return astore
+
+
+def _done_session(prompt="a 40mm cube"):
+    s = design_store.create_session()
+    s.status = "done"
+    s.original_prompt = prompt
+    s.run_id = f"design_{s.id[:8]}_run"
+    s.last_plan = {"part_name": "cube", "units": "mm",
+                   "steps": [{"id": "b", "primitive": "box", "operation": "base"}]}
+    return s
+
+
+def test_approve_endpoint_400_without_successful_run(client):
+    design_id = client.post("/designs").json()["design_id"]  # status "chatting", no run
+    r = client.post(f"/designs/{design_id}/approve")
+    assert r.status_code == 400
+
+
+def test_approve_endpoint_persists_and_is_idempotent(client, _tmp_approved):
+    s = _done_session()
+    r1 = client.post(f"/designs/{s.id}/approve")
+    assert r1.status_code == 200 and r1.json()["status"] == "approved"
+    assert _tmp_approved._APPROVED_PATH.exists()
+    assert len(_tmp_approved._load()["approved"]) == 1
+
+    r2 = client.post(f"/designs/{s.id}/approve")  # same run_id
+    assert r2.json()["status"] == "already_approved"
+    assert len(_tmp_approved._load()["approved"]) == 1
+
+
+@patch("backend.designs.runner.classify_post_design_message", return_value="approval")
+@patch("backend.designs.runner.run_geometry_loop")
+@patch("backend.designs.runner.run_planner_turn")
+def test_ws_post_design_approval_saves_reference(
+    mock_planner, mock_loop, mock_classify, client, _tmp_approved
+):
+    """A pure sign-off after a successful design persists it to the flywheel."""
+    mock_planner.return_value = _plan_ready_output()
+    mock_loop.return_value = _loop_result("success")
+
+    design_id = client.post("/designs").json()["design_id"]
+    with client.websocket_connect(f"/designs/{design_id}/chat") as ws:
+        ws.send_json({"type": "message", "text": "a 40mm cube"})
+        _collect_ws_events(ws)
+        ws.send_json({"type": "message", "text": "perfect, approve this"})
+        events = _collect_ws_events(ws)
+
+    types = [e["type"] for e in events]
+    assert "approved" in types
+    assert len(_tmp_approved._load()["approved"]) == 1
 
 
 # ── Helpers (build typed return values for mocks) ────────────────────────────

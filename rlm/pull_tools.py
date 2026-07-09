@@ -287,24 +287,64 @@ def fetch_kb_sections(keys: list[str]) -> dict:
     return handles
 
 
-def lookup_design_reference(query: str) -> dict:
-    """Look up standard dimensions + adaptable CSG recipes for a design task.
+def list_design_reference_index() -> dict:
+    """Menu of reusable design references as {key: one-line description}.
 
-    Call this BEFORE inventing geometry or web-searching. It stores in REPL memory:
-      - `_REF['fastener_dims']` (metric clearance tables)
-      - `_REF['recipes']` (adaptable CSG step templates)
+    Call this in Step 1 alongside list_primitives(). It is the INDEX, not the
+    content — pick the keys whose descriptions match the request, then call
+    fetch_design_reference([...]) to load only those. Covers three kinds of key:
+      - standard CSG recipes (e.g. bolt_circle, mounting_plate),
+      - `fastener_dims` (metric clearance / tap / counterbore tables),
+      - `approved__*` — PAST DESIGNS A USER CONFIRMED CORRECT. Prefer ADAPTING a
+        proven approved design (its description is the original request) over
+        inventing geometry from scratch when one matches the task.
 
-    Returns dict of memory pointers. Query `_REF['recipes']` or `_REF['fastener_dims']` in Python.
+    Returns:
+        {key: description}. Pull what you need with fetch_design_reference().
     """
     import os
 
     import requests
 
     base = os.environ["DTCM_BACKEND_URL"]
-    url = f"{base}/internal/design-reference"
+    url = f"{base}/internal/design-reference/index"
     for _attempt in range(2):
         try:
-            resp = requests.get(url, params={"q": query}, timeout=10)
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as _e:
+            if _attempt == 0:
+                continue
+            raise RuntimeError(
+                f"list_design_reference_index: backend unreachable at {url!r} ({_e})."
+            ) from None
+
+
+def fetch_design_reference(keys: list[str]) -> dict:
+    """Fetch specific references by key from list_design_reference_index().
+
+    Pick only the relevant keys (recipes, `fastener_dims`, or `approved__*` past
+    designs). Recipes and approved designs come back with adaptable CSG `steps`
+    you can copy and re-parametrise; `fastener_dims` returns dimension tables.
+    Fetch a handful, not everything, to keep token cost bounded.
+
+    Args:
+        keys: List of keys from the index, e.g.
+              ["bolt_circle", "fastener_dims", "approved__design_ab12_..."].
+
+    Returns:
+        {key: memory_handle} pointing to stored content in `_REF[key]`.
+    """
+    import os
+
+    import requests
+
+    base = os.environ["DTCM_BACKEND_URL"]
+    url = f"{base}/internal/design-reference/fetch"
+    for _attempt in range(2):
+        try:
+            resp = requests.get(url, params={"keys": ",".join(keys)}, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             break
@@ -312,7 +352,7 @@ def lookup_design_reference(query: str) -> dict:
             if _attempt == 0:
                 continue
             raise RuntimeError(
-                f"lookup_design_reference({query!r}): backend unreachable at {url!r} ({_e})."
+                f"fetch_design_reference({keys!r}): backend unreachable at {url!r} ({_e})."
             ) from None
 
     g = globals()
