@@ -36,6 +36,33 @@ def _place(solid, position, orientation):
     return solid.translate(position)
 
 
+def _face_local_plane(shape, face_selector):
+    """A cq.Plane tangent to ONE face of `shape` at its centroid — works for
+    planar AND curved (cylindrical/conical/spherical) faces alike.
+
+    `face_selector` must resolve to exactly one face (a multi-face match
+    silently uses the first — keep selectors unambiguous, e.g. "%Cylinder" on
+    a body with only one cylindrical face, not ">X" on a part with several
+    X-facing surfaces).
+
+    The straightforward approach — Face.Center() then Face.normalAt(center) —
+    fails on curved faces (Center() is an area-weighted centroid that is NOT
+    guaranteed to lie ON a curved surface, and normalAt() needs a point on the
+    surface to project from correctly; this raised a low-level OCCT
+    GeomAPI_ProjectPointOnSurf error, measured). The fix: sample the face's own
+    parametric (u, v) domain at its midpoint via positionAt(u, v) — this ALWAYS
+    returns a point exactly on the surface, planar or curved alike — then call
+    normalAt(pt) with that guaranteed-on-surface 3D point (passing a raw (u, v)
+    tuple to normalAt instead is silently misinterpreted as an XY point to
+    project, producing a wrong normal with no error — measured, do not do this).
+    """
+    face = shape.faces(face_selector).val()
+    u0, u1, v0, v1 = face.uvBounds()
+    pt = face.positionAt((u0 + u1) / 2, (v0 + v1) / 2)
+    normal = face.normalAt(pt)
+    return cq.Plane(origin=pt, normal=normal)
+
+
 def _polar(solid, count, axis, angle_deg):
     """Union `count` copies orbited about `axis` (through origin), evenly spread."""
     out = None
@@ -322,12 +349,24 @@ def _compile_finish_step_cq(step: FinishStep) -> list[str]:
     lines = [f"# finish '{step.id}' — {step.op.value}"]
 
     if step.op is FinishOp.fillet:
-        sel = step.selector or "|Z"
-        lines.append(f"result = result.edges({sel!r}).fillet({float(step.value)})")
+        if step.face_scope:
+            # Scoped to one face's rim: an unset selector means ALL of that face's
+            # edges, not the global "|Z" default (a face's rim is rarely vertical).
+            lines.append(
+                f"result = result.faces({step.face_scope!r}).edges({step.selector!r}).fillet({float(step.value)})"
+            )
+        else:
+            sel = step.selector or "|Z"
+            lines.append(f"result = result.edges({sel!r}).fillet({float(step.value)})")
 
     elif step.op is FinishOp.chamfer:
-        sel = step.selector or "|Z"
-        lines.append(f"result = result.edges({sel!r}).chamfer({float(step.value)})")
+        if step.face_scope:
+            lines.append(
+                f"result = result.faces({step.face_scope!r}).edges({step.selector!r}).chamfer({float(step.value)})"
+            )
+        else:
+            sel = step.selector or "|Z"
+            lines.append(f"result = result.edges({sel!r}).chamfer({float(step.value)})")
 
     elif step.op is FinishOp.shell:
         face_sel = step.selector or ">Z"
@@ -387,6 +426,30 @@ def _compile_finish_step_cq(step: FinishStep) -> list[str]:
         # back onto the body to build a symmetric part from one designed half.
         plane = step.selector or "XZ"
         lines.append(f"result = result.union(result.mirror({plane!r}))")
+
+    elif step.op is FinishOp.face_feature:
+        # Circular boss/hole tangent to ANY face's centroid — planar or curved
+        # (see _face_local_plane). selector picks the ONE target face; value =
+        # [diameter, depth], sign of depth chooses boss (union, +) vs hole (cut, -).
+        # extrude(+d) follows the face's OUTWARD normal (measured) — correct for
+        # a boss as-is. A hole must extrude the OPPOSITE way (INTO the body, back
+        # toward the surface point) — extrude(-abs(depth)), not +abs(depth); the
+        # positive-only version compiles and executes with no error but silently
+        # extrudes into empty space outside the body, so .cut() removes nothing
+        # (measured: volume unchanged, a real not-obviously-broken bug this
+        # feature shipped with once already).
+        face_sel = step.selector or ">Z"
+        v = list(step.value) if isinstance(step.value, list) else [float(step.value), 5.0]
+        diameter, depth = float(v[0]), float(v[1])
+        lines.append(f"_plane = _face_local_plane(result, {face_sel!r})")
+        if depth >= 0:
+            lines.append(
+                f"result = result.union(cq.Workplane(_plane).circle({diameter / 2}).extrude({depth}))"
+            )
+        else:
+            lines.append(
+                f"result = result.cut(cq.Workplane(_plane).circle({diameter / 2}).extrude({-abs(depth)}))"
+            )
 
     else:
         # Every FinishOp MUST emit a real operation. An unhandled op (e.g. a new

@@ -5,6 +5,7 @@ believable product parts and execute them through CadQuery to verify dimensions
 and material removal.
 """
 
+import math
 import shutil
 
 import pytest
@@ -450,3 +451,153 @@ def test_rarray_pattern_executes_to_correct_hole_count(_cadquery_available):
     one_hole_vol = math.pi * 2.0**2 * 5.0  # only the 5mm plate thickness is actually removed
     expected = plate_vol - 4 * one_hole_vol
     assert result["volume"] == pytest.approx(expected, rel=0.02)
+
+
+# ── face_scope (scoped fillet/chamfer) and face_feature (boss/hole on any face) ─
+
+
+def _stacked_box_plan(fillet_kwargs):
+    return plan_from_dict(
+        {
+            "part_name": "stacked",
+            "steps": [
+                {
+                    "id": "base", "primitive": "box", "operation": "base",
+                    "parameters": {"length": 40.0, "width": 40.0, "height": 10.0},
+                    "position": [0.0, 0.0, 5.0],
+                },
+                {
+                    "id": "top", "primitive": "box", "operation": "union",
+                    "parameters": {"length": 30.0, "width": 30.0, "height": 10.0},
+                    "position": [0.0, 0.0, 15.0],
+                },
+                {"id": "f", "op": "fillet", "value": 2.0, **fillet_kwargs},
+            ],
+        }
+    )
+
+
+def test_face_scope_emits_faces_before_edges():
+    code = compile_plan_to_cadquery(_stacked_box_plan({"face_scope": ">Z"}), LIBRARY)
+    assert "result.faces('>Z').edges('').fillet(2.0)" in code
+
+
+def test_fillet_without_face_scope_is_unchanged():
+    """No face_scope -> exact same codegen as before this feature (backward compat)."""
+    code = compile_plan_to_cadquery(_stacked_box_plan({}), LIBRARY)
+    assert "result.edges('|Z').fillet(2.0)" in code
+    assert ".faces(" not in code.split("# finish")[-1]
+
+
+def test_face_scoped_fillet_only_rounds_that_faces_edges(_cadquery_available):
+    """The scoped fillet must remove volume consistent with ONLY the top step's
+    4-edge rim (~103mm^3 for r=2), not both levels' rims (~240mm^3)."""
+    result = _run(_stacked_box_plan({"face_scope": ">Z"}))
+    assert result["success"], result.get("error")
+    unfilleted_vol = 40.0**2 * 10.0 + 30.0**2 * 10.0  # 25000
+    removed = unfilleted_vol - result["volume"]
+    assert 60.0 < removed < 150.0  # only the top rim's 4 edges, not both levels'
+
+
+def test_face_feature_boss_emits_local_plane_and_union():
+    plan = plan_from_dict(
+        {
+            "part_name": "bossed",
+            "steps": [
+                {
+                    "id": "b", "primitive": "box", "operation": "base",
+                    "parameters": {"length": 40.0, "width": 40.0, "height": 40.0},
+                    "position": [0.0, 0.0, 20.0],
+                },
+                {"id": "boss", "op": "face_feature", "selector": ">Z", "value": [10.0, 8.0]},
+            ],
+        }
+    )
+    code = compile_plan_to_cadquery(plan, LIBRARY)
+    assert "_face_local_plane(result, '>Z')" in code
+    assert "result.union(cq.Workplane(_plane).circle(5.0).extrude(8.0))" in code
+
+
+def test_face_feature_hole_emits_cut_with_positive_depth():
+    """A negative depth value must compile to .cut() with the ABSOLUTE depth."""
+    plan = plan_from_dict(
+        {
+            "part_name": "holed",
+            "steps": [
+                {
+                    "id": "c", "primitive": "cylinder", "operation": "base",
+                    "parameters": {"radius": 20.0, "height": 60.0},
+                    "position": [0.0, 0.0, 30.0],
+                },
+                {"id": "h", "op": "face_feature", "selector": "%Cylinder", "value": [8.0, -15.0]},
+            ],
+        }
+    )
+    code = compile_plan_to_cadquery(plan, LIBRARY)
+    assert "_face_local_plane(result, '%Cylinder')" in code
+    # extrude distance must be NEGATIVE (-15.0) — extrudes INTO the body along
+    # the inverse normal, not outward past it (outward would cut nothing away).
+    assert "result.cut(cq.Workplane(_plane).circle(4.0).extrude(-15.0))" in code
+
+
+def test_face_feature_boss_executes_on_flat_face(_cadquery_available):
+    plan = plan_from_dict(
+        {
+            "part_name": "bossed",
+            "steps": [
+                {
+                    "id": "b", "primitive": "box", "operation": "base",
+                    "parameters": {"length": 40.0, "width": 40.0, "height": 40.0},
+                    "position": [0.0, 0.0, 20.0],
+                },
+                {"id": "boss", "op": "face_feature", "selector": ">Z", "value": [10.0, 8.0]},
+            ],
+        }
+    )
+    result = _run(plan)
+    assert result["success"], result.get("error")
+    box_vol, boss_vol = 40.0**3, math.pi * 5.0**2 * 8.0
+    assert result["volume"] == pytest.approx(box_vol + boss_vol, rel=0.02)
+
+
+def test_face_feature_boss_executes_on_curved_face(_cadquery_available):
+    """The must-need gap: a boss whose local normal is NOT axis-aligned, since
+    the compiler samples the actual surface normal rather than assuming a flat
+    global plane."""
+    plan = plan_from_dict(
+        {
+            "part_name": "bossed_cyl",
+            "steps": [
+                {
+                    "id": "c", "primitive": "cylinder", "operation": "base",
+                    "parameters": {"radius": 20.0, "height": 60.0},
+                    "position": [0.0, 0.0, 30.0],
+                },
+                {"id": "boss", "op": "face_feature", "selector": "%Cylinder", "value": [8.0, 6.0]},
+            ],
+        }
+    )
+    result = _run(plan)
+    assert result["success"], result.get("error")
+    cyl_vol = math.pi * 20.0**2 * 60.0
+    assert result["volume"] > cyl_vol  # boss added real material, not a no-op
+
+
+def test_face_feature_hole_executes_on_curved_face(_cadquery_available):
+    plan = plan_from_dict(
+        {
+            "part_name": "holed_cyl",
+            "steps": [
+                {
+                    "id": "c", "primitive": "cylinder", "operation": "base",
+                    "parameters": {"radius": 20.0, "height": 60.0},
+                    "position": [0.0, 0.0, 30.0],
+                },
+                {"id": "h", "op": "face_feature", "selector": "%Cylinder", "value": [8.0, -15.0]},
+            ],
+        }
+    )
+    result = _run(plan)
+    assert result["success"], result.get("error")
+    cyl_vol = math.pi * 20.0**2 * 60.0
+    assert result["volume"] < cyl_vol  # material was removed, not added

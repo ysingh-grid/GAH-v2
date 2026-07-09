@@ -65,6 +65,8 @@ Work through these in order, inside your single block, before you emit:
    > - Hollow turned parts (cup, bowl, glass) → **`revolve` + shell FinishOp**
    > - Mounting slots / track grooves → **`slot_extrude`**
    > - Mixed line+arc profiles → **`arc_extrude`** with segments
+   > - Boss/hole on an angled or CURVED wall (housing, tank, dome) → FinishStep **`face_feature`**, not a separate positioned primitive
+   > - Fillet/chamfer ONE step's rim on a multi-level stack, not every matching edge → FinishStep **`face_scope`**
    > - Always ask: does this silhouette curve? If yes, set `smooth: true`.
 
 4. **Dimensions & positioning** — resolve every parameter to a number (mm), then

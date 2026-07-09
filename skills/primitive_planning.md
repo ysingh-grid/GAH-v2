@@ -142,18 +142,53 @@ Finish steps act on the **whole accumulated body** (not a new primitive). Place 
 
 ```json
 { "id": "f1", "op": "<finish_op>", "selector": "<edge/face>", "value": <number|list>,
-  "positions": [[x,y],...], "face": ">Z" }
+  "positions": [[x,y],...], "face": ">Z", "face_scope": "<face selector, fillet/chamfer only>" }
 ```
 
 | `op` | What it does | Required fields |
 |---|---|---|
-| `fillet` | Round selected edges | `selector`, `value` (radius mm) |
-| `chamfer` | Bevel selected edges | `selector`, `value` (length mm) |
+| `fillet` | Round selected edges | `selector`, `value` (radius mm), optional `face_scope` |
+| `chamfer` | Bevel selected edges | `selector`, `value` (length mm), optional `face_scope` |
 | `shell` | Hollow body (open one face) | `selector` (face to open), `value` (wall thickness mm) |
 | `hole` | Drill simple holes at (x,y) points on a face | `face`, `value` (diameter mm), `positions` |
 | `cbore` | Counterbored holes | `face`, `value` [clr_dia, bore_dia, bore_depth], `positions` |
 | `csk` | Countersunk holes | `face`, `value` [clr_dia, csk_dia, csk_angle_deg], `positions` |
 | `mirror` | Mirror body about a plane & union w/ original | `selector` ("XY"/"XZ"/"YZ") |
+| `face_feature` | Circular boss or hole on ANY one face — planar OR curved | `selector` (face, must match exactly one), `value` [diameter, depth] |
+
+### `face_scope` — fillet/chamfer only ONE step's rim
+A plain `fillet`/`chamfer` selector (e.g. `"|Z"`, `"%Circle"`) matches edges
+across the **whole body**. On a multi-level stacked part, that rounds every
+matching edge everywhere — if you only want ONE level's rim rounded, add
+`"face_scope": "<face selector>"`: it restricts the op to that face's own
+edges first, THEN applies `selector` within them (leave `selector` empty for
+"all of that face's edges").
+```json
+{ "id": "f", "op": "fillet", "face_scope": ">Z", "value": 2.0 }
+```
+→ rounds only the topmost step's rim; every other edge in the part is untouched.
+
+### `face_feature` — a boss or hole on an angled or CURVED face
+For a stud/boss/vent on a slanted or curved surface (housing wall, cylindrical
+tank side, dome) — not just the flat top/bottom a normal `position`+`orientation`
+step can reach. Centered on the selected face automatically (no `position` math
+needed — the compiler samples the real surface normal at that face's center,
+so it works even where the surface curves and a single "orientation" angle
+couldn't). `value = [diameter, depth]`: **positive depth = boss** (added
+outward), **negative depth = hole** (bored inward).
+```json
+{ "id": "boss", "op": "face_feature", "selector": "%Cylinder", "value": [8.0, 6.0] }
+```
+→ an 8mm-diameter, 6mm-tall round boss on the cylindrical side wall.
+```json
+{ "id": "vent", "op": "face_feature", "selector": "%Cylinder", "value": [5.0, -12.0] }
+```
+→ a 5mm hole bored 12mm into that same curved wall.
+
+> The `selector` must resolve to exactly ONE face — pick a selector specific
+> enough to be unambiguous (`"%Cylinder"` on a part with only one curved face,
+> `">X"` only if just one face is X-most). A selector matching several faces
+> silently uses just the first one.
 
 ---
 

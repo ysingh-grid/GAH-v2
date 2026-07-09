@@ -61,6 +61,11 @@ class FinishOp(StrEnum):
     cbore = "cbore"      # counterbored hole:     value = [clr_dia, bore_dia, bore_depth] (mm)
     csk = "csk"          # countersunk hole:      value = [clr_dia, csk_dia, csk_angle_deg]
     mirror = "mirror"    # mirror body across a plane & union w/ original; selector = plane ("XZ")
+    face_feature = "face_feature"  # circular boss/hole on ANY face (planar OR curved):
+                                    # value = [diameter, depth] (mm); depth>0 = boss (union,
+                                    # extrudes OUT along the face's local normal at its center),
+                                    # depth<0 = hole (cut, bores IN along the inverse normal).
+                                    # selector = face selector, must resolve to exactly one face.
 
 
 class PatternType(StrEnum):
@@ -117,17 +122,25 @@ class FinishStep(BaseModel):
         op:        Which finish operation to apply.
         selector:  CadQuery-style selector string for the target edges/faces.
                    e.g. "|Z" (all vertical edges), ">Z" (top face), "%Circle" (circular edges).
-                   Ignored for 'hole'/'cbore'/'csk' (positions-based).
+                   Ignored for 'hole'/'cbore'/'csk' (positions-based). For 'face_feature'
+                   this is the FACE selector (must resolve to exactly one face).
         value:     Numeric parameter(s) for the operation:
                    fillet/chamfer  → float radius or length
                    shell           → float wall thickness (positive = inward)
                    hole            → float diameter
                    cbore           → [clr_dia, bore_dia, bore_depth]
                    csk             → [clr_dia, csk_dia, csk_angle_deg]
+                   face_feature    → [diameter, depth] (depth sign: + boss, - hole)
         positions: For hole/cbore/csk: list of (x, y) points on the face where
                    holes are drilled. If empty and op is hole/cbore/csk, the hole
                    is placed at the origin of the selected face.
         face:      Face selector for where holes are drilled (default ">Z" = top face).
+        face_scope: OPTIONAL, fillet/chamfer only. When set, restricts the op to
+                   the edges of THIS ONE face (chained: .faces(face_scope).edges(selector)),
+                   instead of `selector` matching edges across the WHOLE body. Use this
+                   to fillet/chamfer only one specific step's rim on a multi-level part
+                   (e.g. only the top boss's edge, not every edge matching a global
+                   pattern). Empty string (default) = unscoped, existing behavior.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -138,6 +151,7 @@ class FinishStep(BaseModel):
     value: ParamValue = 1.0     # operation parameter(s)
     positions: list[tuple[float, float]] = Field(default_factory=list)
     face: str = ">Z"            # face for hole ops
+    face_scope: str = ""        # optional face-scoping for fillet/chamfer
 
 
 class PrimitiveStep(BaseModel):
