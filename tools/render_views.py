@@ -1,15 +1,24 @@
 def render_views(stl_path: str, run_id: str, section: dict | None = None) -> dict:
     """
-    Render a single composite PNG with FIVE side-by-side views of an STL,
+    Render a single composite PNG with SIX side-by-side views of an STL,
     using VTK with Phong shading + bold black edge/silhouette overlays
     (server-side, offscreen, no GUI).
 
     Views (left -> right):
-      - front    (true orthographic, look +Y)  — XZ face, heights/widths
-      - side     (true orthographic, look -X)  — YZ face, depth profile
-      - top      (true orthographic, look -Z)  — XY face, hole/slot layout
-      - iso      (perspective, elev35/azim45)  — overall 3D shape
-      - section  (cutaway half-solid)          — interior walls/cavities
+      - front       (true orthographic, look +Y)  — XZ face, heights/widths
+      - side        (true orthographic, look -X)  — YZ face, depth profile
+      - top         (true orthographic, look -Z)  — XY face, hole/slot layout
+      - iso         (perspective, elev35/azim45)  — overall 3D shape
+      - high_angle  (perspective, elev65/azim220) — steep top-rear angle; NEVER
+                    axis-locked, so it stays informative even when the part's
+                    longest dimension happens to align with a global axis and
+                    one of the strict orthographic views (most often "front")
+                    degenerates into a near-edge-on sliver. Restores a view
+                    that existed in this tool's original version and was lost
+                    when it was rebuilt around strict orthographic projections
+                    — measured: a spoon built along the Y axis renders "front"
+                    as an almost-blank line, but this angle still reads clearly.
+      - section     (cutaway half-solid)          — interior walls/cavities
 
     Section plane:
       Plan-driven when `section` is provided as {"normal": [x,y,z],
@@ -25,7 +34,7 @@ def render_views(stl_path: str, run_id: str, section: dict | None = None) -> dic
     Returns:
         On success:
           {"success": True, "png_path": str, "width": int, "height": int,
-           "views": ["front","side","top","iso","section"],
+           "views": ["front","side","top","iso","high_angle","section"],
            "renders": {"composite": png_path}}
         On failure:
           {"success": False, "error": str}
@@ -119,7 +128,7 @@ print(json.dumps(result))
 
 def _do_render(stl_path: str, run_id: str, section: dict | None = None) -> dict:
     """
-    Execute the VTK five-view render in the *current* process.
+    Execute the VTK six-view render in the *current* process.
 
     This must only be called from a process whose main thread is available for
     Cocoa/OpenGL (i.e. NOT from a uvicorn thread-pool worker). Call render_views()
@@ -138,7 +147,7 @@ def _do_render(stl_path: str, run_id: str, section: dict | None = None) -> dict:
         import numpy as np
         import vtk
 
-        size = (4000, 800)  # five 800-wide panels in a row
+        size = (4800, 800)  # six 800-wide panels in a row
         scale = 2
 
         # Read STL
@@ -276,14 +285,18 @@ def _do_render(stl_path: str, run_id: str, section: dict | None = None) -> dict:
         render_window.SetOffScreenRendering(1)
         render_window.SetSize(size[0], size[1])
 
-        n = 5  # front, side, top, iso, section
+        n = 6  # front, side, top, iso, high_angle, section
 
-        # ── ortho + iso panels (share the full-solid pipeline) ────────────────
+        # ── ortho + angled panels (share the full-solid pipeline) ─────────────
         panels = [
             ("front", lambda r: _frame_ortho(r, (0, 1, 0), (0, 0, 1))),
             ("side",  lambda r: _frame_ortho(r, (-1, 0, 0), (0, 0, 1))),
             ("top",   lambda r: _frame_ortho(r, (0, 0, -1), (0, 1, 0))),
             ("iso",   lambda r: _frame_iso(r, 35, 45)),
+            # Steep top-rear angle, NOT axis-locked — stays informative even
+            # when a strict orthographic view degenerates for this part's
+            # orientation (see the module docstring for the measured case).
+            ("high_angle", lambda r: _frame_iso(r, 65, 220)),
         ]
         for i, (name, setup) in enumerate(panels):
             ren = vtk.vtkRenderer()
@@ -352,7 +365,7 @@ def _do_render(stl_path: str, run_id: str, section: dict | None = None) -> dict:
             return actor
 
         sec = vtk.vtkRenderer()
-        sec.SetViewport(4 / n, 0, 1.0, 1.0)
+        sec.SetViewport(5 / n, 0, 1.0, 1.0)  # 6th and last panel
         sec.SetBackground(1.0, 1.0, 1.0)
         sec.AddActor(_section_solid_actor(clip.GetOutputPort()))
         sec.AddActor(_edges_actor(clip.GetOutputPort()))
@@ -392,7 +405,7 @@ def _do_render(stl_path: str, run_id: str, section: dict | None = None) -> dict:
             "png_path": out_png,
             "width": size[0] * scale,
             "height": size[1] * scale,
-            "views": ["front", "side", "top", "iso", "section"],
+            "views": ["front", "side", "top", "iso", "high_angle", "section"],
             "renders": {"composite": out_png},
         }
 
