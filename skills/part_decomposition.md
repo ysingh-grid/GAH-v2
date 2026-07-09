@@ -81,31 +81,34 @@ Base Solid  (+addition solids)  (−subtraction solids)  [+finish features]
 
 ---
 
-## When to hand off vs design in one context
+## Independent solids vs. features of one body — both planned inline
 
-You have a way to hand a piece of the design off to be planned separately in
-parallel. Use it when, and only when:
+Everything is ONE construction tree, planned by you, in one block. There is no
+mechanism to hand a piece of the design off to be planned separately — the
+distinction below is about how you REASON about anchors, not about who plans
+what.
 
-### Case A — Independent Solids (hand off)
-Distinct bodies that only meet at an interface. Each designs freely in its own local frame.
-- Cricket bat → `["blade", "handle"]`
-- Bolt + nut → `["bolt", "nut"]`
+### Case A — Independent Solids
+Distinct bodies that only meet at an interface, each free in its own local
+frame until they need to align at that interface.
+- Cricket bat → blade + handle
+- Bolt + nut → bolt + nut
 
-### Case B — Features of One Connected Body (do NOT hand off — plan inline)
+Fix the shared anchors first (thread diameter/pitch, the interface plane or
+radius), THEN place every body's steps in your `steps` list — the first body
+is `base`, every other body (even one that doesn't touch anything yet) is
+`union`. A union of disjoint solids is legal; it produces one multi-component
+compound. See `playbook`'s "EXACTLY ONE base step" rule.
+
+### Case B — Features of One Connected Body
 Hub+spokes+rim, flange+bolt-bosses+ribs. These are one connected body, not
-independent solids — plan them yourself as a single construction tree
+independent solids — plan them as a single construction tree
 (`base` → `union` → `cut` → finish). Fix your own shared anchors first: every
 shared radius, plane, or bolt-circle position, decided once and reused
 consistently across steps. Every union feature must overlap the body it joins
 by 0.5–1mm (a feature that only touches — tangent/coincident face — does NOT
 fuse; see `dimension_reasoning` Rule 2).
 
-**Wheel example** (Case B, plan inline): hub cyl r=15, rim ring inner=40/outer=44,
+**Wheel example** (Case B): hub cyl r=15, rim ring inner=40/outer=44,
 spoke spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 — all as steps
 in one plan: `[hub(base), spoke×5(union, pattern=polar), rim(union)]`.
-
-### RULE: Only hand off for genuinely independent solids
-A single connected body with many features — however many fillets, shells,
-patterns, or holes — is NOT a hand-off case. Design it in one context. Only
-a true multi-solid assembly (Case A) warrants a hand-off, and even then only
-after you've fixed the shared anchors every piece must agree on.

@@ -117,7 +117,7 @@ def build_planner_query(
 ) -> dict[str, Any]:
     """Assemble the structured context dict handed to the RLM for one turn.
 
-    MENU by value, CONTENT by reference. available_primitives (the ~26 catalog
+    MENU by value, CONTENT by reference. available_primitives (the ~30 catalog
     keys) is tiny — pre-fetching it once and embedding it here is cheaper than
     making the monolithic root spend an extra REPL step to pull it (each added
     step re-sends the whole transcript — quadratic cost; MEASURED: removing the
