@@ -25,6 +25,19 @@ def test_vlm_intake_summary_defaults_checklist_fields_for_backward_compat() -> N
     assert s.required_features == []
 
 
+def test_intake_instruction_scopes_required_features_to_capability_envelope() -> None:
+    """required_features must be the primary FORM expressible as ONE solid — not
+    fine detail (threads) or separate parts (caps) the platform can't build."""
+    from tools.vlm_intake import INTAKE_INSTRUCTION
+
+    low = INTAKE_INSTRUCTION.lower()
+    assert "one solid" in low or "single solid" in low
+    assert "primary form" in low
+    assert "out of scope" in low or "do not" in low
+    assert "thread" in low  # illustrative inexpressible-detail example
+    assert "cap" in low or "removable" in low  # illustrative separate-part example
+
+
 def test_vlm_intake_summary_accepts_checklist_fields() -> None:
     from tools.vlm_intake import VlmIntakeSummary
 

@@ -39,7 +39,9 @@ def test_plan_result_carries_validated_plan():
 
 def test_parse_planner_result_accepts_already_validated_model():
     expected = PrimitivePlan.model_validate(_CUBE_PLAN)
-    assert parse_planner_result(expected) is expected
+    out = parse_planner_result(expected)
+    assert out.part_name == expected.part_name
+    assert len(out.steps) == len(expected.steps)
 
 
 def test_plan_with_no_steps_raises():
@@ -110,8 +112,10 @@ def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
         config={},
     )
 
+    from runtime.schema import LibraryBoundPrimitivePlan
+
     assert out.part_name == "cube"
-    assert captured["output_schema"] is PrimitivePlan
+    assert captured["output_schema"] is LibraryBoundPrimitivePlan
     assert captured["env_variables"]["DTCM_BACKEND_URL"] == "http://backend.test"
 
 
@@ -146,7 +150,9 @@ def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
     assert out.part_name == "cube"
     assert captured["query"]["available_primitives"] == {"box": "A box", "cylinder": "A cylinder"}
     assert "kb_index" not in captured["query"]
-    assert captured["output_schema"] is PrimitivePlan
+    from runtime.schema import LibraryBoundPrimitivePlan
+
+    assert captured["output_schema"] is LibraryBoundPrimitivePlan
 
 
 def test_run_replanner_turn_injects_current_plan_into_query(monkeypatch):
@@ -203,6 +209,131 @@ def test_all_skills_fit_in_one_repl_output():
             f"{md.name} is {size} chars >= truncate_len={config.truncate_len}; "
             "raise truncate_len in rlm/rlm_config.py or trim the skill"
         )
+
+
+def test_replanner_task_teaches_cause_classes_not_product_recipes():
+    """Topology fails must use geometric CAUSE classes, not vessel folklore."""
+    from runtime.planner import REPLANNER_TASK
+
+    low = REPLANNER_TASK.lower()
+    assert "cut_sever" in low
+    assert "union_gap" in low
+    assert "shell_fail" in low
+    assert "final" in low
+
+
+def test_run_replanner_turn_escalates_reasoning_vs_first_pass(monkeypatch):
+    """First-pass planning stays cheap ('low'); the rare failure/edit replan
+    escalates reasoning so the model can reason about a construction change."""
+    import fast_rlm
+
+    from rlm.rlm_config import LLM_KWARGS
+    from runtime.planner import run_replanner_turn
+
+    captured = {}
+
+    def fake_run(query, **kwargs):
+        captured["llm_kwargs"] = kwargs.get("llm_kwargs", {})
+        return {"results": _CUBE_PLAN}
+
+    monkeypatch.setattr(fast_rlm, "run", fake_run)
+    monkeypatch.setattr(
+        "runtime.planner._load_available_primitives", lambda: {"box": "A box"}
+    )
+
+    run_replanner_turn(
+        "fix it",
+        [{"role": "system", "content": "failed at step 'x'"}],
+        backend_url="http://backend.test",
+        config={},
+    )
+    # first-pass baseline stays low; the replan path escalated to medium
+    assert LLM_KWARGS.get("reasoning_effort") == "low"
+    assert captured["llm_kwargs"].get("reasoning_effort") == "medium"
+
+
+def test_repair_guidance_does_not_misattribute_brep_to_disjoint_unions():
+    """The BRep_API build failure must point to the ATTRIBUTED op + preview_plan,
+    not the old misleading 'disjoint unions' diagnosis that sent shell fixes astray."""
+    from pathlib import Path
+
+    text = (
+        Path(__file__).resolve().parent.parent / "skills" / "repair_guidance.md"
+    ).read_text(encoding="utf-8")
+    assert "disjoint unions" not in text.lower()
+    assert "preview_plan" in text
+    assert "attributed" in text.lower()
+
+
+def test_planner_toolset_is_single_object():
+    """Single-object platform: the multi-body assembly fork tools must NOT be in
+    the planner or replanner toolsets (delegate_features invited disconnected
+    bodies; delegate_stage was measured harmful)."""
+    from rlm.pull_tools import delegate_features, delegate_stage
+    from runtime.planner import _PLANNER_TOOLS, _REPLANNER_TOOLS
+
+    for tool in (delegate_features, delegate_stage):
+        assert tool not in _PLANNER_TOOLS, f"{tool.__name__} must not be in _PLANNER_TOOLS"
+        assert tool not in _REPLANNER_TOOLS, f"{tool.__name__} must not be in _REPLANNER_TOOLS"
+
+
+def test_planner_task_prefers_single_block_and_library_params():
+    """Fast general planning: few turns + exact param names from menu."""
+    from runtime.planner import PLANNER_TASK
+
+    low = PLANNER_TASK.lower()
+    assert "available_primitives" in low or "param" in low
+    assert "final" in low
+    assert "single" in low or "one" in low or "1–2" in low or "2 turn" in low
+
+
+def test_primitive_planning_teaches_revolve_for_turned_vessels():
+    """A bottle/cup/vase must be modeled as ONE revolve of a walled profile —
+    NOT cylinders + shell + a unioned cap (the _ed2b non-fusing anti-pattern)."""
+    from pathlib import Path
+
+    skill = (
+        Path(__file__).resolve().parent.parent / "skills" / "primitive_planning.md"
+    ).read_text(encoding="utf-8")
+    low = skill.lower()
+    assert "turned vessels" in low
+    assert "revolve" in skill
+    for w in ("bottle", "cup", "vase"):
+        assert w in low, f"vessel skill should mention {w}"
+    # the explicit anti-pattern must be named
+    assert "shelled" in low
+    assert "cap" in low
+
+
+def test_primitive_planning_teaches_hollow_last():
+    """When CSG + shell are unavoidable: union all solids FIRST, shell LAST —
+    never union a solid onto an already-shelled thin wall."""
+    from pathlib import Path
+
+    skill = (
+        Path(__file__).resolve().parent.parent / "skills" / "primitive_planning.md"
+    ).read_text(encoding="utf-8")
+    low = skill.lower()
+    assert "hollow last" in low
+    assert "union all solid features first" in low
+
+
+def test_primitive_planning_skill_teaches_selection_principle():
+    """The skill must steer toward the richest single primitive and away from
+    fragile post-hoc finishes — naming the robust primitives explicitly."""
+    from pathlib import Path
+
+    skill = (
+        Path(__file__).resolve().parent.parent / "skills" / "primitive_planning.md"
+    ).read_text(encoding="utf-8")
+    low = skill.lower()
+    # the principle is stated
+    assert "richest" in low or "single richest primitive" in low
+    # the robust construction primitives are named
+    for name in ("hollow_cylinder", "revolve", "filleted_box"):
+        assert name in skill, f"skill should name {name}"
+    # fragile finishes are framed as a fallback/last resort
+    assert "last resort" in low or "fall back" in low or "fallback" in low
 
 
 def test_run_planner_turn_propagates_exception(monkeypatch):

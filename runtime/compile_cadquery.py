@@ -7,6 +7,14 @@ then translate), optionally replicates it (polar / linear pattern), and folds
 the steps together with CSG booleans into a single `result` solid that
 `tools/execute_cadquery.py` knows how to run.
 
+**Two-phase CSG semantics (platform invariant, not per-object recipes):**
+1. Additive phase — all base/union/intersect steps, in plan order → body
+2. Subtractive phase — all cut solids are fused into ONE cavity tool, then a
+   single body.cut(tool). Independent sequential cuts often sever thin walls
+   (e.g. oversized flange through-cut under a smaller loft); fused cavity is
+   the correct-by-construction hollow for any part class.
+3. Finish phase — fillet/chamfer/shell/holes/mirror after the boolean body.
+
 The compiler is pure: it returns a code string and never touches disk or runs
 CadQuery itself. A malformed plan (missing primitive/template, unsupported
 operation) raises `CompileError`, which the loop routes back to the RLM tagged
@@ -32,6 +40,23 @@ from runtime.schema import (
 # the generated code (rather than emitting inline copies per step) keeps the
 # output readable and each step's code a single expression.
 _PREAMBLE = '''import cadquery as cq
+import os as _os
+
+
+def _mark(step_id, label=""):
+    """Record the step about to run to $DTCM_PROGRESS_FILE (flushed+fsynced) so a
+    hard crash (segfault) can be attributed to the exact step. No-op when the env
+    var is unset, so the preview path (cq_exec) is unaffected."""
+    _p = _os.environ.get("DTCM_PROGRESS_FILE")
+    if not _p:
+        return
+    try:
+        with open(_p, "w", encoding="utf-8") as _f:
+            _f.write(str(step_id) + " :: " + str(label))
+            _f.flush()
+            _os.fsync(_f.fileno())
+    except Exception:
+        pass
 
 
 def _place(solid, position, orientation):
@@ -96,8 +121,10 @@ def _pattern_expr(var: str, pattern: Pattern) -> str:
 def _step_lines(step: PrimitiveStep, spec: dict[str, Any], index: int) -> list[str]:
     """Emit the code lines that build, place, and (optionally) pattern one step."""
     var = f"s{index}"
+    label = f"{step.operation.value} {step.primitive}"
     lines = [
-        f"# step '{step.id}' — {step.operation.value} {step.primitive}",
+        f"# step '{step.id}' — {label}",
+        f"_mark({step.id!r}, {label!r})",
         f"{var} = {_fill_template(spec, step.parameters)}",
         f"{var} = _place({var}, {tuple(step.position)}, {tuple(step.orientation)})",
     ]
@@ -106,22 +133,41 @@ def _step_lines(step: PrimitiveStep, spec: dict[str, Any], index: int) -> list[s
     return lines
 
 
-def _accumulate_line(step: PrimitiveStep, index: int) -> str:
-    """Emit the CSG fold line that merges step `index` into `result`."""
+def _accumulate_additive_line(step: PrimitiveStep, index: int) -> str:
+    """Emit the CSG fold line that merges an additive step into `result`."""
     var = f"s{index}"
     if step.operation is Operation.base:
         return f"result = {var}"
     if step.operation is Operation.union:
         return f"result = result.union({var})"
-    if step.operation is Operation.cut:
-        return f"result = result.cut({var})"
     if step.operation is Operation.intersect:
         return f"result = result.intersect({var})"
     raise CompileError(
-        f"operation '{step.operation.value}' (step '{step.id}') is not a CSG fold "
-        f"(base/union/cut/intersect). Post-body modifiers (fillet/chamfer/shell/holes/"
-        f"mirror) must be FinishStep entries, not PrimitiveStep operations."
+        f"operation '{step.operation.value}' (step '{step.id}') is not an additive "
+        f"fold (base/union/intersect). Cuts are fused and applied once after the body."
     )
+
+
+def _partition_steps(
+    plan: PrimitivePlan,
+) -> tuple[list[tuple[int, PrimitiveStep]], list[tuple[int, PrimitiveStep]], list[FinishStep]]:
+    """Split plan steps into additive primitives, cut primitives, and finishes.
+
+    Finish steps always run last (after the boolean body), regardless of where
+    they appeared in the JSON list — single-part solids are body-then-features.
+    """
+    additive: list[tuple[int, PrimitiveStep]] = []
+    cuts: list[tuple[int, PrimitiveStep]] = []
+    finishes: list[FinishStep] = []
+    for index, step in enumerate(plan.steps):
+        if isinstance(step, FinishStep):
+            finishes.append(step)
+            continue
+        if step.operation is Operation.cut:
+            cuts.append((index, step))
+        else:
+            additive.append((index, step))
+    return additive, cuts, finishes
 
 def _compile_finish_step_cq(step: FinishStep) -> list[str]:
     """Emit CadQuery code lines that apply a FinishStep to `result`.
@@ -131,7 +177,10 @@ def _compile_finish_step_cq(step: FinishStep) -> list[str]:
     StdFail_NotDone when the radius is too large for the geometry — we
     skip rather than crash the whole part.
     """
-    lines = [f"# finish '{step.id}' — {step.op.value}"]
+    lines = [
+        f"# finish '{step.id}' — {step.op.value}",
+        f"_mark({step.id!r}, {('finish ' + step.op.value)!r})",
+    ]
 
     if step.op is FinishOp.fillet:
         sel = step.selector or "|Z"
@@ -152,9 +201,27 @@ def _compile_finish_step_cq(step: FinishStep) -> list[str]:
         ]
 
     elif step.op is FinishOp.shell:
+        # Shell stays hard-fail (do not silently skip) but ALWAYS raises a typed
+        # shell_fail message so replan abandons shell → solid or cavity cuts,
+        # instead of thrashing on raw BRep_API tracebacks for minutes.
         face_sel = step.selector or ">Z"
-        thickness = -abs(float(step.value))  # negative = inward (preserve outer dims)
-        lines.append(f"result = result.faces({face_sel!r}).shell({thickness})")
+        wall = abs(float(step.value))
+        thickness = -wall  # negative = inward (preserve outer dims)
+        lines += [
+            "try:",
+            f"    result = result.faces({face_sel!r}).shell({thickness})",
+            "except Exception as _shell_exc:",
+            "    raise RuntimeError(",
+            f"        'CAUSE: shell_fail — OCCT cannot shell this solid '",
+            f"        f'(selector={face_sel!r}, wall_mm={wall}). '",
+            "        'MANDATORY REWRITE: DELETE this shell finish step. '",
+            "        'Either keep the solid body only, OR hollow with cut steps '",
+            "        '(inner offset solids of the same shapes; the compiler fuses '",
+            "        'all cuts into one cavity tool). Do NOT retweak union overlaps '",
+            "        'or shell thickness to \"fix\" shell. Kernel error: '",
+            "        + str(_shell_exc)",
+            "    ) from _shell_exc",
+        ]
 
     elif step.op is FinishOp.hole:
         face_sel = step.face or ">Z"
@@ -246,20 +313,65 @@ def compile_plan_to_cadquery(plan: PrimitivePlan, library: dict[str, Any]) -> st
     if errors:
         raise CompileError("primitive_gap: " + "; ".join(errors))
 
-    body: list[str] = [_PREAMBLE, f"# part: {plan.part_name} (units: {plan.units})"]
-    for index, step in enumerate(plan.steps):
-        if isinstance(step, FinishStep):
-            body.extend(_compile_finish_step_cq(step))
-            body.append("")  # blank line for readability
-            continue
-        # PrimitiveStep
+    # Structural single-part construction gate (no LLM involved).
+    from runtime.plan_guards import construction_errors_for_plan
+
+    construction = construction_errors_for_plan(plan)
+    if construction:
+        raise CompileError(construction[0])
+
+    additive, cuts, finishes = _partition_steps(plan)
+    if not additive:
+        raise CompileError("plan has no additive (base/union/intersect) primitive steps")
+
+    lines: list[str] = [
+        _PREAMBLE,
+        f"# part: {plan.part_name} (units: {plan.units})",
+        "# two-phase CSG: additive body → fuse all cuts → one cut → finishes",
+        "",
+    ]
+
+    # Phase 1 — additive body
+    lines.append("# --- additive body ---")
+    for index, step in additive:
         spec = library.get(step.primitive)
         if spec is None:
             raise CompileError(
                 f"step '{step.id}': primitive '{step.primitive}' is not in the library "
                 f"(primitive_gap)"
             )
-        body.extend(_step_lines(step, spec, index))
-        body.append(_accumulate_line(step, index))
-        body.append("")  # blank line between steps for readability
-    return "\n".join(body)
+        lines.extend(_step_lines(step, spec, index))
+        lines.append(_accumulate_additive_line(step, index))
+        lines.append("")
+
+    # Phase 2 — fuse all cut tools, single cut (correct-by-construction hollow)
+    if cuts:
+        lines.append("# --- fused cavity (all cut solids ∪, then one body.cut) ---")
+        cut_vars: list[str] = []
+        for index, step in cuts:
+            spec = library.get(step.primitive)
+            if spec is None:
+                raise CompileError(
+                    f"step '{step.id}': primitive '{step.primitive}' is not in the library "
+                    f"(primitive_gap)"
+                )
+            lines.extend(_step_lines(step, spec, index))
+            cut_vars.append(f"s{index}")
+            lines.append("")
+        # Attribute multi-solid failures after the cavity boolean to the cavity phase.
+        cut_ids = "+".join(s.id for _, s in cuts)
+        lines.append(f"_mark({cut_ids!r}, 'fused cavity cut')")
+        lines.append(f"_cavity = {cut_vars[0]}")
+        for var in cut_vars[1:]:
+            lines.append(f"_cavity = _cavity.union({var})")
+        lines.append("result = result.cut(_cavity)")
+        lines.append("")
+
+    # Phase 3 — finishes on the final solid
+    if finishes:
+        lines.append("# --- finishes ---")
+        for step in finishes:
+            lines.extend(_compile_finish_step_cq(step))
+            lines.append("")
+
+    return "\n".join(lines)

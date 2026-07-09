@@ -198,6 +198,17 @@ services:
       # compose service name, NOT localhost (which is the worker itself).
       BACKEND_URL: "http://backend:8001"
     volumes:
+      # Live source — MUST match backend mounts. Without this, hollow/metrics fixes
+      # only exist on the host/backend while the worker keeps a stale image copy and
+      # solid-only adapters "succeed" forever (see design_9ef3073f RCA).
+      - ./backend:/app/backend
+      - ./runtime:/app/runtime
+      - ./rlm:/app/rlm
+      - ./tools:/app/tools
+      - ./primitives:/app/primitives
+      - ./skills:/app/skills
+      - ./KB:/app/KB
+      - ./temporal:/app/temporal
       - ./artifacts:/app/artifacts
       - ./outputs:/app/outputs    # run artifacts (STL/STEP/renders/trace.json) persisted to host
       - ./logs:/app/logs    # RLM JSONL logs readable from host via fast-rlm-log

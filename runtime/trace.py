@@ -31,6 +31,8 @@ STAGE_TO_CATEGORY: dict[str, FailureCategory] = {
     "cadquery_compile": FailureCategory.geometry_invalidity,
     "cadquery_execute": FailureCategory.geometry_invalidity,
     "mesh_repair": FailureCategory.geometry_invalidity,
+    "hollow_missing": FailureCategory.geometry_invalidity,
+    "dimensional_mismatch": FailureCategory.visual_mismatch,
     "visual_mismatch": FailureCategory.visual_mismatch,
     "primitive_gap": FailureCategory.primitive_gap,
     "verifier_error": FailureCategory.verifier_miss,

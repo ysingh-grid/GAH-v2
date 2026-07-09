@@ -30,10 +30,25 @@ The fillet or chamfer radius in your `FinishStep` exceeds the physical limits of
 - **Rule**: A fillet/chamfer radius (`value` parameter) MUST be strictly less than half of the smallest dimension of the face or edge it is applied to.
 - **How to fix in JSON**: Locate the `FinishStep` with `"op": "fillet"` or `"op": "chamfer"`. Reduce its `"value"` to a smaller, safer number (e.g., reduce a `3.0` fillet to `1.0` or `1.5`).
 
-### Error 2 — Non-Manifold / Co-planar Faces / Disjoint Unions (`BRep_API: command not done`)
-Occurs when two unioned bodies just barely touch (tangent faces/edges) or when a cutter (operation: `cut`) has faces exactly co-planar with the base shape, producing infinite infinitesimals in the geometry kernel.
-- **How to fix cuts**: Extend the size of the cutting primitive by at least `2.0mm` in the cutting direction, and adjust its position so it starts `1.0mm` outside the base shape and ends `1.0mm` outside the other side. This ensures a clean fully penetrating cut.
-- **How to fix unions**: Do not place unioned shapes exactly tangent. Ensure they overlap by shifting the position of the joining primitive slightly (overlap of `0.5mm` to `1.0mm` into the base body).
+### Error 2 — An operation failed to build the solid (`BRep_API: command not done` / `StdFail_NotDone`, or a hard crash / return code -11)
+The CAD kernel could not complete ONE operation. The `Failure detail` names the
+ATTRIBUTED step ("failed at step 'X' (op: Y)") — fix THAT step, not the whole plan.
+- **Verify before you commit.** Do NOT blind-`FINAL` a fix to a build failure:
+  after changing the step, `preview_plan(plan)` and confirm `compiles`/`executes`
+  are true and `num_components == 1` BEFORE `FINAL`.
+- **If the SAME op keeps failing, change the CONSTRUCTION, not just its number.**
+  A richer single primitive usually removes the failure entirely (see
+  `primitive_planning`): a hollow vessel is `hollow_cylinder`/`revolve`, not a
+  `shell` finish; a rounded box is `filleted_box`, not a whole-body `fillet`.
+- **Read the CAUSE class in the failure detail** — do not always "extend overlap":
+  - **multi-solid / severing cuts** → shallow grooves only; never cut the body into
+    separate pieces (decorative Rubik-style lines must not sever material).
+  - **multi-shell / enclosed void** → open the cavity to outside (cup cut with floor
+    + open top, or shell open-face last). Never a sealed balloon. No separate cap body.
+  - **shell-then-union** → illegal; hollow LAST or ONE `revolve` / `hollow_cylinder`.
+  - **true touching unions only** → extend each union feature `0.5–1.0mm` into the body.
+- **`cut` co-planar with a face** → extend the cutter ~`1mm` past each side so it
+  penetrates cleanly (no zero-thickness slivers).
 
 ### Error 3 — Empty Selector / Element Missing (`IndexError` during selection)
 An edge or face selector (like `">Z"`, `"|Z"`) was requested but couldn't be resolved on the compiled solid because the solid's topology changed (e.g., a cut removed the face, or a rotation shifted its axis alignment).
@@ -41,7 +56,7 @@ An edge or face selector (like `">Z"`, `"|Z"`) was requested but couldn't be res
 
 ### Error 4 — Multiple Base Steps
 The parser automatically coerces extra `base` steps to `union`, but it is best to fix this in your plan.
-- **How to fix in JSON**: Ensure exactly the first step in your `"steps"` list has `"operation": "base"`. Every other step — even for separate disjoint bodies — must have `"operation": "union"`, `"cut"`, or `"intersect"`.
+- **How to fix in JSON**: Ensure exactly the first step in your `"steps"` list has `"operation": "base"`. Every other step must have `"operation": "union"`, `"cut"`, or `"intersect"`, and each `union` feature must overlap the body it joins so the result stays ONE connected watertight solid.
 
 ---
 

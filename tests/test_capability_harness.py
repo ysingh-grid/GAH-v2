@@ -95,3 +95,66 @@ def test_scan_existing_traces_reads_outcomes(tmp_path: Path):
 
 def test_scan_existing_traces_empty_dir_is_safe(tmp_path: Path):
     assert scan_existing_traces(tmp_path / "does_not_exist") == []
+
+
+def test_curated_set_includes_vessel_and_rounded_cases():
+    """The uplift targets vessels (cup/bottle/tube) and rounded solids — the
+    harness must exercise them so the robust-primitive lift is measured."""
+    prompts = " ".join(c.prompt.lower() for c in CASES)
+    assert "cup" in prompts
+    assert "bottle" in prompts
+    assert "round" in prompts  # matches 'rounded' too
+
+
+def test_robustness_findings_flags_fragile_finishes():
+    """Pure scorer: robust plans use construction primitives; the anti-patterns
+    (shell finish, whole-body fillet with an empty selector) are flagged so a
+    live run can be scored for the uplift, not just pass/fail."""
+    from eval.capability_harness import robustness_findings
+
+    robust = {"steps": [{"id": "wall", "primitive": "hollow_cylinder",
+                         "operation": "base", "parameters": {}}]}
+    f = robustness_findings(robust)
+    assert "hollow_cylinder" in f["primitives"]
+    assert f["used_shell"] is False
+    assert f["used_whole_body_fillet"] is False
+
+    fragile = {"steps": [
+        {"id": "body", "primitive": "cylinder", "operation": "base", "parameters": {}},
+        {"id": "hollow", "op": "shell", "selector": ">Z", "value": 2},
+    ]}
+    assert robustness_findings(fragile)["used_shell"] is True
+
+    whole_body = {"steps": [
+        {"id": "b", "primitive": "box", "operation": "base", "parameters": {}},
+        {"id": "f", "op": "fillet", "selector": "", "value": 3},
+    ]}
+    assert robustness_findings(whole_body)["used_whole_body_fillet"] is True
+
+    scoped = {"steps": [
+        {"id": "b", "primitive": "box", "operation": "base", "parameters": {}},
+        {"id": "f", "op": "fillet", "selector": "|Z", "value": 1},
+    ]}
+    assert robustness_findings(scoped)["used_whole_body_fillet"] is False
+
+
+def test_robustness_findings_flags_union_after_shell():
+    """The _ed2b anti-pattern: a solid unioned AFTER a shell (rarely fuses)."""
+    from eval.capability_harness import robustness_findings
+
+    shell_then_union = {"steps": [
+        {"id": "body", "primitive": "cylinder", "operation": "base", "parameters": {}},
+        {"id": "hollow", "op": "shell", "selector": ">Z", "value": 2.5},
+        {"id": "cap", "primitive": "cylinder", "operation": "union", "parameters": {}},
+    ]}
+    assert robustness_findings(shell_then_union)["used_union_after_shell"] is True
+
+    # A correct-by-construction vessel: one revolve, no shell, no union-after-shell.
+    revolve = {"steps": [
+        {"id": "vessel", "primitive": "revolve", "operation": "base",
+         "parameters": {"profile": [[0, 0], [35, 0], [35, 150], [0, 150]], "angle": 360.0}},
+    ]}
+    f = robustness_findings(revolve)
+    assert f["used_union_after_shell"] is False
+    assert f["used_shell"] is False
+    assert "revolve" in f["primitives"]

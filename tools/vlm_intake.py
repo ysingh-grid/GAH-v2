@@ -40,6 +40,14 @@ Rules:
   base". Prefer 3-8 entries; omit trivial finishes (a single fillet is not a
   required feature). For a plain single primitive, object_type is the shape and
   required_features may be a single entry or empty.
+- CAPABILITY ENVELOPE: this is a SINGLE-SOLID CAD platform built from a FIXED
+  primitive library. required_features must be the PRIMARY FORM expressible as
+  ONE connected solid — dominant bodies, openings, a flat base, key proportions.
+  Do NOT list features that cannot be built as one solid (they are OUT OF SCOPE):
+  fine surface / mechanical detail (screw threads, knurling, logos, embossing) or
+  separate / removable parts (caps, lids, straws, corks). Example: for a water
+  bottle, list the tapered body, narrowed neck, and open top — NOT threads or a
+  removable cap.
 - Do not add any prose outside the JSON object.
 """
 

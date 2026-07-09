@@ -53,6 +53,9 @@ class DesignInput:
     # Full planner history (intake_context folded into the last user message) for
     # the initial plan_activity when plan_dict is empty. Distinct from `history`.
     planner_history: list[dict[str, str]] = field(default_factory=list)
+    # Session contract for through-path / hollow: "required" | "none" | "unknown" | "".
+    # Empty → host heuristics (text + structural plan cues). Must match runtime.loop.
+    through_path: str = ""
 
 
 @dataclass
@@ -166,6 +169,57 @@ class ExecuteOutput:
 
 
 @dataclass
+class AutoHollowInput:
+    """Post-execute host cavity synthesis (parity with runtime.loop._maybe_auto_hollow)."""
+
+    plan_dict: dict[str, Any]
+    run_id: str
+    prompt: str
+    feature_checklist: str = ""
+    through_path: str = ""
+    # Solid execution already on disk; used as baseline if hollow not needed / fails soft.
+    execution_result: dict[str, Any] = field(default_factory=dict)
+    code: str = ""
+
+
+@dataclass
+class AutoHollowOutput:
+    """Plan/code/execution after optional host auto-hollow.
+
+    ok=False only when hollow was required and synthesis/execute failed hard
+    (hollow_synthesis_failed). ok=True with unchanged plan when hollow not required
+    or already present.
+    """
+
+    ok: bool
+    plan_dict: dict[str, Any] = field(default_factory=dict)
+    code: str = ""
+    execution_result: dict[str, Any] = field(default_factory=dict)
+    stl_path: str = ""
+    applied: bool = False
+    failure_stage: str = ""
+    failure_detail: str = ""
+
+
+@dataclass
+class HostGatesInput:
+    """Dimensional + hollow intent gates before VLM (parity with loop)."""
+
+    prompt: str
+    plan_dict: dict[str, Any]
+    execution_result: dict[str, Any]
+    feature_checklist: str = ""
+    through_path: str = ""
+
+
+@dataclass
+class HostGatesOutput:
+    ok: bool
+    failure_stage: str = ""
+    failure_detail: str = ""
+
+
+@dataclass
 class InspectInput:
     stl_path: str
 
@@ -180,6 +234,9 @@ class InspectOutput:
 class RepairInput:
     stl_path: str
     run_id: str
+    # Optional plan (dict) so a disconnected result gets root-cause-targeted
+    # feedback (shell-then-union → revolve/hollow-last). Defaulted = backward-compat.
+    plan_dict: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

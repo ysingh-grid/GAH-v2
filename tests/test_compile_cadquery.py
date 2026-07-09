@@ -40,6 +40,32 @@ def _cube_plan(size: float = 60.0):
 # ── pure compile-output tests ────────────────────────────────────────────────
 
 
+def test_compiled_script_emits_progress_markers_for_attribution():
+    """Each step is preceded by a _mark(...) call so a crash (segfault OR a caught
+    StdFail) can be attributed to the exact failing step. _mark is a no-op unless
+    DTCM_PROGRESS_FILE is set, so the preview path (cq_exec) is unaffected."""
+    plan = plan_from_dict(
+        {
+            "part_name": "rounded",
+            "steps": [
+                {
+                    "id": "body",
+                    "primitive": "box",
+                    "operation": "base",
+                    "parameters": {"length": 20.0, "width": 20.0, "height": 20.0},
+                },
+                {"id": "round_it", "op": "fillet", "selector": "|Z", "value": 2.0},
+            ],
+        }
+    )
+    code = compile_plan_to_cadquery(plan, LIBRARY)
+    assert "def _mark(" in code  # self-contained helper is present
+    assert "_mark('body'" in code  # primitive step marked
+    assert "_mark('round_it'" in code  # finish step marked
+    # the marker precedes the code that builds that step
+    assert code.index("_mark('body'") < code.index("s0 = ")
+
+
 def test_compile_rejects_unknown_param_as_primitive_gap():
     """A misnamed param (pyramid given base_length it lacks) must raise a clear
     primitive_gap error, NOT silently fall back to defaults and build a spike."""
@@ -82,15 +108,17 @@ def test_compile_mounting_plate_emits_corner_hole_cuts():
     assert "# part: electronics_mounting_plate" in code
     assert "_linear(s1, 2, (0.0, 36.0, 0.0))" in code
     assert "_linear(s2, 2, (0.0, 36.0, 0.0))" in code
-    assert code.count("result = result.cut") == 2
+    # Two-phase: cut solids built then fused into one cavity cut
+    assert "_cavity" in code
+    assert code.count("result = result.cut(_cavity)") == 1
 
 
 def test_compile_open_enclosure_uses_shell_bosses_and_boss_holes():
     scenario = open_electronics_enclosure()
     code = compile_plan_to_cadquery(scenario.plan, LIBRARY)
     assert ".faces(\">Z\").shell(-2.0)" in code
-    assert code.count("result = result.union") == 4
-    assert code.count("result = result.cut") == 2
+    assert code.count("result = result.union") >= 4  # additive unions + cavity fuse
+    assert "result = result.cut(_cavity)" in code
 
 
 def test_compile_defaults_fill_missing_params():
@@ -107,6 +135,131 @@ def test_compile_missing_primitive_raises_compileerror():
         {"part_name": "x", "steps": [{"id": "b", "primitive": "aerofoil", "operation": "base"}]}
     )
     with pytest.raises(CompileError, match="primitive_gap"):
+        compile_plan_to_cadquery(plan, LIBRARY)
+
+
+def test_compile_shell_raises_typed_shell_fail_not_raw_only():
+    """Shell finish must emit a try/except that re-raises CAUSE: shell_fail."""
+    plan = plan_from_dict(
+        {
+            "part_name": "shelled",
+            "steps": [
+                {
+                    "id": "body",
+                    "primitive": "box",
+                    "operation": "base",
+                    "parameters": {"length": 20, "width": 20, "height": 20},
+                },
+                {"id": "hollow", "op": "shell", "selector": ">Z", "value": 2.0},
+            ],
+        }
+    )
+    code = compile_plan_to_cadquery(plan, LIBRARY)
+    assert "shell_fail" in code
+    assert "DELETE this shell finish" in code or "MANDATORY REWRITE" in code
+    assert ".shell(" in code
+
+
+def test_compile_two_phase_fuses_all_cuts_into_one_cavity():
+    """General hollow: sequential cuts become one fused cavity tool + one cut.
+
+    Not an adapter special-case — any multi-cut plan gets correct-by-construction
+    subtractive semantics (fixes severing thin-flange through-cuts).
+    """
+    plan = plan_from_dict(
+        {
+            "part_name": "transition_adapter",
+            "steps": [
+                {
+                    "id": "base_flange",
+                    "primitive": "box",
+                    "operation": "base",
+                    "parameters": {"length": 70, "width": 50, "height": 3},
+                    "position": [0, 0, 1.5],
+                },
+                {
+                    "id": "transition",
+                    "primitive": "rect_to_round",
+                    "operation": "union",
+                    "parameters": {
+                        "base_length": 60,
+                        "base_width": 40,
+                        "height": 52,
+                        "top_diameter": 30,
+                    },
+                    "position": [0, 0, 2],
+                },
+                {
+                    "id": "top_collar",
+                    "primitive": "cylinder",
+                    "operation": "union",
+                    "parameters": {"height": 12, "radius": 15},
+                    "position": [0, 0, 57],
+                },
+                {
+                    "id": "cut_base",
+                    "primitive": "box",
+                    "operation": "cut",
+                    "parameters": {"length": 66, "width": 46, "height": 4},
+                    "position": [0, 0, 1.5],
+                },
+                {
+                    "id": "cut_transition",
+                    "primitive": "rect_to_round",
+                    "operation": "cut",
+                    "parameters": {
+                        "base_length": 56,
+                        "base_width": 36,
+                        "height": 52,
+                        "top_diameter": 26,
+                    },
+                    "position": [0, 0, 2],
+                },
+                {
+                    "id": "cut_collar",
+                    "primitive": "cylinder",
+                    "operation": "cut",
+                    "parameters": {"height": 14, "radius": 13},
+                    "position": [0, 0, 57],
+                },
+            ],
+        }
+    )
+    code = compile_plan_to_cadquery(plan, LIBRARY)
+    assert "fused cavity" in code
+    assert "_cavity = s3" in code or "_cavity = s" in code
+    assert "_cavity = _cavity.union" in code
+    assert code.count("result = result.cut(_cavity)") == 1
+    # Must NOT apply independent sequential cuts on result
+    assert "result = result.cut(s3)" not in code
+    assert "result = result.cut(s4)" not in code
+
+
+def test_compile_rejects_shell_then_union_construction():
+    """Illegal vessel anti-pattern must fail at compile — not after 5 mesh replans."""
+    plan = plan_from_dict(
+        {
+            "part_name": "bottle",
+            "steps": [
+                {
+                    "id": "body",
+                    "primitive": "cylinder",
+                    "operation": "base",
+                    "parameters": {"height": 100, "radius": 30},
+                    "position": [0, 0, 50],
+                },
+                {"id": "hollow", "op": "shell", "selector": ">Z", "value": 2.5},
+                {
+                    "id": "cap",
+                    "primitive": "cylinder",
+                    "operation": "union",
+                    "parameters": {"height": 15, "radius": 32},
+                    "position": [0, 0, 107],
+                },
+            ],
+        }
+    )
+    with pytest.raises(CompileError, match="shell-then-union"):
         compile_plan_to_cadquery(plan, LIBRARY)
 
 

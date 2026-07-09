@@ -274,7 +274,8 @@ def test_loop_threads_prior_failures_into_replan_history():
             if m["role"] == "system" and "result]" in m["content"]
         ]
         assert len(plan_records) == 1
-        assert '"primitive":"box"' in plan_records[0]["content"]  # failed plan JSON present
+        # Compressed history: part name + step ids, not full plan JSON
+        assert "plan]" in plan_records[0]["content"]
         assert len(result_records) == 1
         assert "visual_mismatch" in result_records[0]["content"]
         assert "holes missing" in result_records[0]["content"]

@@ -106,10 +106,15 @@ def preview_plan(
         disconnected = (mesh.get("num_components") or 1) > 1
         evidence["disconnected"] = disconnected
         if disconnected:
+            # Same taxonomy as the geometry loop / replan path (not a flat
+            # "touching unions" story — shell-then-union and multi-shell need
+            # different fixes).
+            from runtime.replan import disconnected_cause_hint
+
+            n_comp = mesh.get("num_components")
             evidence["disconnected_hint"] = (
-                f"{mesh.get('num_components')} disconnected components — features only "
-                "TOUCH instead of overlapping. Extend each union feature ~0.5-1mm INTO "
-                "the body it joins so the boolean fuses one watertight solid."
+                f"{n_comp} disconnected mesh components."
+                + disconnected_cause_hint(plan_dict)
             )
 
     if feature_checklist.strip():

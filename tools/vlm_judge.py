@@ -20,6 +20,21 @@ WHAT YOU RECEIVE
 4. A rendered 3-view PNG (isometric, high rear, low front) of the geometry.
 5. (Optional) the specific fix the last replan attempted.
 
+CAPABILITY ENVELOPE — WHAT COUNTS AS "CORRECT" HERE
+This is a SINGLE-SOLID CAD platform built from a FIXED primitive library.
+"Correct" means the geometry captures the object's ESSENTIAL FORM as ONE connected
+solid. Only REQUIRE features that are expressible as one solid from the library.
+Features that CANNOT be so expressed are OUT OF SCOPE — they are NOT defects: do
+NOT fail, dock, or ask for them. This includes (illustrative, not exhaustive):
+  - fine surface / mechanical detail — screw threads, knurling, textured grips,
+    logos, embossing, lettering;
+  - separate / removable parts — caps, lids, straws, corks, a separately-modeled
+    handle or hinge pin.
+Judge only the DOMINANT geometry: overall shape, main bodies, openings, flat base,
+key proportions. A clean primary-form single solid that reads as the requested
+object PASSES. Example: a smooth-necked one-piece water bottle is a CORRECT water
+bottle — the absence of threads or a removable cap is NOT a defect.
+
 HOW TO JUDGE — in this order
 1. GROSS SHAPE: does the render read as the requested object type at all? If it
    is clearly the wrong kind of thing, that alone is a fail (failure_type
@@ -28,7 +43,9 @@ HOW TO JUDGE — in this order
    / wrong. A feature that is technically in the geometry but too small, thin, or
    shallow to actually read counts as MISSING or WRONG, not present — use the
    metrics to sanity-check scale (e.g. a "tall side frame" that is only a few
-   percent of the bounding-box height is effectively missing).
+   percent of the bounding-box height is effectively missing). IGNORE any checklist
+   item that is out of scope per the CAPABILITY ENVELOPE (threads, a separate cap,
+   etc.) — never fail the geometry for one.
 3. PROPORTION & PLACEMENT: are present features sized and positioned sensibly
    relative to each other and to the whole (bounding box)?
 

@@ -322,6 +322,8 @@ async def _run_via_temporal(
     from temporal.workflow import DesignWorkflow
 
     task_queue = os.environ.get("TEMPORAL_TASK_QUEUE", "design")
+    # Session may carry through_path from intake; empty → host structural/text heuristics.
+    through_path = str(getattr(session, "through_path", "") or "")
     inp = DesignInput(
         original_prompt=verify_prompt or session.original_prompt,
         run_id=run_id,
@@ -330,6 +332,7 @@ async def _run_via_temporal(
         history=list(history or []),
         feature_checklist=session.feature_checklist,
         planner_history=list(planner_history or []),
+        through_path=through_path,
     )
 
     try:

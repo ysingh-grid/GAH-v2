@@ -1,6 +1,20 @@
 from typing import Any
 
 
+def mesh_passes(*, is_watertight: bool, self_intersections: int, num_components: int) -> bool:
+    """The geometric-validity gate: ONE watertight, self-intersection-free solid.
+
+    HARD GATE — DO NOT DEMOTE. `num_components == 1` must stay a hard requirement,
+    NOT a soft/VLM-weighed signal. A render can hide a multi-piece defect (a cap
+    resting on a bottle, a spoke detached from a hub) — it looks fused but is a
+    loose part. Correctness of connectivity is decided here on the real mesh, not
+    by the verifier's eyes. The fix for a disconnected result is upstream
+    (correct-by-construction: revolve / overlap / hollow-last), never relaxing
+    this gate.
+    """
+    return is_watertight and self_intersections == 0 and num_components == 1
+
+
 def inspect_mesh(stl_path: str) -> dict[str, Any]:
     """Inspect an STL mesh with MeshLib (the canonical mesh authority).
 
@@ -52,7 +66,11 @@ def inspect_mesh(stl_path: str) -> dict[str, Any]:
             "zmax": box.max.z,
         }
 
-        passes = is_watertight and self_intersections == 0 and num_components == 1
+        passes = mesh_passes(
+            is_watertight=is_watertight,
+            self_intersections=self_intersections,
+            num_components=num_components,
+        )
 
         return {
             "success": True,

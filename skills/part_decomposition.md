@@ -75,79 +75,27 @@ Base Solid  (+addition solids)  (−subtraction solids)  [+finish features]
 
 ---
 
-## When to hand off vs design in one context
+## Everything is ONE connected body — build the tree inline
 
-You have a way to hand a piece of the design off to be planned separately in
-parallel. Use it when, and only when:
+This is a **single-object platform**: model the whole part as one CSG
+construction tree you build yourself and `FINAL`. There is no hand-off and no
+multi-body assembly (a bolt+nut or box+lid is out of scope).
 
-### Case A — Independent Solids (hand off)
-Distinct bodies that only meet at an interface. Each designs freely in its own local frame.
-- Cricket bat → `["blade", "handle"]`
-- Bolt + nut → `["bolt", "nut"]`
+Fix your own shared anchors first — every shared radius, plane, or bolt-circle
+position, decided once and reused consistently across steps. Every `union`
+feature must OVERLAP the body it joins by ~0.5–1mm (a feature that only touches —
+tangent/coincident face — does NOT fuse; see `dimension_reasoning` Rule 2), so
+the whole plan resolves to ONE connected watertight solid (`num_components` == 1).
 
-### Case B — Features of One Connected Body (do NOT hand off — plan inline)
-Hub+spokes+rim, flange+bolt-bosses+ribs. These are one connected body, not
-independent solids — plan them yourself as a single construction tree
-(`base` → `union` → `cut` → finish). Fix your own shared anchors first: every
-shared radius, plane, or bolt-circle position, decided once and reused
-consistently across steps. Every union feature must overlap the body it joins
-by 0.5–1mm (a feature that only touches — tangent/coincident face — does NOT
-fuse; see `dimension_reasoning` Rule 2).
+**Wheel example** (one connected body): hub cyl r=15, rim ring inner=40/outer=44,
+spoke spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 — all as steps in
+one plan: `[hub(base), spoke×5(union, pattern=polar), rim(union)]`.
 
-**Wheel example** (Case B, plan inline): hub cyl r=15, rim ring inner=40/outer=44,
-spoke spanning r=14..41 (overlaps hub & rim by ~1mm), polar ×5 — all as steps
-in one plan: `[hub(base), spoke×5(union, pattern=polar), rim(union)]`.
+> **Prefer a single rich primitive when one fits** (see `primitive_planning`): a
+> hollow vessel is `hollow_cylinder`/`revolve`, not box/cylinder + a shell finish;
+> a rounded box is `filleted_box`, not a whole-body fillet. Decompose into a CSG
+> tree only when no single primitive expresses the shape.
 
-### RULE: Only hand off for genuinely independent solids
-A single connected body with many features — however many fillets, shells,
-patterns, or holes — is NOT a hand-off case. Design it in one context. Only
-a true multi-solid assembly (Case A) warrants a hand-off, and even then only
-after you've fixed the shared anchors every piece must agree on.
-
----
-
-## Case A hand-off with `delegate_features` (worked example)
-
-For a genuine multi-body assembly, use `delegate_features(features, shared_frame)`.
-It plans each body in a parallel child agent, then you FLATTEN the results.
-
-**1. Fix the shared frame first** — the anchors every body must agree on:
-
-```python
-shared_frame = {
-    "leaf_thickness": 4.0, "leaf_len": 40.0, "leaf_w": 30.0,
-    "pin_axis_z": 4.0, "pin_radius": 2.5, "knuckle_overlap_mm": 1.0,
-}
-bodies = await delegate_features(
-    features=[
-        {"name": "leaf_a", "operation": "base",  "placement": [-20, 0, 0],
-         "candidate_primitives": ["box", "filleted_box"], "notes": "left leaf"},
-        {"name": "leaf_b", "operation": "union", "placement": [ 20, 0, 0],
-         "candidate_primitives": ["box", "filleted_box"], "notes": "right leaf"},
-        {"name": "pin",    "operation": "union", "placement": [0, 0, 4],
-         "candidate_primitives": ["cylinder"],
-         "notes": "spans both leaves along X; extend 1mm into each knuckle"},
-    ],
-    shared_frame=shared_frame,
-)
-```
-
-**2. Flatten in order** — concatenate every body's steps into one `steps` list.
-Each child returns a valid plan starting with its own `base`; when concatenated
-the 2nd+ bases are auto-coerced to `union` (a union of disjoint solids is one
-legal compound). So you get exactly one `base`, the rest `union`.
-
-**3. Preview the assembly, then FINAL:**
-
-```python
-plan = {"part_name": "hinge", "steps": [s for body in bodies for s in body]}
-ev = preview_plan(plan)
-# If ev["num_components"] > 1, the bodies only TOUCH — grow the pin / leaf overlap
-# at the knuckles by ~1mm (use shared_frame["knuckle_overlap_mm"]) and re-preview.
-FINAL(plan)
-```
-
-> **Why per-body children help:** each body is planned in a clean context with
-> only its own concern + the shared frame, so a 4-body assembly does not blow up
-> one monolithic context. The shared_frame is what keeps them aligned; the
-> assembly preview is what proves they actually fuse.
+> **Preview before FINAL** on a multi-feature plan: `ev = preview_plan(plan)`. If
+> `ev["num_components"] > 1`, features only TOUCH — grow the overlaps ~1mm and
+> re-preview until it fuses to one solid, then `FINAL`.

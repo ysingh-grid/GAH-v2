@@ -110,6 +110,24 @@ def preview_plan(plan: dict, critique: bool = False) -> dict:
                 "preview again — emit FINAL now with your best current plan."
             ),
         }
+    # Refuse to preview plans that still carry a shell finish when the host has
+    # marked shell as non-viable (DTCM_SHELL_FAIL=1). Stops multi-minute preview
+    # thrash on OCCT shell that never succeeds.
+    if os.environ.get("DTCM_SHELL_FAIL") == "1" and isinstance(plan, dict):
+        if any(
+            isinstance(s, dict) and s.get("op") == "shell"
+            for s in (plan.get("steps") or [])
+        ):
+            return {
+                "compiles": False,
+                "executes": False,
+                "shell_fail_blocked": True,
+                "error": (
+                    "CAUSE: shell_fail — preview blocked while plan still has a "
+                    "shell finish. DELETE shell first (solid-only or cavity cuts), "
+                    "then preview if needed."
+                ),
+            }
     g["_PREVIEW_CALLS"] = used + 1
 
     base = os.environ["DTCM_BACKEND_URL"]
@@ -368,7 +386,16 @@ def lookup_design_reference(query: str) -> dict:
 
 
 async def delegate_features(features: list[dict], shared_frame: dict) -> list[list[dict]]:
-    """Delegate independent solids or body features to parallel child agents.
+    """ISOLATED / NOT IN THE TOOLSET — single-object platform; do NOT re-add.
+
+    Multi-body assembly is OUT OF SCOPE. This tool framed a task as "independent
+    solids in a multi-solid assembly" and legitimized disconnected components,
+    which produced floating/disconnected bodies (a bottle + a floating cap; a cube
+    split into 27 cubies) that fail the single-watertight-solid gate — for NO
+    measured token benefit over the monolithic root (see runtime/planner._PLANNER_TOOLS).
+    Kept here for reference only, exactly like delegate_stage below.
+
+    Delegate independent solids or body features to parallel child agents.
 
     Call this tool when planning compound parts (e.g. box + lid, hub + spokes + rim).
     It spawns parallel child sub-agents with clean context windows, runs them

@@ -64,18 +64,22 @@ def _heartbeating(interval_s: float = _HEARTBEAT_INTERVAL_S):
 
 # Pure single-attempt helpers shared with the in-process loop (runtime is the
 # canonical, Temporal-free home of stage logic; temporal/ depends on runtime/).
-from runtime.loop import _Artifacts, _run_geometry, _run_verify
+from runtime.loop import _Artifacts, _maybe_auto_hollow, _run_geometry, _run_host_intent_gates, _run_verify
 from runtime.planner import run_planner_turn, run_replanner_turn
 from runtime.replan import replan_with_feedback
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from runtime.trace import build_trace, category_for_stage, write_trace
 from temporal.shared import (
+    AutoHollowInput,
+    AutoHollowOutput,
     CompileInput,
     CompileOutput,
     ExecuteInput,
     ExecuteOutput,
     GenerateInput,
     GenerateOutput,
+    HostGatesInput,
+    HostGatesOutput,
     InspectInput,
     InspectOutput,
     PlanInput,
@@ -154,6 +158,82 @@ def execute_activity(inp: ExecuteInput) -> ExecuteOutput:
 
 
 @activity.defn
+def auto_hollow_activity(inp: AutoHollowInput) -> AutoHollowOutput:
+    """GENERATING(auto-hollow): host cavity when through-path required + solid-only plan.
+
+    Single source of truth: runtime.loop._maybe_auto_hollow. Without this stage the
+    Temporal split path could greenlight solid fill (VLM only sees outer silhouette).
+    """
+    library = load_library()
+    plan = PrimitivePlan.model_validate(inp.plan_dict)
+    art = _Artifacts(
+        code=inp.code or None,
+        execution_result=dict(inp.execution_result or {}),
+    )
+    through = inp.through_path or None
+    if through == "":
+        through = None
+
+    with _heartbeating():
+        working = _maybe_auto_hollow(
+            plan,
+            library,
+            inp.run_id,
+            art,
+            prompt=inp.prompt,
+            feature_checklist=inp.feature_checklist,
+            through_path=through,
+        )
+
+    result = art.execution_result or {}
+    applied = working is not plan and plan_to_dict(working) != plan_to_dict(plan)
+    if not result.get("success", True) and result.get("error"):
+        return AutoHollowOutput(
+            ok=False,
+            plan_dict=plan_to_dict(working),
+            code=art.code or inp.code,
+            execution_result=result,
+            stl_path=str(result.get("stl_path") or ""),
+            applied=True,
+            failure_stage="cadquery_execute",
+            failure_detail=str(result.get("error")),
+        )
+    stl = str(result.get("stl_path") or "")
+    return AutoHollowOutput(
+        ok=True,
+        plan_dict=plan_to_dict(working),
+        code=art.code or inp.code,
+        execution_result=result,
+        stl_path=stl,
+        applied=applied,
+    )
+
+
+@activity.defn
+def host_gates_activity(inp: HostGatesInput) -> HostGatesOutput:
+    """Pre-verify host metric gates (dims + hollow_missing) — same as in-process loop."""
+    plan = PrimitivePlan.model_validate(inp.plan_dict)
+    art = _Artifacts(execution_result=dict(inp.execution_result or {}))
+    through = inp.through_path or None
+    if through == "":
+        through = None
+    failure = _run_host_intent_gates(
+        inp.prompt,
+        plan,
+        art,
+        inp.feature_checklist,
+        through_path=through,
+    )
+    if failure is None:
+        return HostGatesOutput(ok=True)
+    return HostGatesOutput(
+        ok=False,
+        failure_stage=failure.stage,
+        failure_detail=failure.detail,
+    )
+
+
+@activity.defn
 def inspect_activity(inp: InspectInput) -> InspectOutput:
     """INSPECTING: MeshLib watertight / manifold check (drives the repair branch)."""
     from tools.inspect_mesh import inspect_mesh
@@ -175,7 +255,9 @@ def repair_activity(inp: RepairInput) -> RepairOutput:
         return RepairOutput(
             passes=False, mesh_report=after,
             failure_stage="mesh_repair",
-            failure_detail=collect_feedback_detail("mesh_repair", repair),
+            failure_detail=collect_feedback_detail(
+                "mesh_repair", repair, inp.plan_dict or None
+            ),
         )
     return RepairOutput(
         passes=True, mesh_report=after, repaired_stl_path=repair["repaired_stl_path"]

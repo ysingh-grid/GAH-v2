@@ -151,7 +151,12 @@ AnyStep = PrimitiveStep | FinishStep
 
 
 class PrimitivePlan(BaseModel):
-    """An ordered CSG recipe that produces one part."""
+    """An ordered CSG recipe that produces one part.
+
+    Compile semantics (two-phase, general — not per-object recipes):
+    additive steps (base/union/intersect) build the body; all cut steps are
+    fused into one cavity tool and subtracted once; finish steps apply last.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -220,6 +225,62 @@ def plan_from_dict(data: dict[str, Any]) -> PrimitivePlan:
 def plan_to_dict(plan: PrimitivePlan) -> dict[str, Any]:
     """Serialize a plan back to a plain JSON-able dict."""
     return plan.model_dump(mode="json")
+
+
+class LibraryBoundPrimitivePlan(PrimitivePlan):
+    """PrimitivePlan that ALSO enforces library params + construction guards.
+
+    Used as fast-rlm `output_schema` so wrong param names / illegal constructions
+    fail at FINAL (schema-retry inside the RLM call) instead of as a later
+    Temporal geometry-loop `primitive_gap` / multi-body thrash.
+    """
+
+    @model_validator(mode="after")
+    def _library_and_construction(self) -> LibraryBoundPrimitivePlan:
+        library = load_library()
+        errors = validate_plan_against_library(self, library)
+        if errors:
+            # ValueError → pydantic validation error → fast-rlm FINAL retry with text.
+            raise ValueError("primitive_gap: " + "; ".join(errors))
+        from runtime.plan_guards import construction_errors_for_plan
+
+        construction = construction_errors_for_plan(self)
+        if construction:
+            raise ValueError("; ".join(construction))
+        return self
+
+
+def accept_plan(data: Any) -> PrimitivePlan:
+    """Full host accept: structure + library + construction (raises ValueError/ValidationError)."""
+    if isinstance(data, LibraryBoundPrimitivePlan):
+        return data
+    if isinstance(data, PrimitivePlan):
+        return LibraryBoundPrimitivePlan.model_validate(plan_to_dict(data))
+    return LibraryBoundPrimitivePlan.model_validate(data)
+
+
+def compact_library_menu(library: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Rich menu: description + param names/types/defaults for every primitive.
+
+    ~6k chars for the full catalog — small enough to preload so the planner does
+    not invent pretrained param names (ring_radius) that become primitive_gap.
+    """
+    lib = library if library is not None else load_library()
+    menu: dict[str, Any] = {}
+    for name, spec in lib.items():
+        params_out: dict[str, Any] = {}
+        for pname, meta in (spec.get("parameters") or {}).items():
+            if not isinstance(meta, dict):
+                continue
+            params_out[pname] = {
+                "type": meta.get("type", "float"),
+                "default": meta.get("default"),
+            }
+        menu[name] = {
+            "description": spec.get("description", ""),
+            "parameters": params_out,
+        }
+    return menu
 
 
 def load_library(library_path: Path | None = None) -> dict[str, Any]:

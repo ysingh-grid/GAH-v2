@@ -23,8 +23,10 @@ config = RLMConfig.default()
 # less of the quadratic prompt-token growth that dominated cost. Trade: pro spends
 # more COMPLETION (reasoning) tokens per call, but prompt_tokens were the bloat.
 # sub_agent (delegate_features children) stays flash for cost — separation of roles.
-config.primary_agent = "gemini-2.5-pro"
-config.sub_agent = "gemini-2.5-flash"
+# Live root model (verify this field — do not assume from memory). A larger model
+# alone does not fix open-CSG thrash; library-bound FINAL + construction families do.
+config.primary_agent = "gemini-3.1-pro-preview"
+config.sub_agent = "gemini-3.1-pro-preview"
 # Hard safety-net cap on REPL steps per agent (the soft target lives in the prompt:
 # root ~5-6 steps, leaf child ~3). Too low STARVES the root orchestrator — it needs
 # probe + read-task + list_primitives + decompose + batch-fork + process + assemble

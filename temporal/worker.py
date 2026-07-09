@@ -16,9 +16,11 @@ import os
 from temporalio.worker import Worker
 
 from temporal.activities import (
+    auto_hollow_activity,
     compile_activity,
     execute_activity,
     generate_activity,
+    host_gates_activity,
     inspect_activity,
     plan_activity,
     record_trace_activity,
@@ -52,9 +54,11 @@ async def main() -> None:
                 # Per-step generate activities (split): one timeline event each.
                 compile_activity,
                 execute_activity,
+                auto_hollow_activity,  # host cavity — parity with runtime.loop
                 inspect_activity,
                 repair_activity,
                 render_activity,
+                host_gates_activity,  # dims + hollow_missing before VLM
                 # generate_activity kept registered (isolated) for back-compat / in-process parity.
                 generate_activity,
                 verify_activity,

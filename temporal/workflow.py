@@ -28,8 +28,10 @@ with workflow.unsafe.imports_passed_through():
     from runtime.replan import is_exhausted  # pure cap logic, shared with in-process loop
     from runtime.trace import category_for_stage  # pure stage -> failure-category map
     from temporal.activities import (
+        auto_hollow_activity,
         compile_activity,
         execute_activity,
+        host_gates_activity,
         inspect_activity,
         plan_activity,
         record_trace_activity,
@@ -39,11 +41,13 @@ with workflow.unsafe.imports_passed_through():
         verify_activity,
     )
     from temporal.shared import (
+        AutoHollowInput,
         CompileInput,
         DesignInput,
         DesignResult,
         DesignStage,
         ExecuteInput,
+        HostGatesInput,
         InspectInput,
         PlanInput,
         RenderInput,
@@ -200,6 +204,38 @@ class DesignWorkflow:
                     if not ex.ok:
                         failure_stage, failure_detail = ex.failure_stage, ex.failure_detail
 
+                # Host auto-hollow (same helper as runtime.loop) — MUST run on the
+                # Temporal path. Without this, solid-only loft adapters succeed with
+                # VLM silhouette pass and never get a through cavity.
+                if not failure_stage:
+                    ah = await workflow.execute_activity(
+                        auto_hollow_activity,
+                        AutoHollowInput(
+                            plan_dict=plan_dict,
+                            run_id=inp.run_id,
+                            prompt=inp.original_prompt,
+                            feature_checklist=inp.feature_checklist,
+                            through_path=inp.through_path or "",
+                            execution_result=execution_result,
+                            code=code,
+                        ),
+                        schedule_to_close_timeout=_EXECUTE_TIMEOUT,
+                        heartbeat_timeout=_HEARTBEAT_TIMEOUT,
+                        retry_policy=_NO_RETRY,
+                    )
+                    plan_dict = ah.plan_dict or plan_dict
+                    if ah.code:
+                        code = ah.code
+                    if ah.execution_result:
+                        execution_result = ah.execution_result
+                    if ah.stl_path:
+                        stl_path = ah.stl_path
+                    if not ah.ok:
+                        failure_stage, failure_detail = (
+                            ah.failure_stage,
+                            ah.failure_detail,
+                        )
+
                 if not failure_stage:
                     self._stage = DesignStage.INSPECTING
                     insp = await workflow.execute_activity(
@@ -214,7 +250,9 @@ class DesignWorkflow:
                         self._stage = DesignStage.REPAIRING
                         rep_mesh = await workflow.execute_activity(
                             repair_activity,
-                            RepairInput(stl_path=stl_path, run_id=inp.run_id),
+                            RepairInput(
+                                stl_path=stl_path, run_id=inp.run_id, plan_dict=plan_dict
+                            ),
                             schedule_to_close_timeout=_REPAIR_TIMEOUT,
                             heartbeat_timeout=_HEARTBEAT_TIMEOUT,
                             retry_policy=_NO_RETRY,
@@ -242,6 +280,26 @@ class DesignWorkflow:
 
             geometry_ok = not failure_stage
             verdict: dict = {}
+
+            # Host dims/hollow gates BEFORE VLM — measurable facts only.
+            # Prevents solid-fill "success" when through-path is required.
+            if geometry_ok:
+                gates = await workflow.execute_activity(
+                    host_gates_activity,
+                    HostGatesInput(
+                        prompt=inp.original_prompt,
+                        plan_dict=plan_dict,
+                        execution_result=execution_result,
+                        feature_checklist=inp.feature_checklist,
+                        through_path=inp.through_path or "",
+                    ),
+                    schedule_to_close_timeout=_COMPILE_TIMEOUT,
+                    retry_policy=_NO_RETRY,
+                )
+                if not gates.ok:
+                    failure_stage = gates.failure_stage
+                    failure_detail = gates.failure_detail
+                    geometry_ok = False
 
             # ── VERIFY ────────────────────────────────────────────────────────
             # Only runs if geometry was produced. A reject becomes a visual_mismatch.

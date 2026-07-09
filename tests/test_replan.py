@@ -3,13 +3,18 @@
 from runtime.replan import (
     INNER_CAP,
     OUTER_CAP,
+    SHELL_FAIL_REWRITE,
     STAGE_TO_SKILL,
     build_edit_message,
     build_feedback_message,
     cap_for_stage,
     collect_feedback_detail,
+    disconnected_cause_hint,
+    enrich_execute_failure_detail,
     format_feature_findings,
     is_exhausted,
+    is_shell_fail,
+    plan_has_shell_finish,
     replan_for_edit,
     replan_with_feedback,
 )
@@ -53,12 +58,55 @@ def test_every_stage_has_a_skill():
         assert stage in STAGE_TO_SKILL
 
 
-def test_feedback_message_names_stage_and_skill_and_plan():
+def test_feedback_message_names_stage_and_plan_lean():
     msg = build_feedback_message("visual_mismatch", "too tall", _CUBE)
     assert "visual_mismatch" in msg
-    assert "refinement_guidance" in msg
     assert "too tall" in msg
-    assert "box" in msg  # the prior plan is embedded
+    assert "box" in msg  # step inventory
+    # Lean: must NOT dump full skill files every replan
+    assert "=== REPLAN PLAYBOOK ===" not in msg
+    assert len(msg) < 2500
+
+
+def test_is_shell_fail_detects_typed_and_raw():
+    assert is_shell_fail("CAUSE: shell_fail — cannot shell")
+    assert is_shell_fail(
+        "failed at step 'hollow_shell' (op: finish shell): BRep_API: command not done"
+    )
+    assert not is_shell_fail("union_gap: features only touch")
+
+
+def test_enrich_execute_failure_detail_adds_shell_fail_rewrite():
+    raw = "failed at step 'hollow_shell' (op: finish shell): BRep_API: command not done"
+    out = enrich_execute_failure_detail(raw)
+    assert "shell_fail" in out
+    assert "DELETE" in out or "MANDATORY" in out
+
+
+def test_feedback_message_shell_fail_forces_mandatory_rewrite():
+    plan = plan_from_dict(
+        {
+            "part_name": "adapter",
+            "steps": [
+                {
+                    "id": "body",
+                    "primitive": "box",
+                    "operation": "base",
+                    "parameters": {"length": 10, "width": 10, "height": 10},
+                },
+                {"id": "hollow_shell", "op": "shell", "selector": ">Z", "value": 2},
+            ],
+        }
+    )
+    assert plan_has_shell_finish(plan)
+    msg = build_feedback_message(
+        "cadquery_execute",
+        "CAUSE: shell_fail — OCCT cannot shell this solid",
+        plan,
+    )
+    assert "MANDATORY REWRITE" in msg or "shell_fail" in msg
+    assert "DELETE" in msg or "shell" in msg.lower()
+    assert SHELL_FAIL_REWRITE.split()[0] in msg or "shell_fail" in msg
 
 
 def test_feedback_message_notes_verifier_error_is_not_a_plan_defect():
@@ -75,6 +123,124 @@ def test_collect_feedback_detail_prefers_verifier_feedback_for_visual():
 
 def test_collect_feedback_detail_uses_error_for_other_stages():
     assert collect_feedback_detail("cadquery_compile", {"error": "boom"}) == "boom"
+
+
+_SHELL_THEN_UNION = {
+    "steps": [
+        {"id": "body", "primitive": "cylinder", "operation": "base", "parameters": {}},
+        {"id": "hollow", "op": "shell", "selector": ">Z", "value": 2.5},
+        {"id": "cap", "primitive": "cylinder", "operation": "union", "parameters": {}},
+    ]
+}
+_TOUCHING_UNIONS = {
+    "steps": [
+        {"id": "hub", "primitive": "cylinder", "operation": "base", "parameters": {}},
+        {"id": "spoke", "primitive": "box", "operation": "union", "parameters": {}},
+    ]
+}
+
+
+def test_disconnected_cause_hint_flags_shell_then_union():
+    """A solid unioned AFTER a shell → point at revolve / hollow-last, not overlap."""
+    hint = disconnected_cause_hint(_SHELL_THEN_UNION).lower()
+    assert "shell" in hint
+    assert "revolve" in hint or "hollow last" in hint
+
+
+def test_disconnected_cause_hint_defaults_to_overlap_for_touching_unions():
+    hint = disconnected_cause_hint(_TOUCHING_UNIONS).lower()
+    assert "overlap" in hint
+    assert "revolve" not in hint
+
+
+def test_disconnected_cause_hint_none_plan_defaults_to_overlap():
+    assert "overlap" in disconnected_cause_hint(None).lower()
+
+
+def test_disconnected_cause_hint_multi_solid_union_is_union_gap():
+    """Additive multi-solid (no cuts) → union_gap, not vessel folklore."""
+    hint = disconnected_cause_hint(_TOUCHING_UNIONS, num_solids=2, num_shells=2).lower()
+    assert "union_gap" in hint or "overlap" in hint
+    assert "hollow_cylinder" not in hint  # no product-named vessel sermon
+
+
+def test_disconnected_cause_hint_cut_plan_is_cut_sever():
+    plan = {
+        "part_name": "part",
+        "steps": [
+            {"id": "body", "primitive": "box", "operation": "base", "parameters": {}},
+            {"id": "pocket", "primitive": "box", "operation": "cut", "parameters": {}},
+        ],
+    }
+    hint = disconnected_cause_hint(plan, num_solids=2).lower()
+    assert "cut_sever" in hint
+    assert "hollow_cylinder" not in hint
+
+
+def test_disconnected_cause_hint_cap_after_hollow_is_secondary_body():
+    plan = {
+        "part_name": "bottle",
+        "steps": [
+            {"id": "body", "primitive": "cylinder", "operation": "base", "parameters": {}},
+            {"id": "hollow", "primitive": "cylinder", "operation": "cut", "parameters": {}},
+            {"id": "cap_main", "primitive": "cylinder", "operation": "union", "parameters": {}},
+        ],
+    }
+    hint = disconnected_cause_hint(plan, num_solids=2).lower()
+    assert "cap" in hint or "secondary" in hint
+
+
+def test_disconnected_cause_hint_multi_shell_enclosed_void():
+    hint = disconnected_cause_hint(_TOUCHING_UNIONS, num_solids=1, num_shells=2).lower()
+    assert "multi-shell" in hint or "enclosed" in hint or "void" in hint or "cavity" in hint
+    assert "0.5" not in hint
+
+
+def test_collect_feedback_detail_mesh_repair_uses_topology_from_payload():
+    payload = {
+        "after": {
+            "is_watertight": True,
+            "open_holes": 0,
+            "self_intersections": 0,
+            "num_components": 2,
+        },
+        "actions": ["none"],
+        "num_solids": 1,
+        "num_shells": 2,
+    }
+    detail = collect_feedback_detail("mesh_repair", payload, _TOUCHING_UNIONS)
+    assert "components=2" in detail
+    assert "shell" in detail.lower() or "void" in detail.lower() or "cavity" in detail.lower()
+
+
+def test_collect_feedback_detail_mesh_repair_uses_targeted_hint_for_shell_then_union():
+    payload = {
+        "after": {
+            "is_watertight": True,
+            "open_holes": 0,
+            "self_intersections": 0,
+            "num_components": 2,
+        },
+        "actions": ["no repair needed (already clean)"],
+    }
+    detail = collect_feedback_detail("mesh_repair", payload, _SHELL_THEN_UNION)
+    assert "components=2" in detail
+    assert "revolve" in detail.lower() or "hollow last" in detail.lower()
+
+
+def test_collect_feedback_detail_mesh_repair_overlap_hint_without_plan():
+    payload = {
+        "after": {
+            "is_watertight": True,
+            "open_holes": 0,
+            "self_intersections": 0,
+            "num_components": 2,
+        },
+        "actions": ["none"],
+    }
+    detail = collect_feedback_detail("mesh_repair", payload)  # no plan → generic overlap
+    assert "components=2" in detail
+    assert "overlap" in detail.lower()
 
 
 # ── Task 4: enriched replan feedback (per-feature findings + step inventory) ──

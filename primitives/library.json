@@ -216,7 +216,7 @@
   },
   "hollow_cylinder": {
     "name": "hollow_cylinder",
-    "description": "A tube or hollow cylinder defined by outer radius, inner radius, and height.",
+    "description": "Tube/pipe, or the wall of a cup/bottle/vessel — the one-step robust way to make a hollow round body (prefer this over cylinder + a shell finish).",
     "parameters": {
       "outer_radius": {
         "type": "float",
@@ -238,7 +238,7 @@
   },
   "hollow_box": {
     "name": "hollow_box",
-    "description": "A box hollowed out by removing the top face (+Z) with a specified wall thickness.",
+    "description": "Open-topped walled box (container/tray) in one step — use instead of a shell finish on a box.",
     "parameters": {
       "length": {
         "type": "float",
@@ -299,7 +299,7 @@
   },
   "chamfered_box": {
     "name": "chamfered_box",
-    "description": "A rectangular box with chamfered edges.",
+    "description": "Box with all edges pre-chamfered — use instead of a whole-body chamfer finish on a box.",
     "parameters": {
       "length": {
         "type": "float",
@@ -326,7 +326,7 @@
   },
   "filleted_box": {
     "name": "filleted_box",
-    "description": "A rectangular box with filleted edges.",
+    "description": "Box with all edges pre-rounded — use instead of a whole-body fillet finish on a box.",
     "parameters": {
       "length": {
         "type": "float",
@@ -353,7 +353,7 @@
   },
   "rounded_cylinder": {
     "name": "rounded_cylinder",
-    "description": "A cylinder with filleted end edges.",
+    "description": "Cylinder with pre-filleted end edges — use instead of a fillet finish on a cylinder.",
     "parameters": {
       "radius": {
         "type": "float",
@@ -427,7 +427,7 @@
   },
   "revolve": {
     "name": "revolve",
-    "description": "Revolve a closed 2D profile (list of [x, y] points, all x >= 0) about the Y axis to sweep a solid of revolution. Force-multiplier for bottles, nozzles, flanges, and turned parts.",
+    "description": "Solid of revolution from a 2D profile swept about the Y axis — the robust one-step way to make bottles, vases, nozzles, flanges, and any turned/axisymmetric part (a walled profile yields a hollow vessel directly).",
     "parameters": {
       "profile": {
         "type": "profile",

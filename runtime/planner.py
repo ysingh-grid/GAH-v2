@@ -4,8 +4,9 @@ The backend re-invokes `run_planner_turn` on every user message with the full
 chat history. The RLM must always resolve the request to a validated
 PrimitivePlan — there is no clarifying-question escape hatch; ambiguity gets
 resolved with reasonable defaults, not punted back to the user. output_schema
-is the PrimitivePlan itself, so the model's FINAL is schema-checked (and
-self-corrected on mismatch) by fast-rlm before we ever see it.
+is LibraryBoundPrimitivePlan (structure + library params + construction guards),
+so the model's FINAL is schema-checked (and self-corrected on mismatch) by
+fast-rlm before we ever see it.
 
 This module owns the *pure* pieces (the output contract, the task prompt, the
 result parser). The single impure call — `fast_rlm.run` — is isolated in
@@ -40,7 +41,6 @@ def _llm_kwargs() -> dict:
 # Tools the planner may call inside its REPL. Imported as objects so fast-rlm
 # can extract their source; they must stay self-contained (see rlm/pull_tools).
 from rlm.pull_tools import (
-    delegate_features,
     list_skills,
     lookup_design_reference,
     lookup_primitive,
@@ -58,15 +58,17 @@ _PLANNER_TOOLS = [
     lookup_primitive,
     lookup_design_reference,
     preview_plan,
-    delegate_features,
 ]
-# delegate_stage is intentionally NOT exposed. Measured: per-stage child delegation
-# spawns a full agent per stage over tiny context = pure overhead; it drove a single
-# solid to >1M tokens / runaway. The def is kept in rlm/pull_tools.py but isolated.
-# delegate_features stays (genuine compound multi-solid assemblies). NOTE: isolating
-# delegate_features too gave NO token benefit (pure-inline box still ~183k/17 steps),
-# so the bloat is the monolithic root's per-step context growth + flash's step count,
-# not delegation alone.
+# SINGLE-OBJECT PLATFORM: the planner builds ONE connected watertight solid in a
+# single monolithic FINAL. The multi-body fork tools are intentionally NOT here:
+# - delegate_features (spawn child agents for "independent solids in an assembly")
+#   invited disconnected multi-body plans (floating caps, N-component splits) and
+#   added sub-agent latency for NO measured token benefit — isolated in
+#   rlm/pull_tools.py, do not re-add. Multi-body assembly is out of scope.
+# - delegate_stage: measured harmful (a full child per tiny-context stage = pure
+#   overhead, drove a single solid to >1M tokens). Also isolated in pull_tools.
+# A single connected object is one CSG construction tree the monolithic root
+# writes directly; preview_plan lets it self-check that tree against real geometry.
 
 _REPLANNER_TOOLS = [
     read_skill,
@@ -82,10 +84,20 @@ _REPLANNER_TOOLS = [
 
 
 def parse_planner_result(result: Any) -> PrimitivePlan:
-    """Validate a fast-rlm FINAL dict into a PrimitivePlan (raises on mismatch)."""
-    if isinstance(result, PrimitivePlan):
+    """Validate a fast-rlm FINAL into a library+construction-bound PrimitivePlan.
+
+    Raises on structural mismatch, unknown params (primitive_gap), or illegal
+    construction (cap body, shell-then-union). Used after fast-rlm returns; the
+    same rules are in output_schema=LibraryBoundPrimitivePlan so the engine can
+    schema-retry inside the same RLM call.
+    """
+    from runtime.schema import LibraryBoundPrimitivePlan, accept_plan, plan_to_dict
+
+    if isinstance(result, LibraryBoundPrimitivePlan):
         return result
-    return PrimitivePlan.model_validate(result)
+    if isinstance(result, PrimitivePlan):
+        return accept_plan(plan_to_dict(result))
+    return accept_plan(result)
 
 
 def _load_core_skills() -> dict[str, str]:
@@ -103,31 +115,74 @@ def _load_core_skills() -> dict[str, str]:
     return loaded
 
 
-def _load_available_primitives() -> dict[str, str]:
-    """Load primitives with 1-line descriptions from library.json for the Rich Menu."""
-    from runtime.schema import load_library
+def _load_available_primitives() -> dict[str, Any]:
+    """Rich menu: description + param names/types/defaults for every primitive."""
+    from runtime.schema import compact_library_menu
+
     try:
-        lib = load_library()
-        return {name: spec.get("description", "") for name, spec in lib.items()}
+        return compact_library_menu()
     except Exception as e:
         logger.warning(f"Failed to build Rich Menu: {e}")
         return {}
 
 
+def _load_family_context(original_prompt: str) -> dict[str, Any]:
+    """Host construction family + through-path contract for the planner query."""
+    from runtime.metrics_gate import extract_target_metrics
+    from runtime.plan_guards import classify_construction_family
+
+    family = classify_construction_family(original_prompt)
+    targets = extract_target_metrics(original_prompt)
+    ctx: dict[str, Any] = {
+        "construction_family": family,
+        "through_path": "required" if targets.requires_hollow else "unknown",
+        "default_wall_mm": targets.wall_mm,
+    }
+    if targets.requires_hollow:
+        ctx["through_path_rule"] = (
+            "through_path is REQUIRED. Prefer outer solid only (base/union); "
+            "the HOST applies wall-based auto-hollow if you omit cavity cuts. "
+            "Solid silhouette without a passage is invalid for this request."
+        )
+    if family == "open_vessel":
+        ctx["family_rules"] = (
+            "open_vessel: emit ONE hollow_cylinder OR revolve as the only "
+            "primitive step (optional fillet/chamfer finish only). "
+            "NO separate cap/lid/plug unions. Caps are out of scope."
+        )
+        ctx["family_recipe"] = {
+            "part_name": "open_vessel",
+            "units": "mm",
+            "steps": [
+                {
+                    "id": "vessel_body",
+                    "primitive": "hollow_cylinder",
+                    "operation": "base",
+                    "parameters": {
+                        "outer_radius": 35.0,
+                        "inner_radius": 32.0,
+                        "height": 180.0,
+                    },
+                    "position": [0.0, 0.0, 0.0],
+                    "orientation": [0.0, 0.0, 0.0],
+                }
+            ],
+        }
+    return ctx
+
+
 PLANNER_TASK = """\
-You are the PLANNER. Turn the user's request (original_prompt, plus any
-chat_history) into ONE validated PrimitivePlan.
+You are the PLANNER. Turn the request into ONE PrimitivePlan. Prefer a SINGLE
+REPL block that ends in FINAL (at most 2 turns). Do not print chat_history or
+paginate skills unless a param name is unknown.
 
-Your playbook and core skills are already loaded in `context['preloaded_skills']`.
-Read them directly from context. Do NOT call `read_skill()` for 'playbook' or
-'primitive_planning'—they are already available. Resolve ambiguity with
-reasonable defaults; there is no option to ask the user.
+`context['available_primitives']` has exact param names (required). Optional:
+`context['preloaded_skills']`, `construction_family` / `family_recipe` when present.
 
-For a TRIVIAL single-primitive part, emit FINAL in one block. For a COMPLEX part
-(a real assembly, or many features/patterns/stacked parts), you MUST call
-`preview_plan(plan_dict)` to check the REAL geometry BEFORE FINAL — fix any
-disconnected (num_components > 1) or mis-sized feature it reveals — bounded to at
-most 2 preview calls. See the GROUNDED SELF-CHECK section of the playbook.
+Host semantics: all cut steps are fused into ONE cavity tool then cut once — size
+cavity so walls stay continuous. Unions must overlap. No shell-then-union, no
+cap/lid secondary bodies. 1 solid + 1 shell after build. Resolve ambiguity with
+defaults; never ask the user.
 """
 
 
@@ -135,19 +190,15 @@ def build_planner_query(
     original_prompt: str,
     chat_history: list[dict[str, str]],
     *,
-    available_primitives: dict[str, str] | None = None,
+    available_primitives: dict[str, Any] | None = None,
     preloaded_skills: dict[str, str] | None = None,
+    family_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the structured context dict handed to the RLM for one turn.
 
-    MENU by value, CONTENT by reference. available_primitives (a Rich Menu of keys and 
-    1-line descriptions) is preloaded on the host — cheaper than making the monolithic 
-    root spend extra REPL steps to pull it. The large primitive schemas are pulled 
-    by reference only when needed via lookup_primitive().
+    available_primitives includes param keys (library-bound FINAL). family_context
+    injects host construction_family + vessel recipe when applicable.
     """
-    # task = the planner's standing instruction; the user's actual request lives
-    # ONLY in original_prompt/chat_history. (task used to duplicate original_prompt
-    # byte-for-byte — pure wasted context on every REPL step.)
     query: dict[str, Any] = {
         "task": PLANNER_TASK,
         "original_prompt": original_prompt,
@@ -157,6 +208,8 @@ def build_planner_query(
         query["available_primitives"] = available_primitives
     if preloaded_skills is not None:
         query["preloaded_skills"] = preloaded_skills
+    if family_context:
+        query.update(family_context)
     return query
 
 
@@ -194,13 +247,13 @@ def run_planner_turn(
 
         config = default_config
 
-    # Pre-fetch the Rich Menu (catalog keys + 1-line descriptions) and embed them
-    # so the monolithic root skips list_primitives() — cheaper than REPL round-trips.
-    # The large schemas are still pulled by reference inside the REPL via lookup_primitive().
+    # Rich menu with param names + host construction family (vessel recipe when needed).
     os.environ["DTCM_BACKEND_URL"] = backend_url
     available_primitives = _load_available_primitives()
-
     preloaded_skills = _load_core_skills()
+    family_context = _load_family_context(original_prompt)
+
+    from runtime.schema import LibraryBoundPrimitivePlan
 
     result = fast_rlm.run(
         build_planner_query(
@@ -208,10 +261,11 @@ def run_planner_turn(
             chat_history,
             available_primitives=available_primitives,
             preloaded_skills=preloaded_skills,
+            family_context=family_context,
         ),
         config=config,
         tools=_PLANNER_TOOLS,
-        output_schema=PrimitivePlan,
+        output_schema=LibraryBoundPrimitivePlan,
         env_variables={
             "DTCM_BACKEND_URL": backend_url,
         },
@@ -221,27 +275,26 @@ def run_planner_turn(
 
 
 REPLANNER_TASK = """\
-You are the REPLANNER. A plan already exists and needs ONE revision — the failure
-(or edit request) is in the last message of chat_history.
+You are the REPLANNER. ONE revision from context['current_plan'] + last failure.
+Param names must match context['available_primitives']. Prefer ONE REPL → FINAL.
 
-The current plan is provided as a READY dict at `context['current_plan']`. Work
-from THAT directly:
+Read CAUSE in the failure detail:
+- shell_fail: DELETE every shell finish. Solid-only OR cavity cut steps. Do NOT
+  preview until shell is gone. Do NOT nudge union dims to “fix” shell.
+- cut_sever: change cavity SIZE so walls stay connected (cuts already fused by
+  compiler). Do not only move z by 1mm.
+- union_gap: increase overlap into parent body.
+- multi-shell: open enclosed voids.
+- construction_error / shell-then-union / cap body: remove illegal structure.
+- parameter/visual: edit only the named field.
+
     import copy
     plan = copy.deepcopy(context['current_plan'])
-    # ...apply ONLY the minimal fix the feedback names (e.g. rename a bad param,
-    #    resize/move one step)...
+    # apply fix for the CAUSE class
     FINAL(plan)
-Do NOT try to parse the plan out of chat_history text, and do NOT call
-`llm_query` or spawn sub-agents — everything you need is already in context.
-Change only what the request calls for; keep every other step unchanged.
 
-Your playbook and core skills are in `context['preloaded_skills']` — read them
-from context; do NOT call `read_skill()` for 'playbook'/'primitive_planning'.
-
-If your fix materially changes the geometry of a COMPLEX part (moves/resizes a
-feature, adds/removes a body), you MAY verify it with `preview_plan(plan)` before
-FINAL — at most 2 preview calls. A one-parameter tweak needs no preview. Aim to
-FINAL in a single REPL block.
+No sub-agents. preview_plan at most once, and NEVER while a shell finish remains
+after shell_fail.
 """
 
 
@@ -285,11 +338,11 @@ def run_replanner_turn(
     if backend_url:
         os.environ["DTCM_BACKEND_URL"] = backend_url
 
-    # Pre-fetch the Rich Menu (catalog keys + 1-line descriptions) and embed them
-    # so the monolithic root skips list_primitives() — cheaper than REPL round-trips.
-    # The large schemas are still pulled by reference inside the REPL via lookup_primitive().
     available_primitives = _load_available_primitives()
     preloaded_skills = _load_core_skills()
+    family_context = _load_family_context(original_prompt)
+
+    from runtime.schema import LibraryBoundPrimitivePlan
 
     query: dict[str, Any] = {
         "task": REPLANNER_TASK,
@@ -299,18 +352,27 @@ def run_replanner_turn(
     }
     if available_primitives:
         query["available_primitives"] = available_primitives
+    query.update(family_context)
     if current_plan is not None:
         # Deliver the plan STRUCTURALLY so the replanner edits context['current_plan']
         # directly — never re-parsing it from chat text (the parse flail).
         query["current_plan"] = current_plan
+    # Adaptive reasoning: a replan (fixing a geometry failure, or applying an edit)
+    # is a spatial-reasoning task, unlike the common first-pass structured extraction.
+    replan_kwargs = dict(_llm_kwargs())
+    _replan_effort = os.environ.get("RLM_REPLAN_REASONING_EFFORT", "medium")
+    if _replan_effort in (None, "", "none"):
+        replan_kwargs.pop("reasoning_effort", None)
+    else:
+        replan_kwargs["reasoning_effort"] = _replan_effort
     result = fast_rlm.run(
         query,
         config=config,
         tools=_REPLANNER_TOOLS,
-        output_schema=PrimitivePlan,
+        output_schema=LibraryBoundPrimitivePlan,
         env_variables={
             "DTCM_BACKEND_URL": backend_url or "",
         },
-        llm_kwargs=_llm_kwargs(),
+        llm_kwargs=replan_kwargs,
     )
     return parse_planner_result(result["results"])

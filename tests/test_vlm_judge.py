@@ -1,6 +1,21 @@
 from tools.vlm_judge import _format_metrics, _format_verdict, _read_json
 
 
+def test_judge_instruction_has_capability_envelope():
+    """The verifier must judge the ESSENTIAL FORM as one solid and NOT fail for
+    features the platform can't build (threads, separate caps) — the fix that
+    stops the verifier from demanding unbuildable detail (run _2e44)."""
+    from tools.vlm_judge import JUDGE_INSTRUCTION
+
+    low = JUDGE_INSTRUCTION.lower()
+    assert "capability envelope" in low
+    assert "single" in low and "solid" in low
+    assert "essential form" in low
+    assert "out of scope" in low
+    assert "thread" in low  # illustrative example of inexpressible detail
+    assert "cap" in low or "removable" in low  # illustrative separate-part example
+
+
 def test_read_json_accepts_plain_json():
     assert _read_json('{"passed": true, "feedback": "ok"}')["passed"] is True
 
