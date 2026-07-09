@@ -21,7 +21,8 @@ class DesignStage:
     Plain string constants (not an enum) keep the workflow query JSON-trivial.
     """
 
-    PLANNING = "planning"      # planner turn (runs in backend before the workflow)
+    PLANNING = "planning"      # planner turn producing the initial plan
+    EDITING = "editing"        # replanner applying a user edit request to an existing plan
     GENERATING = "generating"  # compile CadQuery, execute -> solid + STL, inspect/repair.
     INSPECTING = "inspecting"  # MeshLib watertight / manifold check
     REPAIRING = "repairing"    # MeshLib repair (only when inspect fails)
@@ -40,7 +41,7 @@ class DesignInput:
     # PrimitivePlan serialised via runtime.schema.plan_to_dict() — JSON-safe.
     # EMPTY {} means "plan INSIDE the workflow" (plan_activity runs first, so the
     # workflow starts the instant intake completes). A non-empty plan_dict is a
-    # ready plan (the edit path) and skips planning.
+    # ready plan supplied by the caller and skips planning entirely.
     plan_dict: dict[str, Any] = field(default_factory=dict)
     backend_url: str = "http://localhost:8001"
     # Base replan history: the pre-planner intake facts ONLY (never the raw
@@ -53,6 +54,14 @@ class DesignInput:
     # Full planner history (intake_context folded into the last user message) for
     # the initial plan_activity when plan_dict is empty. Distinct from `history`.
     planner_history: list[dict[str, str]] = field(default_factory=list)
+    # EDIT path: when set, the workflow's first activity is edit_activity (not
+    # plan_activity) — it re-enters the replanner with this edit request against
+    # last_plan_dict, on the WORKER, so the whole edit (replan-for-edit +
+    # regenerate) is one durable execution instead of a bare in-process call that
+    # dies with the backend container. Empty string = not an edit.
+    edit_text: str = ""
+    # The plan being edited (required when edit_text is set); ignored otherwise.
+    last_plan_dict: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -251,6 +260,30 @@ class ReplanOutput:
 
     There is no ask_user branch — the replanner always attempts a fix; ok=False
     means it could not (exception, exhausted budget), not that it asked a question.
+    """
+
+    ok: bool
+    plan_dict: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+
+
+@dataclass
+class EditInput:
+    """Input to edit_activity: apply a user EDIT request to an existing plan."""
+
+    original_prompt: str
+    last_plan_dict: dict[str, Any]
+    edit_text: str
+    history: list[dict[str, str]] = field(default_factory=list)
+    backend_url: str = ""
+
+
+@dataclass
+class EditOutput:
+    """edit_activity outcome: the edited plan, or a categorized failure.
+
+    ok=False means the replanner could not apply the edit (exception/exhaustion),
+    not that it asked a clarifying question — intake already resolved that turn.
     """
 
     ok: bool

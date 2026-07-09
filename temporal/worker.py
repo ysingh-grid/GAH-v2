@@ -10,23 +10,14 @@ Or via docker compose:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import inspect
 import logging
 import os
 
 from temporalio.worker import Worker
 
-from temporal.activities import (
-    compile_activity,
-    execute_activity,
-    generate_activity,
-    inspect_activity,
-    plan_activity,
-    record_trace_activity,
-    render_activity,
-    repair_activity,
-    replan_activity,
-    verify_activity,
-)
+from temporal import activities as _activities_module
 from temporal.client import get_client
 from temporal.workflow import DesignWorkflow
 
@@ -36,7 +27,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 
-import concurrent.futures
+def _discover_activities() -> list:
+    """Every @activity.defn function in temporal.activities, auto-registered.
+
+    A manually maintained list here silently drops a NEW activity the moment
+    someone adds one to activities.py without updating this file too — exactly
+    what happened when edit_activity shipped without a matching entry here: the
+    workflow scheduled it, the worker rejected it with "Activity function ...
+    is not registered", and every edit hard-failed. @activity.defn stamps a
+    `__temporal_activity_definition` attribute on the function (confirmed via
+    the SDK's own decorator); collecting every module-level function with that
+    attribute makes a repeat of this bug structurally impossible.
+    """
+    return [
+        obj
+        for _, obj in inspect.getmembers(_activities_module, inspect.isfunction)
+        if hasattr(obj, "__temporal_activity_definition")
+    ]
 
 
 async def main() -> None:
@@ -46,21 +53,7 @@ async def main() -> None:
             client,
             task_queue=_TASK_QUEUE,
             workflows=[DesignWorkflow],
-            activities=[
-                # Planning is now the workflow's FIRST activity (was in-process).
-                plan_activity,
-                # Per-step generate activities (split): one timeline event each.
-                compile_activity,
-                execute_activity,
-                inspect_activity,
-                repair_activity,
-                render_activity,
-                # generate_activity kept registered (isolated) for back-compat / in-process parity.
-                generate_activity,
-                verify_activity,
-                replan_activity,
-                record_trace_activity,
-            ],
+            activities=_discover_activities(),
             activity_executor=activity_executor,
         ):
             log.info(

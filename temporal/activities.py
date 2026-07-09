@@ -12,6 +12,7 @@ activity does exactly ONE coarse stage and returns a typed result:
                        repair, render  -> GenerateOutput
   verify_activity    — multimodal verify against intent                -> VerifyOutput
   replan_activity    — scoped replanner fixes the plan from a failure  -> ReplanOutput
+  edit_activity      — scoped replanner applies a user EDIT request    -> EditOutput
   record_trace_activity — write the auditable trace.json (artifact store)
 
 Timeouts and retry policy live on the workflow side, not here.
@@ -66,12 +67,14 @@ def _heartbeating(interval_s: float = _HEARTBEAT_INTERVAL_S):
 # canonical, Temporal-free home of stage logic; temporal/ depends on runtime/).
 from runtime.loop import _Artifacts, _run_geometry, _run_verify
 from runtime.planner import run_planner_turn, run_replanner_turn
-from runtime.replan import replan_with_feedback
+from runtime.replan import replan_for_edit, replan_with_feedback
 from runtime.schema import PrimitivePlan, load_library, plan_to_dict
 from runtime.trace import build_trace, category_for_stage, write_trace
 from temporal.shared import (
     CompileInput,
     CompileOutput,
+    EditInput,
+    EditOutput,
     ExecuteInput,
     ExecuteOutput,
     GenerateInput,
@@ -250,6 +253,44 @@ def plan_activity(inp: PlanInput) -> PlanOutput:
     except Exception as exc:
         logger.exception("plan_activity failed")
         return PlanOutput(ok=False, error=str(exc))
+
+
+@activity.defn
+def edit_activity(inp: EditInput) -> EditOutput:
+    """EDITING: apply a user edit request to an existing plan, on the worker.
+
+    Was previously a bare in-process call (runtime.replan.replan_for_edit) made
+    directly from backend/designs/runner.py BEFORE the workflow started — no
+    retry, no crash recovery, and it always logged on the backend container
+    regardless of Temporal being enabled. Moving it here makes the edit path as
+    durable as a fresh design: the workflow's first activity when inp.edit_text
+    is set, same as plan_activity is when inp.plan_dict is empty.
+
+    Reuses runtime.replan.replan_for_edit with run_replanner_turn injected — the
+    same scoped, no-fork planner_fn replan_activity uses (an edit corrects one
+    existing plan; it never decomposes a new assembly).
+    """
+    import os
+
+    try:
+        last_plan = PrimitivePlan.model_validate(inp.last_plan_dict)
+        backend_url = os.environ.get("BACKEND_URL") or inp.backend_url
+
+        def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
+            return run_replanner_turn(original_prompt, history, backend_url=backend_url)
+
+        with _heartbeating():
+            out = replan_for_edit(
+                original_prompt=inp.original_prompt,
+                last_plan=last_plan,
+                edit_text=inp.edit_text,
+                prior_history=inp.history,
+                planner_fn=planner_fn,
+            )
+        return EditOutput(ok=True, plan_dict=plan_to_dict(out))
+    except Exception as exc:
+        logger.exception("edit_activity failed")
+        return EditOutput(ok=False, error=str(exc))
 
 
 @activity.defn

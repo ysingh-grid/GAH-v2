@@ -300,6 +300,8 @@ async def _run_via_temporal(
     history: list[dict[str, str]] | None = None,
     verify_prompt: str | None = None,
     planner_history: list[dict[str, str]] | None = None,
+    edit_text: str = "",
+    last_plan: PrimitivePlan | None = None,
 ) -> None:
     """Temporal path: start the workflow, stream its coarse-stage progress, await result.
 
@@ -309,9 +311,11 @@ async def _run_via_temporal(
     step with the Temporal UI timeline. When the workflow finishes we map its
     DesignResult to the terminal WS event.
 
-    plan: a ready PrimitivePlan (edit path) → the workflow skips planning. None
-    (fresh design) → plan_dict is empty and the workflow's plan_activity produces
-    the plan as its FIRST stage, so the workflow starts the instant intake completes.
+    plan: a ready PrimitivePlan → the workflow skips planning entirely. None +
+    edit_text set → the workflow's FIRST activity is edit_activity (applies
+    edit_text to last_plan on the worker) instead of plan_activity. None + no
+    edit_text (fresh design) → plan_dict is empty and plan_activity produces the
+    plan as the first stage, so the workflow starts the instant intake completes.
     verify_prompt: see _run_in_process — same edit-aware grounding, threaded
     into DesignInput.original_prompt so the activity-side verifier sees it.
     """
@@ -330,6 +334,8 @@ async def _run_via_temporal(
         history=list(history or []),
         feature_checklist=session.feature_checklist,
         planner_history=list(planner_history or []),
+        edit_text=edit_text,
+        last_plan_dict=plan_to_dict(last_plan) if last_plan is not None else {},
     )
 
     try:
@@ -518,7 +524,14 @@ async def _apply_edit(
 ) -> None:
     """Replan the existing model for a clarified edit, then regenerate on a
     fresh run_id (versioned: each edit keeps its own outputs/ dir on disk;
-    write_stl_to_studio always points ForgeCAD Studio at the newest one)."""
+    write_stl_to_studio always points ForgeCAD Studio at the newest one).
+
+    Under Temporal, the replan-for-edit step itself runs INSIDE the workflow
+    (edit_activity, the workflow's first activity when edit_text is set) so the
+    whole edit is one durable execution on the worker — not a bare in-process
+    call from this backend process that has no retry and dies with the
+    container. The in-process fallback below is unchanged.
+    """
     last_plan = PrimitivePlan.model_validate(session.last_plan)
     prior_history: list[dict[str, str]] = (
         [
@@ -531,31 +544,13 @@ async def _apply_edit(
         else []
     )
 
-    try:
-        plan = await ev_loop.run_in_executor(
-            None,
-            lambda: replan_for_edit(
-                original_prompt=session.original_prompt,
-                last_plan=last_plan,
-                edit_text=edit_text,
-                prior_history=prior_history,
-                planner_fn=_make_planner_fn(backend_url),
-            ),
-        )
-    except Exception as exc:
-        session.status = "failed"
-        await send({"type": "error", "message": str(exc)})
-        return
-
-    session.status = "generating"
-    session.last_plan = plan_to_dict(plan)
     run_id = new_run_id(f"design_{session.id[:8]}")
     session.run_id = run_id
-    await send({"type": "generating", "stage": "cadquery_compile", "run_id": run_id})
 
     # Fold this edit into intake_context (the same "established facts" field
     # the fresh-design flow uses) so every FUTURE replan/edit in this session
-    # keeps seeing it — not just this one run.
+    # keeps seeing it — not just this one run. Independent of the plan itself,
+    # so this happens up front for both the Temporal and in-process paths.
     session.intake_context = (
         f"{session.intake_context}\n- edit applied: {edit_text}".strip()
         if session.intake_context
@@ -580,26 +575,50 @@ async def _apply_edit(
     )
 
     if _USE_TEMPORAL:
+        session.status = "generating"
+        await send({"type": "generating", "stage": "editing", "run_id": run_id})
         await _run_via_temporal(
             session,
-            plan,
+            None,
             run_id,
             send,
             backend_url=backend_url,
             history=replan_base_history,
             verify_prompt=verify_prompt,
+            edit_text=edit_text,
+            last_plan=last_plan,
         )
-    else:
-        await _run_in_process(
-            session,
-            plan,
-            run_id,
-            send,
-            backend_url=backend_url,
-            ev_loop=ev_loop,
-            history=replan_base_history,
-            verify_prompt=verify_prompt,
+        return
+
+    try:
+        plan = await ev_loop.run_in_executor(
+            None,
+            lambda: replan_for_edit(
+                original_prompt=session.original_prompt,
+                last_plan=last_plan,
+                edit_text=edit_text,
+                prior_history=prior_history,
+                planner_fn=_make_planner_fn(backend_url),
+            ),
         )
+    except Exception as exc:
+        session.status = "failed"
+        await send({"type": "error", "message": str(exc)})
+        return
+
+    session.status = "generating"
+    session.last_plan = plan_to_dict(plan)
+    await send({"type": "generating", "stage": "cadquery_compile", "run_id": run_id})
+    await _run_in_process(
+        session,
+        plan,
+        run_id,
+        send,
+        backend_url=backend_url,
+        ev_loop=ev_loop,
+        history=replan_base_history,
+        verify_prompt=verify_prompt,
+    )
 
 
 def _render_png_for_run(run_id: str | None) -> str | None:

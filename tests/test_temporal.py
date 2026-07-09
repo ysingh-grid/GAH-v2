@@ -22,6 +22,8 @@ from temporal.shared import (
     CompileInput,
     DesignInput,
     DesignResult,
+    EditInput,
+    EditOutput,
     ExecuteInput,
     InspectInput,
     RenderInput,
@@ -53,6 +55,24 @@ class TestDesignInput:
         assert inp.plan_dict == {"steps": [1, 2]}
         assert inp.backend_url == "http://test:9999"
 
+    def test_edit_fields_default_empty(self):
+        # Not an edit unless edit_text is set — same "empty means off" convention
+        # plan_dict already uses.
+        inp = DesignInput(original_prompt="cube", plan_dict={}, run_id="r4")
+        assert inp.edit_text == ""
+        assert inp.last_plan_dict == {}
+
+    def test_edit_fields_set(self):
+        inp = DesignInput(
+            original_prompt="cube",
+            plan_dict={},
+            run_id="r5",
+            edit_text="make it 20mm",
+            last_plan_dict={"steps": [1]},
+        )
+        assert inp.edit_text == "make it 20mm"
+        assert inp.last_plan_dict == {"steps": [1]}
+
 
 class TestDesignResult:
     def test_success_defaults(self):
@@ -78,6 +98,27 @@ class TestDesignResult:
         r1, r2 = DesignResult(status="success"), DesignResult(status="success")
         r1.final_plan["x"] = 1
         assert "x" not in r2.final_plan
+
+
+class TestEditInputOutput:
+    def test_edit_input_fields(self):
+        inp = EditInput(
+            original_prompt="cube",
+            last_plan_dict={"steps": [1]},
+            edit_text="make it 20mm",
+        )
+        assert inp.history == []
+        assert inp.backend_url == ""
+
+    def test_edit_output_success(self):
+        out = EditOutput(ok=True, plan_dict={"steps": [1, 2]})
+        assert out.ok
+        assert out.error == ""
+
+    def test_edit_output_failure(self):
+        out = EditOutput(ok=False, error="planner exhausted retries")
+        assert not out.ok
+        assert out.plan_dict == {}
 
 
 # ── Split generate activities (the new per-step decomposition) ────────────────
@@ -292,3 +333,33 @@ class TestRunnerTemporalFlag:
         import backend.designs.runner as runner_mod
         importlib.reload(runner_mod)
         assert runner_mod._USE_TEMPORAL is False
+
+
+class TestWorkerActivityDiscovery:
+    """A manually maintained activities=[...] list in worker.py silently drops a
+    NEW activity the moment someone adds one to activities.py without also
+    updating this file (exactly what happened when edit_activity shipped: the
+    workflow scheduled it, the worker rejected it as unregistered, every edit
+    hard-failed in production). worker.py now auto-discovers every
+    @activity.defn function instead of listing them by hand — this test proves
+    that discovery actually finds all of them, so the bug class can't recur.
+    """
+
+    def test_discovers_every_activity_defn_function(self):
+        import inspect
+
+        from temporal import activities as activities_module
+        from temporal.worker import _discover_activities
+
+        expected = {
+            name
+            for name, obj in inspect.getmembers(activities_module, inspect.isfunction)
+            if hasattr(obj, "__temporal_activity_definition")
+        }
+        discovered = {a.__name__ for a in _discover_activities()}
+        assert discovered == expected
+        # Guard against a hollow pass (e.g. the attribute name silently changing
+        # in a temporalio upgrade, making `expected` empty and the set trivially match).
+        assert "edit_activity" in discovered
+        assert "plan_activity" in discovered
+        assert len(discovered) >= 10

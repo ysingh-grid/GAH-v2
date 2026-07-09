@@ -111,7 +111,7 @@
 
     const BACKEND = window.BACKEND_URL || window.location.origin;
     const LS_ID = 'gah_design_id', LS_MSGS = 'gah_messages';
-    const STAGE_MAP = { planning:'PLANNING', generating:'GENERATING', inspecting:'GENERATING', repairing:'GENERATING', verifying:'VERIFYING', replanning:'PLANNING', done:'DONE' };
+    const STAGE_MAP = { planning:'PLANNING', editing:'PLANNING', generating:'GENERATING', inspecting:'GENERATING', repairing:'GENERATING', verifying:'VERIFYING', replanning:'PLANNING', done:'DONE' };
     const STAGES = ['PLANNING','GENERATING','VERIFYING','DONE'];
     const STAGE_ICON = { PLANNING:'🧠', GENERATING:'⚙️', VERIFYING:'🔍', DONE:'✅', FAILED:'❌' };
     const nowTime = () => new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });

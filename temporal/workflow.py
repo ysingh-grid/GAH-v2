@@ -29,6 +29,7 @@ with workflow.unsafe.imports_passed_through():
     from runtime.trace import category_for_stage  # pure stage -> failure-category map
     from temporal.activities import (
         compile_activity,
+        edit_activity,
         execute_activity,
         inspect_activity,
         plan_activity,
@@ -43,6 +44,7 @@ with workflow.unsafe.imports_passed_through():
         DesignInput,
         DesignResult,
         DesignStage,
+        EditInput,
         ExecuteInput,
         InspectInput,
         PlanInput,
@@ -72,6 +74,8 @@ _VERIFY_TIMEOUT = timedelta(minutes=3)
 # design (single-block FINAL, no delegate_features) — the outer cap here is a
 # safety ceiling, not the real constraint.
 _REPLAN_TIMEOUT = timedelta(hours=1)
+# Same LLM-call class as replan_activity (scoped run_replanner_turn) — same ceiling.
+_EDIT_TIMEOUT = timedelta(hours=1)
 _TRACE_TIMEOUT = timedelta(seconds=30)
 # Long activities heartbeat every ~10s from a side thread (temporal/activities.py
 # _heartbeating). If no heartbeat lands within this window, Temporal fails the
@@ -107,12 +111,47 @@ class DesignWorkflow:
     async def run(self, inp: DesignInput) -> DesignResult:
         plan_dict = inp.plan_dict
 
-        # ── PLAN (first activity when no plan was supplied) ───────────────────
+        # ── EDIT (first activity when this run is a user edit request) ────────
+        # Re-enters the replanner against last_plan_dict on the WORKER, so the
+        # whole edit — replan-for-edit AND the regenerate that follows — is one
+        # durable execution instead of a bare in-process call that dies with the
+        # backend container. Takes priority over plan_dict: an edit always
+        # supplies last_plan_dict, and any plan_dict here is stale (pre-edit).
+        if inp.edit_text:
+            self._stage = DesignStage.EDITING
+            ed = await workflow.execute_activity(
+                edit_activity,
+                EditInput(
+                    original_prompt=inp.original_prompt,
+                    last_plan_dict=inp.last_plan_dict,
+                    edit_text=inp.edit_text,
+                    history=inp.history,
+                    backend_url=inp.backend_url,
+                ),
+                schedule_to_close_timeout=_EDIT_TIMEOUT,
+                heartbeat_timeout=_HEARTBEAT_TIMEOUT,
+                retry_policy=_NO_RETRY,
+            )
+            if not ed.ok:
+                self._stage = DesignStage.FAILED
+                await self._record(
+                    inp, {}, "", {}, {}, {}, {}, status="failed", attempts=0,
+                    failure_stage="replan_error", failure_detail=ed.error,
+                )
+                return DesignResult(
+                    status="failed",
+                    run_id=inp.run_id,
+                    failure_category=category_for_stage("replan_error").value,
+                    message=ed.error or "replanner failed to apply the edit",
+                )
+            plan_dict = ed.plan_dict
+
+        # ── PLAN (first activity when no plan was supplied and this isn't an edit) ─
         # Empty plan_dict means "plan inside the workflow" — so the workflow starts
-        # the instant intake completes (no in-process pre-Temporal gap). A ready
-        # plan (edit path) skips this. self._stage already defaults to PLANNING, so
-        # the current_stage query shows PLANNING immediately.
-        if not plan_dict:
+        # the instant intake completes (no in-process pre-Temporal gap). self._stage
+        # already defaults to PLANNING, so the current_stage query shows PLANNING
+        # immediately.
+        elif not plan_dict:
             self._stage = DesignStage.PLANNING
             pl = await workflow.execute_activity(
                 plan_activity,
