@@ -98,6 +98,41 @@ def _rarray(solid, x_spacing, y_spacing, x_count, y_count):
     return out
 
 
+_MIN_SMOOTH_POINTS = 16
+# Below this point count, a smooth profile can come out visibly FACETED even
+# though every individual curve is a genuine BSpline (geomType confirmed via
+# CadQuery) — measured live on a spoon bowl's loft_between: 8 elliptical
+# control points per end rendered as a clean smooth curve on its OWN, but the
+# moment bottom and top profiles have a DIFFERENT aspect ratio (not a uniform
+# scale-up — the bowl legitimately narrows/reshapes as it deepens, a normal
+# design choice), the lofted surface between them visibly facets into a
+# rounded octagon at 8 points and stays perfectly smooth at 16+. Finer STL
+# tessellation does NOT fix it (verified — the facets are real geometry, not a
+# render artifact), and the planner cannot be relied on to always remember to
+# emit enough points (the same failure mode as the smooth=True flag itself
+# being underused before it had explicit skill guidance). So this is enforced
+# here, deterministically, not left as a planner instruction to sometimes miss.
+
+
+def _densify_closed_points(pts, n_target):
+    """Resample a closed point loop along ITS OWN Catmull-Rom spline at
+    n_target evenly-spaced-by-parameter points.
+
+    This is NOT a different curve fit to a guessed shape family (we have no
+    idea if `pts` traces an ellipse, a blob, or a star) — it builds the exact
+    periodic spline CadQuery would already draw through the given points, then
+    samples MORE points along that same curve. Verified empirically: applying
+    this to a sparse ellipse profile before lofting reproduces the same
+    smoothness as directly supplying a well-formed dense ellipse, and applying
+    it to an already-dense/already-smooth profile is a near-identity operation
+    (it resamples the same curve, so it can only help, not distort intent).
+    """
+    if len(pts) >= n_target:
+        return pts
+    edge = cq.Edge.makeSpline([cq.Vector(x, y, 0) for x, y in pts], periodic=True)
+    return [(p.x, p.y) for p in (edge.positionAt(i / n_target) for i in range(n_target))]
+
+
 def _profile_wp(profile, smooth=False, plane="XY"):
     """A closed 2D profile on a Workplane: straight polyline or a smooth spline.
 
@@ -106,9 +141,13 @@ def _profile_wp(profile, smooth=False, plane="XY"):
     run of flat facets. smooth=False keeps the exact polyline — correct for
     genuinely straight-edged sections (rectangles, brackets, gear teeth). The
     model lists the SAME control points either way; only the interpolation
-    between them changes.
+    between them changes. When smooth, a sparse profile is auto-densified first
+    (see _densify_closed_points) — a deterministic smoothness floor, not
+    something the planner has to remember to get right.
     """
     pts = [tuple(p) for p in profile]
+    if smooth and len(pts) < _MIN_SMOOTH_POINTS:
+        pts = _densify_closed_points(pts, _MIN_SMOOTH_POINTS)
     wp = cq.Workplane(plane)
     return (wp.spline(pts) if smooth else wp.polyline(pts)).close()
 
@@ -119,10 +158,15 @@ def _sketch_profile(profile, smooth=False):
     The Sketch equivalent of _profile_wp, used by the loft builders (loft needs
     placeable Sketch faces, not Workplane wires). smooth=True fits a spline and
     assembles it into a face — this is how a vase silhouette / round adapter end
-    / turbine section stops being a faceted polygon.
+    / turbine section stops being a faceted polygon. Auto-densifies sparse
+    profiles first (see _MIN_SMOOTH_POINTS / _densify_closed_points) — this is
+    the primitive that hit the measured loft_between faceting bug (a bowl whose
+    cross-section reshapes, not just scales, between its two lofted ends).
     """
     pts = [tuple(p) for p in profile]
     if smooth:
+        if len(pts) < _MIN_SMOOTH_POINTS:
+            pts = _densify_closed_points(pts, _MIN_SMOOTH_POINTS)
         return cq.Sketch().spline(pts).close().assemble()
     return cq.Sketch().polygon(pts)
 
