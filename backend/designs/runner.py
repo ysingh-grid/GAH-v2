@@ -637,8 +637,14 @@ def _make_planner_fn(backend_url: str) -> Callable[..., PrimitivePlan]:
     replan_with_feedback — never the raw chatbot conversation.
     """
 
-    def _fn(original_prompt: str, history: list[dict[str, str]]) -> PrimitivePlan:
-        return run_replanner_turn(original_prompt, history, backend_url=backend_url)
+    def _fn(
+        original_prompt: str,
+        history: list[dict[str, str]],
+        current_plan: dict[str, Any] | None = None,
+    ) -> PrimitivePlan:
+        return run_replanner_turn(
+            original_prompt, history, backend_url=backend_url, current_plan=current_plan
+        )
 
     return _fn
 

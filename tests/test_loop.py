@@ -35,7 +35,7 @@ def _planner_returning(*outputs):
     """A fake planner that yields the given PrimitivePlans in order, then repeats last."""
     calls = {"n": 0}
 
-    def fake(prompt, history):
+    def fake(prompt, history, current_plan=None):
         i = min(calls["n"], len(outputs) - 1)
         calls["n"] += 1
         return outputs[i]
@@ -204,7 +204,7 @@ def test_loop_fails_when_replanner_raises():
 
     run_id = new_run_id("test_loop_replan_error")
 
-    def failing_planner(prompt, history):
+    def failing_planner(prompt, history, current_plan=None):
         raise RuntimeError("RLM budget exhausted")
 
     try:
@@ -234,7 +234,7 @@ def test_loop_threads_prior_failures_into_replan_history():
     run_id = new_run_id("test_loop_replan_history")
     seen_histories: list[list[dict]] = []
 
-    def recording_planner(prompt, history):
+    def recording_planner(prompt, history, current_plan=None):
         seen_histories.append(list(history))
         return scenario.plan
 

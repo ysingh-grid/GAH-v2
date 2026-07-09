@@ -273,8 +273,10 @@ def replan_activity(inp: ReplanInput) -> ReplanOutput:
         last_plan = PrimitivePlan.model_validate(inp.last_plan_dict)
         backend_url = os.environ.get("BACKEND_URL") or inp.backend_url
 
-        def planner_fn(original_prompt: str, history: list[dict[str, str]]):  # noqa: ANN202
-            return run_replanner_turn(original_prompt, history, backend_url=backend_url)
+        def planner_fn(original_prompt, history, current_plan=None):  # noqa: ANN001,ANN202
+            return run_replanner_turn(
+                original_prompt, history, backend_url=backend_url, current_plan=current_plan
+            )
 
         with _heartbeating():
             out = replan_with_feedback(

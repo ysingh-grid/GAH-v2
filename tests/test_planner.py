@@ -149,6 +149,44 @@ def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
     assert captured["output_schema"] is PrimitivePlan
 
 
+def test_run_replanner_turn_injects_current_plan_into_query(monkeypatch):
+    """The current plan is handed to the replanner as context['current_plan'] (a dict),
+    so it never re-parses the plan from chat text."""
+    import fast_rlm
+
+    from runtime.planner import run_replanner_turn
+
+    captured = {}
+
+    def fake_run(query, **kwargs):
+        captured["query"] = query
+        return {"results": _CUBE_PLAN}
+
+    monkeypatch.setattr(fast_rlm, "run", fake_run)
+    monkeypatch.setattr(
+        "runtime.planner._load_available_primitives", lambda: {"box": "A box"}
+    )
+
+    run_replanner_turn(
+        "make a 60mm cube",
+        [{"role": "system", "content": "fix it"}],
+        backend_url="http://backend.test",
+        config={},
+        current_plan=_CUBE_PLAN,
+    )
+    assert captured["query"]["current_plan"] == _CUBE_PLAN
+
+    # omitted when not provided
+    captured.clear()
+    run_replanner_turn(
+        "make a 60mm cube",
+        [{"role": "system", "content": "fix it"}],
+        backend_url="http://backend.test",
+        config={},
+    )
+    assert "current_plan" not in captured["query"]
+
+
 def test_all_skills_fit_in_one_repl_output():
     """Every skill must fit under truncate_len or the engine truncates it on
     delivery and the model burns extra REPL steps paginating (the exact problem

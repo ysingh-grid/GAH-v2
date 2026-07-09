@@ -104,7 +104,7 @@ def _load_core_skills() -> dict[str, str]:
 
 
 def _load_available_primitives() -> dict[str, str]:
-    """Load available primitives with 1-line descriptions from library.json to build the Rich Menu."""
+    """Load primitives with 1-line descriptions from library.json for the Rich Menu."""
     from runtime.schema import load_library
     try:
         lib = load_library()
@@ -221,18 +221,27 @@ def run_planner_turn(
 
 
 REPLANNER_TASK = """\
-You are the REPLANNER. A plan already exists and needs ONE revision — the request
-is in the last message of chat_history, along with the current plan.
+You are the REPLANNER. A plan already exists and needs ONE revision — the failure
+(or edit request) is in the last message of chat_history.
 
-Your playbook and core skills are already loaded in `context['preloaded_skills']`.
-Read them directly from context. Do NOT call `read_skill()` for 'playbook' or
-'primitive_planning'—they are already available. Change only what the request
-calls for; keep every other step unchanged.
+The current plan is provided as a READY dict at `context['current_plan']`. Work
+from THAT directly:
+    import copy
+    plan = copy.deepcopy(context['current_plan'])
+    # ...apply ONLY the minimal fix the feedback names (e.g. rename a bad param,
+    #    resize/move one step)...
+    FINAL(plan)
+Do NOT try to parse the plan out of chat_history text, and do NOT call
+`llm_query` or spawn sub-agents — everything you need is already in context.
+Change only what the request calls for; keep every other step unchanged.
+
+Your playbook and core skills are in `context['preloaded_skills']` — read them
+from context; do NOT call `read_skill()` for 'playbook'/'primitive_planning'.
 
 If your fix materially changes the geometry of a COMPLEX part (moves/resizes a
-feature, adds/removes a body), verify it with `preview_plan(plan_dict)` before
-FINAL — confirm num_components and the changed feature's size are right — bounded
-to at most 2 preview calls. A one-parameter tweak to a simple part needs no preview.
+feature, adds/removes a body), you MAY verify it with `preview_plan(plan)` before
+FINAL — at most 2 preview calls. A one-parameter tweak needs no preview. Aim to
+FINAL in a single REPL block.
 """
 
 
@@ -242,6 +251,7 @@ def run_replanner_turn(
     *,
     backend_url: str | None = None,
     config: RLMConfig | None = None,
+    current_plan: dict[str, Any] | None = None,
 ) -> PrimitivePlan:
     """Run one replan turn against the scoped replanner toolset (no fork tool).
 
@@ -252,6 +262,10 @@ def run_replanner_turn(
         backend_url: Base URL of the product backend, injected into the REPL as
             DTCM_BACKEND_URL so the read-only pull tools can reach it.
         config: Optional fast-rlm RLMConfig; defaults to rlm.rlm_config.config.
+        current_plan: The plan being revised, as a plain dict. Injected into the
+            query as context['current_plan'] so the replanner edits it directly
+            instead of re-parsing it out of chat text (which caused a REPL
+            "unterminated string literal" flail + wasteful sub-agent spawns).
 
     Returns:
         A validated, corrected PrimitivePlan.
@@ -285,6 +299,10 @@ def run_replanner_turn(
     }
     if available_primitives:
         query["available_primitives"] = available_primitives
+    if current_plan is not None:
+        # Deliver the plan STRUCTURALLY so the replanner edits context['current_plan']
+        # directly — never re-parsing it from chat text (the parse flail).
+        query["current_plan"] = current_plan
     result = fast_rlm.run(
         query,
         config=config,

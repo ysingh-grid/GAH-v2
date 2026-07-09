@@ -127,25 +127,19 @@ def _call_gemini(
     raises on a transport/API failure. Callers decide how to handle both —
     some fail open (return a safe default), some let it propagate.
     """
-    from google import genai
-    from google.genai import types
+    from tools.gemini_client import generate_content_text
 
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not configured")
-
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
+    # Routed through the robust helper so intake survives the same "thinking level
+    # not supported" 400 that took down the verifier (drops thinking_config on that
+    # error and caches it per model).
+    return generate_content_text(
         model=os.environ.get(model_env_var, default_model),
         contents=parts,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json" if json_response else None,
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
-            max_output_tokens=max_output_tokens,
-        ),
+        system_instruction=system_instruction,
+        max_output_tokens=max_output_tokens,
+        json_response=json_response,
+        thinking="low",
     )
-    return response.text or ""
 
 
 def summarize_design_request(

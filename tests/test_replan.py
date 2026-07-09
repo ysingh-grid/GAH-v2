@@ -13,7 +13,7 @@ from runtime.replan import (
     replan_for_edit,
     replan_with_feedback,
 )
-from runtime.schema import plan_from_dict
+from runtime.schema import plan_from_dict, plan_to_dict
 
 _CUBE = plan_from_dict(
     {
@@ -119,10 +119,54 @@ def test_feedback_message_includes_step_inventory():
     assert "b: base box" in msg  # the _CUBE step: id 'b', base, box
 
 
+def test_feedback_message_delivers_plan_via_context_not_embedded_text():
+    """The parse-prone 'Previous plan was: {json}' blob is gone; the plan is
+    delivered structurally via context['current_plan'] and sub-agents are forbidden."""
+    msg = build_feedback_message("cadquery_compile", "bad param", _CUBE)
+    assert "Previous plan was" not in msg
+    assert "context['current_plan']" in msg
+    assert "do NOT call llm_query" in msg or "sub-agents" in msg
+
+
+def test_replan_with_feedback_threads_current_plan_dict():
+    captured = {}
+
+    def fake_planner(prompt, history, current_plan=None):
+        captured["current_plan"] = current_plan
+        return _CUBE
+
+    replan_with_feedback(
+        original_prompt="make a cube",
+        last_plan=_CUBE,
+        failure_stage="cadquery_compile",
+        detail="bad param",
+        prior_history=[],
+        planner_fn=fake_planner,
+    )
+    assert captured["current_plan"] == plan_to_dict(_CUBE)  # ready dict, not text
+
+
+def test_replan_for_edit_threads_current_plan_dict():
+    captured = {}
+
+    def fake_planner(prompt, history, current_plan=None):
+        captured["current_plan"] = current_plan
+        return _CUBE
+
+    replan_for_edit(
+        original_prompt="a cube",
+        last_plan=_CUBE,
+        edit_text="make it taller",
+        prior_history=[],
+        planner_fn=fake_planner,
+    )
+    assert captured["current_plan"] == plan_to_dict(_CUBE)
+
+
 def test_replan_appends_system_feedback_and_calls_planner():
     captured = {}
 
-    def fake_planner(prompt, history):
+    def fake_planner(prompt, history, current_plan=None):
         captured["prompt"] = prompt
         captured["history"] = history
         return _CUBE
@@ -147,7 +191,7 @@ def test_replan_propagates_planner_exception():
     """No ask_user fallback — a planner_fn failure must raise, not be swallowed."""
     import pytest
 
-    def failing_planner(prompt, history):
+    def failing_planner(prompt, history, current_plan=None):
         raise RuntimeError("RLM budget exhausted")
 
     with pytest.raises(RuntimeError, match="budget exhausted"):
@@ -170,7 +214,7 @@ def test_replan_call_retries_twice_before_raising():
 
     calls = {"n": 0}
 
-    def always_failing_planner(prompt, history):
+    def always_failing_planner(prompt, history, current_plan=None):
         calls["n"] += 1
         raise RuntimeError(f"attempt {calls['n']} failed")
 
@@ -191,7 +235,7 @@ def test_replan_call_succeeds_on_second_attempt():
     """First call flakes, second succeeds — the transient failure is swallowed."""
     calls = {"n": 0}
 
-    def flaky_then_ok_planner(prompt, history):
+    def flaky_then_ok_planner(prompt, history, current_plan=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("transient LLM hiccup")
@@ -215,7 +259,7 @@ def test_replan_call_succeeds_on_second_attempt():
 def test_build_edit_message_is_not_failure_framed():
     msg = build_edit_message("make it 20mm taller", _CUBE)
     assert "make it 20mm taller" in msg
-    assert "box" in msg  # the current plan is embedded
+    assert "context['current_plan']" in msg  # plan delivered structurally, not embedded
     assert "not a failure" in msg.lower()
     assert "failed at stage" not in msg  # distinct wording from build_feedback_message
 
@@ -223,7 +267,7 @@ def test_build_edit_message_is_not_failure_framed():
 def test_replan_for_edit_calls_planner_with_edit_message():
     captured = {}
 
-    def fake_planner(prompt, history):
+    def fake_planner(prompt, history, current_plan=None):
         captured["prompt"] = prompt
         captured["history"] = history
         return _CUBE
@@ -250,7 +294,7 @@ def test_replan_for_edit_does_not_touch_stage_caps():
 def test_replan_for_edit_retries_on_flaky_call_then_raises():
     calls = {"n": 0}
 
-    def always_failing(prompt, history):
+    def always_failing(prompt, history, current_plan=None):
         calls["n"] += 1
         raise RuntimeError(f"attempt {calls['n']}")
 

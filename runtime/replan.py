@@ -25,7 +25,6 @@ index). So every replan sees the full plan lineage, bounded by the caps.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Protocol
 
@@ -78,13 +77,20 @@ OUTER_CAP = 3
 
 
 class PlannerFn(Protocol):
-    """A planner turn: (original_prompt, chat_history) -> PrimitivePlan.
+    """A planner turn: (original_prompt, chat_history, current_plan?) -> PrimitivePlan.
+
+    current_plan is the plan being revised, as a plain dict — threaded so the
+    replanner receives it structurally in context['current_plan'] instead of
+    having to parse it out of chat text. None for a fresh (non-replan) plan.
 
     Raises on unrecoverable failure — there is no ask_user return value; callers
     (runtime.loop / temporal.activities.replan_activity) catch and categorize."""
 
     def __call__(
-        self, original_prompt: str, chat_history: list[dict[str, str]]
+        self,
+        original_prompt: str,
+        chat_history: list[dict[str, str]],
+        current_plan: dict[str, Any] | None = None,
     ) -> PrimitivePlan: ...
 
 
@@ -146,9 +152,6 @@ def build_feedback_message(failure_stage: str, detail: str, last_plan: Primitive
     """Compose the corrective instruction handed back to the replanner."""
     from pathlib import Path
 
-    # Compact separators, not indent=2: this string is read only by the LLM, and
-    # pretty-printing costs ~55% more bytes on every replan attempt for nothing.
-    plan_json = json.dumps(plan_to_dict(last_plan), separators=(",", ":"))
     skill_name = STAGE_TO_SKILL.get(failure_stage, "playbook_replan")
 
     skills_dir = Path(__file__).resolve().parent.parent / "skills"
@@ -182,7 +185,10 @@ def build_feedback_message(failure_stage: str, detail: str, last_plan: Primitive
         f"Do NOT call read_skill() as the guides have been preloaded above for you. "
         f"Resolve this yourself using the guides and reasonable defaults — there is "
         f"no option to ask the user.\n\n"
-        f"Previous plan was:\n{plan_json}"
+        f"The current plan is ALREADY provided as a ready dict at "
+        f"context['current_plan'] — deep-copy and edit THAT, then FINAL it. Do NOT "
+        f"reconstruct the plan from this text, and do NOT call llm_query / spawn "
+        f"sub-agents; everything you need is in context."
     )
 
 
@@ -220,7 +226,9 @@ def replan_with_feedback(
         *prior_history,
         {"role": "system", "content": build_feedback_message(failure_stage, detail, last_plan)},
     ]
-    return _retry_planner_call(original_prompt, history, planner_fn, max_attempts)
+    return _retry_planner_call(
+        original_prompt, history, planner_fn, max_attempts, plan_to_dict(last_plan)
+    )
 
 
 def _retry_planner_call(
@@ -228,12 +236,13 @@ def _retry_planner_call(
     history: list[dict[str, str]],
     planner_fn: PlannerFn,
     max_attempts: int,
+    current_plan: dict[str, Any] | None = None,
 ) -> PrimitivePlan:
     """Shared retry-the-call loop for replan_with_feedback and replan_for_edit."""
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            return planner_fn(original_prompt, history)
+            return planner_fn(original_prompt, history, current_plan=current_plan)
         except Exception as exc:
             last_exc = exc
             logger.warning(
@@ -248,19 +257,21 @@ def build_edit_message(edit_text: str, last_plan: PrimitivePlan) -> str:
 
     Edit-framed, not failure-framed — parallel to build_feedback_message but
     for a user-requested change to an already-generated, already-valid model,
-    not a downstream error.
+    not a downstream error. The plan is delivered structurally via
+    context['current_plan'] (see run_replanner_turn), so it is NOT embedded here.
     """
-    plan_json = json.dumps(plan_to_dict(last_plan), separators=(",", ":"))
+    _ = last_plan  # delivered as context['current_plan']; not embedded as parse-prone text
     return (
         f"The user wants to EDIT the current model. This is a fresh request, "
-        f"not a failure — the plan below is already valid and was generated "
-        f"successfully.\n\n"
+        f"not a failure — the current plan (a ready dict at context['current_plan']) "
+        f"is already valid and was generated successfully.\n\n"
         f"Requested change:\n{edit_text}\n\n"
         f"Apply ONLY this change. Keep every other step byte-for-byte identical "
         f"unless the change requires touching it. Resolve any remaining "
         f"ambiguity yourself with reasonable defaults — there is no option to "
         f"ask the user.\n\n"
-        f"Current plan:\n{plan_json}"
+        f"Deep-copy context['current_plan'], apply the change, and FINAL it. Do NOT "
+        f"reconstruct the plan from this text, and do NOT call llm_query / spawn sub-agents."
     )
 
 
@@ -290,7 +301,9 @@ def replan_for_edit(
         *prior_history,
         {"role": "system", "content": build_edit_message(edit_text, last_plan)},
     ]
-    return _retry_planner_call(original_prompt, history, planner_fn, max_attempts)
+    return _retry_planner_call(
+        original_prompt, history, planner_fn, max_attempts, plan_to_dict(last_plan)
+    )
 
 
 def collect_feedback_detail(stage: str, payload: dict[str, Any]) -> str:

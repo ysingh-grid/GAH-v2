@@ -28,6 +28,11 @@ primitive library. This is **Phase 1 / Steps 2–3** of the RLM pipeline.
 
 - Match the physical description to the closest schema in the `context["available_primitives"]` Rich Menu (which maps shape keys to descriptions).
 - Once you select candidate shapes from the Rich Menu, write a **single python loop block** to call `lookup_primitive` for all of them in exactly one turn (e.g. `for s in ['cylinder', 'cone']: print(lookup_primitive(s))`). Do NOT do sequential, multi-turn lookups!
+- **Get parameter NAMES exactly right.** If you are not 100% sure of a primitive's exact
+  parameter names, `lookup_primitive(name)` FIRST — a wrong name is rejected as
+  `primitive_gap` and costs a replan. Common traps: `torus` → `ring_radius` + `tube_radius`
+  (NOT `radius`); `cone` → `base_diameter` + `top_diameter`; `hollow_cylinder` →
+  `outer_radius` + `inner_radius`; `rect_to_round` → `base_length`/`base_width`/`top_diameter`.
 - If a shape cannot map to a single primitive, use CSG: combine multiple
   primitives with `union` (add) and `cut` (subtract) operations.
 - Every parameter in the schema **must** have a numeric value. Infer sensible

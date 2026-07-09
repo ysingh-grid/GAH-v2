@@ -79,13 +79,21 @@ def judge_geometry_render(
     if not Path(render_png).exists():
         return _error(f"Render PNG not found: {render_png}", render_png)
 
-    try:
-        response_text = _call_vlm(
-            prompt, render_png, last_replan_feedback, metrics, feature_checklist
-        )
-        return _format_verdict(_read_json(response_text), render_png)
-    except Exception as exc:
-        return _error(f"VLM judge failed: {exc}", render_png)
+    # Bounded in-place retry: a transient verifier failure (transport hiccup, a
+    # one-off truncated/malformed JSON) is resolved here cheaply instead of
+    # surfacing as verifier_error and triggering the expensive fast-rlm replan loop.
+    # (The deterministic "thinking not supported" 400 is already handled inside
+    # _call_vlm's helper, so it won't reach here.)
+    last_exc: Exception | None = None
+    for _attempt in range(2):
+        try:
+            response_text = _call_vlm(
+                prompt, render_png, last_replan_feedback, metrics, feature_checklist
+            )
+            return _format_verdict(_read_json(response_text), render_png)
+        except Exception as exc:  # noqa: BLE001 — retry once, then fail closed to _error
+            last_exc = exc
+    return _error(f"VLM judge failed: {last_exc}", render_png)
 
 
 def _call_vlm(
@@ -96,12 +104,9 @@ def _call_vlm(
     feature_checklist: str = "",
 ) -> str:
     """Call the configured vision model with request + checklist + metrics + image."""
-    from google import genai
     from google.genai import types
 
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not configured")
+    from tools.gemini_client import generate_content_text
 
     with open(render_png, "rb") as image_file:
         image_bytes = image_file.read()
@@ -118,29 +123,21 @@ def _call_vlm(
             f"original request and checklist above."
         )
 
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
+    # generate_content_text drops thinking_config if the model rejects it (the
+    # "Thinking level is not supported for this model" 400 that was crashing the
+    # verifier on every call). Kept on the CAPABLE vision model (gemini-2.5-pro);
+    # bigger output budget (8192) so the grounded per-feature JSON isn't truncated.
+    return generate_content_text(
         model=os.environ.get("VLM_JUDGE_MODEL", "gemini-2.5-pro"),
         contents=[
             types.Part.from_text(text=text),
             types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
         ],
-        config=types.GenerateContentConfig(
-            system_instruction=JUDGE_INSTRUCTION,
-            response_mime_type="application/json",
-            # gemini-2.5-pro is a THINKING model — with no budget set,
-            # internal reasoning tokens can exhaust the default output cap before
-            # the actual JSON gets written, truncating it mid-object ("unterminated
-            # JSON object"). thinking_budget=0 and ThinkingLevel.MINIMAL are BOTH
-            # rejected by this model (400 INVALID_ARGUMENT — "only works in
-            # thinking mode" / "MINIMAL is not supported"); LOW is the lowest
-            # level it actually accepts (probed live). Pair with a generous
-            # max_output_tokens so thinking + the final JSON both fit.
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
-            max_output_tokens=4096,
-        ),
+        system_instruction=JUDGE_INSTRUCTION,
+        max_output_tokens=8192,
+        json_response=True,
+        thinking="low",
     )
-    return response.text or ""
 
 
 def _read_json(text: str) -> dict[str, Any]:

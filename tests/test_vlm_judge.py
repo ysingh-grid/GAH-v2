@@ -123,6 +123,29 @@ def test_judge_geometry_render_grounds_model_with_checklist_and_metrics(tmp_path
     assert "hinge pins" in captured["feature_checklist"]
     assert verdict["failure_stage"] == "visual_mismatch"
     assert verdict["feature_findings"][0]["feature"] == "hinge pins"
+def test_judge_geometry_render_retries_call_vlm_on_transient_then_succeeds(tmp_path, monkeypatch):
+    """A transient verifier failure is retried in place (Fix 2), so it never becomes a
+    verifier_error that spins the fast-rlm replan loop."""
+    png = tmp_path / "r.png"
+    png.write_bytes(b"\x89PNG\r\n")
+
+    from tools import vlm_judge
+
+    calls = {"n": 0}
+
+    def _flaky(*_a, **_k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient 503 from vertex")
+        return '{"passed": true, "feature_findings": []}'
+
+    monkeypatch.setattr(vlm_judge, "_call_vlm", _flaky)
+    verdict = vlm_judge.judge_geometry_render("a cube", str(png))
+    assert verdict["passed"] is True
+    assert verdict["verifier_ran"] is True
+    assert calls["n"] == 2  # retried once, then succeeded — no verifier_error
+
+
 
 
 def test_verify_geometry_forwards_metrics_and_checklist(monkeypatch):
