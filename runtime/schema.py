@@ -28,9 +28,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # A primitive parameter is a scalar, a flat list (e.g. an axis), or a list of
-# points (e.g. a 2D profile for profile_extrude / revolve).
+# points (e.g. a 2D profile for profile_extrude / revolve). str is included for
+# text-based primitives (text_3d: text string, font name).
+# list[list[str | float]] covers arc_extrude segments: [["line", x, y], ["arc3", ...], ...]
 ParamScalar = float | int
-ParamValue = ParamScalar | list[float] | list[list[float]]
+ParamValue = ParamScalar | str | list[float] | list[list[float]] | list[list[str | float]]
 
 _LIBRARY_PATH = Path(__file__).resolve().parent.parent / "primitives" / "library.json"
 
@@ -64,8 +66,9 @@ class FinishOp(StrEnum):
 class PatternType(StrEnum):
     """How a patterned step replicates its primitive."""
 
-    polar = "polar"  # rotate copies about `axis` through the origin
+    polar = "polar"    # rotate copies about `axis` through the origin
     linear = "linear"  # translate copies by `spacing` each
+    rarray = "rarray"  # rectangular x_count × y_count grid of copies
 
 
 class Pattern(BaseModel):
@@ -73,15 +76,33 @@ class Pattern(BaseModel):
 
     Polar: `count` copies spread over `angle_deg` about `axis`.
     Linear: `count` copies, each offset from the last by `spacing`.
+    Rarray: `x_count` × `y_count` copies in a rectangular grid with
+            `x_spacing` between columns and `y_spacing` between rows.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: PatternType
-    count: int = Field(ge=2, le=200)
+    # --- polar / linear ---
+    count: int = Field(ge=1, le=200, default=4)
     axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
     angle_deg: float = 360.0
     spacing: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # --- rarray only ---
+    x_spacing: float = 10.0
+    y_spacing: float = 10.0
+    x_count: int = Field(ge=1, le=50, default=2)
+    y_count: int = Field(ge=1, le=50, default=2)
+
+    @model_validator(mode="after")
+    def _validate_pattern_type_fields(self) -> "Pattern":
+        if self.type is PatternType.polar and self.count < 2:
+            raise ValueError("polar pattern requires count >= 2")
+        if self.type is PatternType.linear and self.count < 2:
+            raise ValueError("linear pattern requires count >= 2")
+        if self.type is PatternType.rarray and (self.x_count * self.y_count) < 2:
+            raise ValueError("rarray pattern requires x_count * y_count >= 2")
+        return self
 
 
 class FinishStep(BaseModel):

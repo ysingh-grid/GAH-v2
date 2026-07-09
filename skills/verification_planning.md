@@ -48,6 +48,11 @@ Compute expected volume **before** generating code. Compare against
 | ellipsoid | `(4/3) × π × rx × rz²` (2-axis symmetry) |
 | ring | `π × (R_outer² − R_inner²) × thickness` |
 | pyramid | `(1/3) × L × W × H` |
+| ellipse_extrude | `π × x_radius × y_radius × height` |
+| slot_extrude | `[(width − height) × height + π × (height/2)²] × depth` (stadium area × depth; `width`=slot length, `height`=slot diameter) |
+| twist_extrude | `profile_area × height` — twisting shears the cross-section but does not change its area |
+
+No closed form for `loft`, `loft_between`, `sweep`, `tube`, `helix_sweep`, `revolve`, `profile_extrude`, `arc_extrude`, `text_3d` — do NOT apply the Step 5 volume-ratio repair trigger to these; verify with bbox + `is_watertight` + `passes` only.
 
 **Accept**: volume within **±15%** of theoretical.
 (Chamfers/fillets reduce volume slightly — this is normal.)
@@ -63,6 +68,9 @@ Predict `[xmin, xmax, ymin, ymax, zmin, zmax]` for each primitive:
 - `makeCone(r1, r2, H)` → starts at `z=0`, ends at `z=H`
   (translate by `−H/2` to center it)
 - Stacked primitives → track total Z range: `[bottom_of_first, top_of_last]`
+- `sweep` / `tube` / `helix_sweep` are PATH-DEFINED — their bbox comes from the
+  path's own absolute `[x,y,z]` points, not from `position`; predict it from the
+  path's extent, not from a base+height formula (see `dimension_reasoning`).
 
 **Accept**: bbox within **±0.5mm** of predicted values.
 
@@ -82,9 +90,14 @@ Predict `[xmin, xmax, ymin, ymax, zmin, zmax]` for each primitive:
 | hollow_box | 10+ |
 | filleted_box / chamfered_box | 14+ |
 | box with through-hole | 8+ |
+| revolve / profile_extrude / loft / taper_extrude / ellipse_extrude | 2 (caps) + 1 or more (side) — `smooth: true` fuses the whole side into ONE face regardless of profile-point count; `smooth: false` gives one face PER straight segment, so more control points = more faces |
+| twist_extrude / slot_extrude / arc_extrude / loft_between | 3+ (varies with profile point/segment count) |
+| tube / helix_sweep / sweep | 3+ (path-defined; face count tracks path complexity, not `position`) |
 
 > **Alert**: If `faces_count` is dramatically lower than expected (e.g., `1`
-> when expecting `6`), the CSG operation likely failed silently.
+> when expecting `6`), the CSG operation likely failed silently — UNLESS the
+> primitive is `smooth: true` (revolve/profile_extrude/loft/…), where a single
+> fused face is CORRECT and means the smooth spline surface worked, not a failure.
 
 ---
 

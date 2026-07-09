@@ -31,7 +31,8 @@ Primitives place their geometry relative to `position` in one of two ways:
 | Convention | Primitives | Notes |
 |---|---|---|
 | **CENTERED** at `position` (all axes) | `box`, `cylinder`, `sphere`, `ellipsoid`, `capsule`, `torus`, `hollow_box`, `chamfered_box`, `filleted_box`, `rounded_cylinder` | To rest flat on XY plane (base at z=0): `position.z = height/2` |
-| **BASE at `position`** (extrudes UP) | `ring`, `prism`, `hexagon_prism`, `octagonal_prism`, `hollow_cylinder`, `cone`, `pyramid`, `profile_extrude`, `revolve` | `position.z = 0` sits these on the plane |
+| **BASE at `position`** (extrudes UP) | `ring`, `prism`, `hexagon_prism`, `octagonal_prism`, `hollow_cylinder`, `cone`, `pyramid`, `profile_extrude`, `revolve`, `loft`, `loft_between`, `taper_extrude`, `twist_extrude`, `slot_extrude`, `ellipse_extrude`, `text_3d`, `arc_extrude` | `position.z = 0` sits these on the plane |
+| **PATH-DEFINED** (ignores the centered/base split) | `sweep`, `tube`, `helix_sweep` | Their `path` param is a list of ABSOLUTE `[x,y,z]` points — the solid is built where the path already puts it. `position`/`orientation` still apply as an ADDITIONAL transform on top (they translate/rotate the whole already-placed sweep) — leave `position = [0,0,0]` unless you deliberately want to shift the entire path. Design the path's own coordinates to land the sweep, not `position`. |
 
 Unsure for a specific primitive? Call `lookup_primitive(key)` and read its description before placing.
 
@@ -68,5 +69,10 @@ Use these formulas to predict and verify shape volumes:
 | Sphere | `(4/3) × π × R³` |
 | Hollow cylinder | `π × H × (R_outer² - R_inner²)` |
 | Torus | `2 × π² × R_ring × R_tube²` |
+| Ellipse extrude | `π × x_radius × y_radius × height` |
+| Slot extrude | `[(width − height) × height + π × (height/2)²] × depth` (stadium area × depth; `width`=slot length, `height`=slot diameter — see the primitive's own param descriptions) |
+| Twist extrude | `profile_area × height` — twisting is a ruled sweep, it shears the cross-section but does NOT change its area, so volume is identical to an untwisted extrude of the same profile |
+
+No simple closed form for `loft`, `loft_between`, `sweep`, `tube`, `helix_sweep`, `arc_extrude`, `text_3d` — skip the prediction step for these and rely on `execute_cadquery`'s reported volume plus a sanity check against the bounding box.
 
 Compare predicted volume to `execute_cadquery` output volume — accept ±15%.

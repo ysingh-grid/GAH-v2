@@ -136,9 +136,71 @@ def test_pattern_on_base_step_raises():
         plan_from_dict(bad)
 
 
-def test_pattern_count_below_two_raises():
+def test_pattern_count_below_two_raises_for_polar():
     with pytest.raises(ValidationError):
         Pattern(type=PatternType.polar, count=1)
+
+
+def test_pattern_count_below_two_raises_for_linear():
+    with pytest.raises(ValidationError):
+        Pattern(type=PatternType.linear, count=1)
+
+
+def test_rarray_pattern_is_valid():
+    """rarray accepts x_count x y_count grid with no count field needed."""
+    pattern = Pattern(
+        type=PatternType.rarray,
+        x_spacing=30.0,
+        y_spacing=20.0,
+        x_count=2,
+        y_count=2,
+    )
+    assert pattern.type is PatternType.rarray
+    assert pattern.x_count == 2
+    assert pattern.y_count == 2
+
+
+def test_rarray_pattern_1x1_raises():
+    """rarray with x_count=1, y_count=1 gives total=1, which is invalid."""
+    with pytest.raises(ValidationError, match="x_count \\* y_count >= 2"):
+        Pattern(type=PatternType.rarray, x_count=1, y_count=1)
+
+
+def test_rarray_on_step_compiles_to_grid():
+    """An rarray pattern on a union step emits _rarray(...) in compiled code."""
+    from runtime.compile_cadquery import compile_plan_to_cadquery
+    from runtime import schema
+
+    library = schema.load_library()
+    plan = plan_from_dict(
+        {
+            "part_name": "pcb_plate",
+            "steps": [
+                {
+                    "id": "base",
+                    "primitive": "box",
+                    "operation": "base",
+                    "parameters": {"length": 80.0, "width": 60.0, "height": 5.0},
+                },
+                {
+                    "id": "holes",
+                    "primitive": "cylinder",
+                    "operation": "cut",
+                    "parameters": {"radius": 1.5, "height": 7.0},
+                    "position": [-30.0, -20.0, 0.0],
+                    "pattern": {
+                        "type": "rarray",
+                        "x_spacing": 60.0,
+                        "y_spacing": 40.0,
+                        "x_count": 2,
+                        "y_count": 2,
+                    },
+                },
+            ],
+        }
+    )
+    code = compile_plan_to_cadquery(plan, library)
+    assert "_rarray(s1, 60.0, 40.0, 2, 2)" in code
 
 
 # ── semantic validation against the library ──────────────────────────────────
@@ -201,9 +263,14 @@ def test_int_param_given_float_is_reported():
 def test_load_library_returns_full_catalog():
     library = schema.load_library()
     assert isinstance(library, dict)
-    assert len(library) == 26
+    assert len(library) == 31
     assert "box" in library
     assert "profile_extrude" in library
     assert "loft" in library
     assert "sweep" in library
     assert "revolve" in library
+    assert "twist_extrude" in library
+    assert "slot_extrude" in library
+    assert "ellipse_extrude" in library
+    assert "text_3d" in library
+    assert "arc_extrude" in library

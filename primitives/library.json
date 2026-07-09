@@ -770,5 +770,120 @@
       }
     },
     "template": "_profile_wp({profile}, smooth={smooth}).revolve({angle}, (0, 0, 0), (0, 1, 0))"
+  },
+  "twist_extrude": {
+    "name": "twist_extrude",
+    "description": "Extrude a closed 2D polygon profile along +Z while simultaneously rotating it by `angle` degrees total. Use for twisted columns, helical fins, auger shapes, and decorative pillars — a plain profile_extrude has no twist, and helix_sweep is for coil springs (not for solids extruded from a cross-section).",
+    "parameters": {
+      "profile": {
+        "type": "profile",
+        "description": "Ordered list of [x, y] points (mm) forming the closed cross-section at the base; do not repeat the first point",
+        "default": [[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]]
+      },
+      "height": {
+        "type": "float",
+        "description": "Extrusion height along Z (mm)",
+        "default": 40.0
+      },
+      "angle": {
+        "type": "float",
+        "description": "Total twist angle in degrees over the full height (e.g. 90 = quarter turn, 180 = half turn). Keep small enough so profile edges do not self-intersect.",
+        "default": 90.0
+      },
+      "smooth": {
+        "type": "boolean",
+        "description": "If true, interpret the profile points as SMOOTH spline control points (true curve). Use for twisted organic blobs; leave false for straight-edged cross-sections (square, hexagonal, star).",
+        "default": false
+      }
+    },
+    "template": "_profile_wp({profile}, smooth={smooth}).twistExtrude({height}, {angle})"
+  },
+  "slot_extrude": {
+    "name": "slot_extrude",
+    "description": "A stadium-shaped (oblong) profile extruded to a depth: two semicircular ends joined by straight sides. Use for mounting slots, elongated holes, key slots, and track channels. Simpler than arc_extrude for the pure oblong case.",
+    "parameters": {
+      "width": {
+        "type": "float",
+        "description": "Total length of the slot (center-to-center of the two arcs + diameter)",
+        "default": 20.0
+      },
+      "height": {
+        "type": "float",
+        "description": "Cross-sectional height = diameter of the two rounded ends (mm)",
+        "default": 8.0
+      },
+      "depth": {
+        "type": "float",
+        "description": "Extrusion depth along Z (mm)",
+        "default": 5.0
+      }
+    },
+    "template": "cq.Workplane(\"XY\").slot2D({width}, {height}).extrude({depth})"
+  },
+  "ellipse_extrude": {
+    "name": "ellipse_extrude",
+    "description": "An elliptical cross-section extruded along +Z. Use for oval bases, elliptic tube cross-sections, lens profiles, and ergonomic oval grips where the X and Y radii differ. For a circle use cylinder instead.",
+    "parameters": {
+      "x_radius": {
+        "type": "float",
+        "description": "Semi-axis radius along X (mm)",
+        "default": 10.0
+      },
+      "y_radius": {
+        "type": "float",
+        "description": "Semi-axis radius along Y (mm)",
+        "default": 6.0
+      },
+      "height": {
+        "type": "float",
+        "description": "Extrusion height along Z (mm)",
+        "default": 15.0
+      }
+    },
+    "template": "cq.Workplane(\"XY\").ellipse({x_radius}, {y_radius}).extrude({height})"
+  },
+  "text_3d": {
+    "name": "text_3d",
+    "description": "3D extruded text solid: renders a string as a solid that can be unioned (embossed) or cut (engraved) from a surface. Use for part labels, brand marks, inspection stamps, and raised lettering.",
+    "parameters": {
+      "text": {
+        "type": "str",
+        "description": "The text string to extrude",
+        "default": "TEXT"
+      },
+      "font_size": {
+        "type": "float",
+        "description": "Cap height of the font in mm",
+        "default": 8.0
+      },
+      "depth": {
+        "type": "float",
+        "description": "Extrusion depth (thickness) of the letters in mm",
+        "default": 1.5
+      },
+      "font": {
+        "type": "str",
+        "description": "Font name (must be installed on the system); default 'Arial' is broadly available",
+        "default": "Arial"
+      }
+    },
+    "template": "cq.Workplane(\"XY\").text({text!r}, {font_size}, {depth}, font={font!r})"
+  },
+  "arc_extrude": {
+    "name": "arc_extrude",
+    "description": "Extrude a 2D profile defined by MIXED line + arc drawing commands (not a pure polyline, not a pure spline). Use for D-shapes, rounded rectangles with specific arc radii, stadium variants with one flat side, kidney profiles, and any closed 2D outline where some edges are straight and others are explicit arcs. Each segment in `segments` is a list: [\"line\", x, y], [\"arc3\", mx, my, ex, ey], [\"rarc\", ex, ey, radius], [\"sarc\", ex, ey, sagitta], or [\"tarc\", ex, ey]. The profile auto-closes from the last point back to the start.",
+    "parameters": {
+      "segments": {
+        "type": "list",
+        "description": "Ordered list of drawing commands. Each is a list whose first element is the type tag: 'line' (straight to abs point), 'arc3' (arc through midpoint to endpoint), 'rarc' (arc to endpoint with radius), 'sarc' (arc to endpoint with sagitta), 'tarc' (tangent arc to endpoint). Start implicitly at (0,0).",
+        "default": [["line", 10.0, 0.0], ["arc3", 10.0, 5.0, 0.0, 10.0], ["line", -10.0, 10.0], ["arc3", -10.0, 5.0, 0.0, 0.0]]
+      },
+      "height": {
+        "type": "float",
+        "description": "Extrusion height along Z (mm)",
+        "default": 8.0
+      }
+    },
+    "template": "_arc_profile_wp({segments}).extrude({height})"
   }
 }

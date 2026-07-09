@@ -55,6 +55,22 @@ def _linear(solid, count, spacing):
     return out
 
 
+def _rarray(solid, x_spacing, y_spacing, x_count, y_count):
+    """Union x_count × y_count copies in a rectangular grid.
+
+    The first copy sits at the solid's own position; each successive copy is
+    offset by x_spacing (along X) and y_spacing (along Y). This is the
+    canonical approach for bolt-hole grids, PCB mounting patterns, shelf
+    hole arrays, and any feature that repeats on a regular X-Y lattice.
+    """
+    out = None
+    for i in range(x_count):
+        for j in range(y_count):
+            copy = solid.translate((x_spacing * i, y_spacing * j, 0))
+            out = copy if out is None else out.union(copy)
+    return out
+
+
 def _profile_wp(profile, smooth=False, plane="XY"):
     """A closed 2D profile on a Workplane: straight polyline or a smooth spline.
 
@@ -82,6 +98,40 @@ def _sketch_profile(profile, smooth=False):
     if smooth:
         return cq.Sketch().spline(pts).close().assemble()
     return cq.Sketch().polygon(pts)
+
+
+def _arc_profile_wp(segments, plane="XY"):
+    """Build a closed 2D Workplane wire from mixed line / arc drawing commands.
+
+    `segments` is a list of drawing commands, each a list whose first element
+    is a type tag:
+
+      ["line", x, y]              — straight line to absolute (x, y)
+      ["arc3", mx, my, ex, ey]   — arc through midpoint (mx, my) to end (ex, ey)
+      ["rarc", ex, ey, radius]   — arc to (ex, ey) with given radius
+      ["sarc", ex, ey, sagitta]  — arc to (ex, ey) with sagitta (bulge height)
+      ["tarc", ex, ey]           — tangent arc to (ex, ey)
+
+    The wire auto-closes from the last point back to the start. Starting
+    position is implicitly (0, 0) on the workplane.
+    """
+    wp = cq.Workplane(plane).moveTo(0, 0)
+    for seg in segments:
+        kind = seg[0]
+        if kind == "line":
+            wp = wp.lineTo(float(seg[1]), float(seg[2]))
+        elif kind == "arc3":
+            wp = wp.threePointArc((float(seg[1]), float(seg[2])),
+                                   (float(seg[3]), float(seg[4])))
+        elif kind == "rarc":
+            wp = wp.radiusArc((float(seg[1]), float(seg[2])), float(seg[3]))
+        elif kind == "sarc":
+            wp = wp.sagittaArc((float(seg[1]), float(seg[2])), float(seg[3]))
+        elif kind == "tarc":
+            wp = wp.tangentArcPoint((float(seg[1]), float(seg[2])))
+        else:
+            raise ValueError(f"_arc_profile_wp: unknown segment type '{kind}'")
+    return wp.close()
 
 
 def _loft(profile, heights, rotations, ruled=False, smooth=False):
@@ -218,6 +268,11 @@ def _pattern_expr(var: str, pattern: Pattern) -> str:
     """Return the code expression that replicates `var` per the pattern."""
     if pattern.type is PatternType.polar:
         return f"_polar({var}, {pattern.count}, {tuple(pattern.axis)}, {pattern.angle_deg})"
+    if pattern.type is PatternType.rarray:
+        return (
+            f"_rarray({var}, {pattern.x_spacing}, {pattern.y_spacing}, "
+            f"{pattern.x_count}, {pattern.y_count})"
+        )
     return f"_linear({var}, {pattern.count}, {tuple(pattern.spacing)})"
 
 
