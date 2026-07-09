@@ -482,7 +482,20 @@ def compile_plan_to_cadquery(plan: PrimitivePlan, library: dict[str, Any]) -> st
             a primitive lacks a template, or an unsupported operation is used.
     """
     body: list[str] = [_PREAMBLE, f"# part: {plan.part_name} (units: {plan.units})"]
+    total = len(plan.steps)
     for index, step in enumerate(plan.steps):
+        # Flushed progress marker BEFORE each step's real geometry call. OCCT
+        # operations on spline/BSpline geometry (fillet on a smooth loft's rim,
+        # in particular) can legitimately hang rather than raise — measured live
+        # (a table_spoon's rim fillet crashed cleanly once, timed out the next
+        # replan attempt on the same op with a smaller radius). A bare timeout
+        # tells the replanner nothing about WHERE it was stuck; this print (read
+        # from subprocess.TimeoutExpired.stdout, which IS populated with
+        # whatever was flushed before the kill — verified empirically) turns a
+        # blind timeout into "hung inside step 4/6 'fillet_rim' (fillet)".
+        kind = "finish:" + step.op.value if isinstance(step, FinishStep) else "primitive:" + step.primitive
+        marker = f"[STAGE {index + 1}/{total}] {step.id} ({kind})"
+        body.append(f"print({marker!r}, flush=True)")
         if isinstance(step, FinishStep):
             body.extend(_compile_finish_step_cq(step))
             body.append("")  # blank line for readability

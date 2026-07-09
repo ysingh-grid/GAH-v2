@@ -1,13 +1,24 @@
+# 300s — Temporal's own execute_activity timeout is 6 minutes, dedicated solely
+# to this step. Raised from a previous 30s, which was an arbitrary ceiling
+# nobody profiled against real geometry. Complex-but-VALID OCCT operations
+# (fillet on a smooth loft's spline rim, multi-step boolean chains) measured
+# taking well over 30s; the old ceiling produced FALSE "timed out" failures on
+# geometry that would have succeeded given more time, burning replan budget on
+# nothing fixable by re-planning. Module-level (not buried in the function) so
+# tests can monkeypatch it to exercise the timeout path without a real 5min wait.
+_SUBPROCESS_TIMEOUT_S = 300
+
+
 def execute_cadquery(code: str, run_id: str) -> dict:
     """
     Executes CadQuery code in a separate sandboxed Python process.
     Saves the output to STEP and STL files and retrieves geometry metrics.
-    
+
     Args:
-        code: Python script containing CadQuery commands. It must define a 
+        code: Python script containing CadQuery commands. It must define a
               top-level Workplane or Shape object named 'result'.
         run_id: A unique identifier for the run.
-        
+
     Returns:
         A dictionary containing:
         - success: bool
@@ -193,41 +204,95 @@ except Exception as e:
         with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as temp_f:
             temp_f.write(wrapper_script)
             temp_script_path = temp_f.name
-            
-        process_result = subprocess.run(
-            [python_exe, temp_script_path],
-            capture_output=True,
-            text=True,
-            timeout=30 # Prevent infinite loops
-        )
-        
+
+        try:
+            process_result = subprocess.run(
+                [python_exe, temp_script_path],
+                capture_output=True,
+                text=True,
+                timeout=_SUBPROCESS_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as e:
+            # e.stdout/e.stderr ARE populated with whatever the subprocess had
+            # flushed before being killed (verified empirically) — the compiler
+            # emits a flushed "[STAGE n/m] step_id (op)" print before every
+            # step's real geometry call specifically so this is diagnosable:
+            # instead of a bare "timed out", the replanner sees exactly which
+            # step never returned, e.g. stuck inside a fillet on a spline rim.
+            # NOTE: TimeoutExpired.stdout is BYTES even though this call passes
+            # text=True — that flag only decodes the NORMAL-completion path;
+            # the timeout-exception path does not apply it (measured; a naive
+            # `.strip()`/`.startswith()` on it raises TypeError). Decode first.
+            raw_stdout = e.stdout or b""
+            partial = (
+                raw_stdout.decode("utf-8", errors="replace")
+                if isinstance(raw_stdout, bytes)
+                else raw_stdout
+            ).strip()
+            last_stage = ""
+            for line in reversed(partial.splitlines()):
+                if line.strip().startswith("[STAGE"):
+                    last_stage = line.strip()
+                    break
+            hint = (
+                f" Last step to start (never finished): {last_stage}."
+                if last_stage
+                else " No step reached even its first print — hang was in import/setup, not a plan step."
+            )
+            return {
+                "success": False,
+                "error": (
+                    f"CadQuery subprocess did not finish within {_SUBPROCESS_TIMEOUT_S}s."
+                    f"{hint} This is a genuinely slow or hung OCCT operation, not a syntax"
+                    f" error — consider simplifying that step (smaller fillet/chamfer radius,"
+                    f" fewer profile points, or a coarser pattern count) rather than retrying"
+                    f" the same parameters unchanged."
+                ),
+            }
+
         # Clean up temp script
         if os.path.exists(temp_script_path):
             os.remove(temp_script_path)
-            
+
         if process_result.returncode != 0:
             return {
                 "success": False,
                 "error": f"Python interpreter crashed with return code {process_result.returncode}. Stderr: {process_result.stderr}"
             }
-            
-        # Parse output
+
+        # Parse output. The script may have printed "[STAGE n/m] ..." progress
+        # markers before its final JSON result (see the compiler) — the JSON
+        # payload is always the LAST non-empty line, not the whole of stdout.
         output_str = process_result.stdout.strip()
         if not output_str:
             return {
                 "success": False,
                 "error": f"No output returned from subprocess. Stderr: {process_result.stderr}"
             }
-            
+
+        lines = [ln for ln in output_str.splitlines() if ln.strip()]
+        json_line = lines[-1] if lines else ""
         try:
-            metrics = json.loads(output_str)
-            return metrics
+            metrics = json.loads(json_line)
         except json.JSONDecodeError:
             return {
                 "success": False,
                 "error": f"Failed to parse subprocess output as JSON. Raw output:\n{output_str}\nStderr:\n{process_result.stderr}"
             }
-            
+
+        # A raw exception traceback ("line 268 of the generated script") isn't a
+        # useful breadcrumb for the replanner — it can't count codegen lines.
+        # Fold in the last "[STAGE n/m] step_id (op)" marker that printed before
+        # the crash so the failure names the actual step/op, same diagnostic
+        # this feature already gives the timeout path above.
+        if metrics.get("success") is False:
+            last_stage = next(
+                (ln for ln in reversed(lines[:-1]) if ln.startswith("[STAGE")), None
+            )
+            if last_stage:
+                metrics["error"] = f"{last_stage}: {metrics.get('error', '')}"
+        return metrics
+
     except Exception as e:
         return {
             "success": False,
