@@ -84,9 +84,15 @@ try:
     # Ensure export directories exist
     os.makedirs(os.path.dirname(step_path), exist_ok=True)
     
-    # Export to STEP and STL
+    # Export to STEP (exact B-rep, tolerance is irrelevant) and STL (tessellated
+    # — CadQuery's default tolerance=0.1/angularTolerance=0.1 is coarse enough to
+    # visibly facet curved BSpline surfaces in render/VLM views even when the
+    # underlying geometry is genuinely smooth. Tighter values here only add
+    # triangles along real curvature; they cannot manufacture curvature that
+    # isn't there, so this is safe on flat/prismatic parts too (near-identity
+    # triangle count).
     cq.exporters.export(result, step_path)
-    cq.exporters.export(result, stl_path)
+    cq.exporters.export(result, stl_path, tolerance=0.01, angularTolerance=0.05)
     
     # Calculate geometric properties
     shape = result.val() if hasattr(result, 'val') else result
