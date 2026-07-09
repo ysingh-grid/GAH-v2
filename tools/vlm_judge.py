@@ -15,8 +15,20 @@ WHAT YOU RECEIVE
 2. A required-feature checklist — the concrete, visible features the object MUST
    have. May be empty (then judge against the request alone).
 3. Deterministic geometry metrics measured from the ACTUAL solid (bounding box in
-   mm, volume, component count, watertight). These are ground truth about scale —
-   trust them over your eyeballing of the render.
+   mm, volume, component count, watertight, PLUS structural signals below). These
+   are ground truth — trust them over your eyeballing of the render, especially
+   where the projection is ambiguous.
+   - solid_fraction = volume / bounding-box-volume. Near 1.0 means a SOLID block
+     filling its envelope; a low value means hollow/open. If the request wants a
+     hollow part (duct, pipe, shell, cup, tube, adapter with a bore) but
+     solid_fraction is ≈1.0, it is a SOLID plug — fail (missing_feature), even
+     though every exterior view looks identical to the correct hollow part.
+   - section_fill = filled-area fraction at 5 cross-sections (base→top) along each
+     of X/Y/Z. This is viewpoint-INDEPENDENT: a drop at a slice means a real gap /
+     hollow / missing chunk there, and a flat 1.0 run means solid there. Use it to
+     COUNT and LOCATE structure (missing cubelets, through-holes, internal cavities,
+     taper) instead of inferring from a foreshortened render. Do NOT count discrete
+     features by eye off the isometric view — reconcile against section_fill.
 4. A rendered 3-view PNG (isometric, high rear, low front) of the geometry.
 5. (Optional) the specific fix the last replan attempted.
 
@@ -225,6 +237,22 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
         parts.append(f"num_components = {metrics['num_components']}")
     if metrics.get("is_watertight") is not None:
         parts.append(f"watertight = {metrics['is_watertight']}")
+    if metrics.get("solid_fraction") is not None:
+        sf = float(metrics["solid_fraction"])
+        hint = "≈solid block" if sf >= 0.92 else ("hollow/open" if sf <= 0.6 else "partially hollow")
+        parts.append(f"solid_fraction = {round(sf, 3)}  (volume/bbox; {hint})")
+    prof = metrics.get("section_profile")
+    if isinstance(prof, dict) and any(prof.values()):
+        # filled-area fraction at 5 cross-sections (base→top) along each axis;
+        # a drop = a gap / hollow / missing chunk at that slice, INDEPENDENT of
+        # viewing angle. Use this to count/locate structure instead of eyeballing.
+        rows = []
+        for ax in ("X", "Y", "Z"):
+            vals = prof.get(ax)
+            if vals:
+                rows.append(f"    {ax}: {vals}")
+        if rows:
+            parts.append("section_fill (5 slices base→top, filled-area / cross-section):\n" + "\n".join(rows))
     return "\n".join(f"- {p}" for p in parts) or "- (no metrics available)"
 
 

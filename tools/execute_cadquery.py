@@ -82,7 +82,51 @@ try:
     volume = shape.Volume()
     bbox = shape.BoundingBox()
     faces_count = len(shape.Faces())
-    
+
+    # STRUCTURAL ground-truth signals (viewpoint-independent) so the verifier
+    # reasons from geometry, not eyeballed pixels:
+    #   solid_fraction  = volume / bbox-volume — how solid vs hollow the part is.
+    #   section_profile = filled-area fraction at 5 cross-sections along each of
+    #                     X/Y/Z. Reveals hollowness, internal gaps, discrete
+    #                     missing chunks and taper — none of which a single
+    #                     projected render shows unambiguously. Computed by
+    #                     rotating each target axis onto Z (the only orientation
+    #                     Workplane.section honours) then planar-sectioning.
+    bbox_vol = (bbox.xmax - bbox.xmin) * (bbox.ymax - bbox.ymin) * (bbox.zmax - bbox.zmin)
+    solid_fraction = round(volume / bbox_vol, 3) if bbox_vol > 0 else None
+    section_profile = None
+    try:
+        from OCP.BRepGProp import BRepGProp
+        from OCP.GProp import GProp_GProps
+
+        def _face_area(f):
+            g = GProp_GProps()
+            BRepGProp.SurfaceProperties_s(f.wrapped, g)
+            return g.Mass()
+
+        _ROT = {{"Z": None, "X": ((0, 1, 0), -90.0), "Y": ((1, 0, 0), 90.0)}}
+        _prof = {{}}
+        for _ax in ("X", "Y", "Z"):
+            _s = shape
+            if _ROT[_ax] is not None:
+                _d, _a = _ROT[_ax]
+                _s = _s.rotate(cq.Vector(0, 0, 0), cq.Vector(*_d), _a)
+            _bb = _s.BoundingBox()
+            _cross = _bb.xlen * _bb.ylen
+            _vals = []
+            for _i in range(5):
+                _t = _bb.zmin + (_bb.zmax - _bb.zmin) * (_i + 0.5) / 5
+                try:
+                    _sec = cq.Workplane(obj=_s).section(_t)
+                    _area = sum(_face_area(_f) for _f in _sec.faces().vals())
+                    _vals.append(round(_area / _cross, 2) if _cross > 0 else None)
+                except Exception:
+                    _vals.append(None)
+            _prof[_ax] = _vals
+        section_profile = _prof
+    except Exception:
+        section_profile = None  # enrichment only — never fail the run over it
+
     metrics = {{
         "success": True,
         "volume": volume,
@@ -91,6 +135,8 @@ try:
             "xmax": bbox.xmax, "ymax": bbox.ymax, "zmax": bbox.zmax
         }},
         "faces_count": faces_count,
+        "solid_fraction": solid_fraction,
+        "section_profile": section_profile,
         "step_path": step_path,
         "stl_path": stl_path
     }}

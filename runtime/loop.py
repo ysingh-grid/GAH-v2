@@ -66,6 +66,11 @@ def _merge_metrics(execution_result: dict[str, Any], mesh_report: dict[str, Any]
         "volume_mm3": execution_result.get("volume"),
         "bounding_box": execution_result.get("bbox"),
         "num_faces": execution_result.get("faces_count"),
+        # Structural, viewpoint-independent signals (execute_cadquery) so the
+        # verifier reasons about hollowness / internal structure from geometry,
+        # not from a lossy projected render.
+        "solid_fraction": execution_result.get("solid_fraction"),
+        "section_profile": execution_result.get("section_profile"),
         "is_watertight": mesh_report.get("is_watertight"),
         "is_valid": mesh_report.get("passes"),
         "open_holes": mesh_report.get("open_holes"),

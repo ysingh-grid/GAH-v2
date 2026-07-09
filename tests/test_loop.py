@@ -11,9 +11,27 @@ from unittest.mock import patch
 import pytest
 
 from runtime import schema
-from runtime.loop import run_geometry_loop
+from runtime.loop import _merge_metrics, run_geometry_loop
 from runtime.schema import plan_from_dict
 from tests.real_world_scenarios import mounting_plate_with_four_holes
+
+
+def test_merge_metrics_passes_structural_signals_to_verifier():
+    # solid_fraction / section_profile come from execute_cadquery (OCCT) and must
+    # reach the verifier's metrics dict, alongside the mesh-side numbers.
+    merged = _merge_metrics(
+        {
+            "volume": 53500,
+            "bbox": {"xmin": 0, "xmax": 40, "ymin": 0, "ymax": 40, "zmin": 0, "zmax": 60},
+            "faces_count": 11,
+            "solid_fraction": 0.559,
+            "section_profile": {"Z": [1.0, 0.51, 0.51, 0.51, 0.51]},
+        },
+        {"is_watertight": True, "passes": True, "num_components": 1},
+    )
+    assert merged["solid_fraction"] == 0.559
+    assert merged["section_profile"]["Z"] == [1.0, 0.51, 0.51, 0.51, 0.51]
+    assert merged["is_watertight"] is True
 
 pytest.importorskip("cadquery")
 pytest.importorskip("meshlib.mrmeshpy")
