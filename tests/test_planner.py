@@ -115,10 +115,13 @@ def test_run_planner_turn_uses_typed_output_schema(monkeypatch):
     assert captured["env_variables"]["DTCM_BACKEND_URL"] == "http://backend.test"
 
 
-def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
-    """The replanner gets the same measured pre-inject win as the planner, but
-    MINIMAL: only available_primitives (needed to swap/fix a primitive) — no
-    kb_index (a replan edits an existing plan; the KB menu stays pull-only)."""
+def test_run_replanner_turn_preinjects_catalog_and_guides(monkeypatch):
+    """The replanner pre-injects what every replan was measured to burn REPL
+    turns fetching before touching the plan: the primitive catalog WITH
+    one-line parameter signatures (not bare keys), its replan playbook, and
+    both fix guides. kb_index stays pull-only (a replan edits an existing
+    plan; the KB menu is rarely needed). Each avoided turn skips a whole
+    growing-transcript resend AND one more stall-exposed LLM call."""
     import fast_rlm
 
     from runtime.planner import run_replanner_turn
@@ -131,7 +134,6 @@ def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
         return {"results": _CUBE_PLAN}
 
     monkeypatch.setattr(fast_rlm, "run", fake_run)
-    monkeypatch.setattr("runtime.planner.list_primitives", lambda: ["box", "cylinder"])
 
     out = run_replanner_turn(
         "make a 60mm cube",
@@ -141,9 +143,49 @@ def test_run_replanner_turn_preinjects_primitive_menu(monkeypatch):
     )
 
     assert out.part_name == "cube"
-    assert captured["query"]["available_primitives"] == ["box", "cylinder"]
+    prims = captured["query"]["available_primitives"]
+    # Signatures, not bare keys: each entry carries its parameter names so the
+    # model can fix plans without a lookup turn.
+    assert isinstance(prims, dict)
+    assert "length:float" in prims["box"]
+    skills = captured["query"]["skills"]
+    assert set(skills) == {"playbook_replan", "repair_guidance", "refinement_guidance"}
+    assert all(len(v) > 500 for v in skills.values())  # real content, not stubs
     assert "kb_index" not in captured["query"]
     assert captured["output_schema"] is PrimitivePlan
+
+
+def test_run_planner_turn_preinjects_playbook_signatures_and_reference_index(monkeypatch):
+    """The planner pre-injects the playbook, the signature catalog, and the
+    reference index (recipes + approved past designs) — the three things every
+    run was measured to burn 4-7 REPL turns fetching before planning anything."""
+    import fast_rlm
+
+    captured = {}
+
+    def fake_run(query, **kwargs):
+        captured["query"] = query
+        captured.update(kwargs)
+        return {"results": _CUBE_PLAN}
+
+    monkeypatch.setattr(fast_rlm, "run", fake_run)
+    monkeypatch.setattr(
+        "runtime.planner._reference_index",
+        lambda: {"mounting_plate": "flat plate", "approved__x": "an L bracket"},
+    )
+
+    out = run_planner_turn(
+        "make a 60mm cube",
+        [{"role": "user", "content": "make a 60mm cube"}],
+        backend_url="http://backend.test",
+        config={},
+    )
+
+    assert out.part_name == "cube"
+    q = captured["query"]
+    assert "length:float" in q["available_primitives"]["box"]
+    assert "PLANNER" in q["skills"]["playbook"]  # the real playbook content
+    assert q["reference_index"]["approved__x"] == "an L bracket"
 
 
 def test_all_skills_fit_in_one_repl_output():

@@ -35,8 +35,11 @@ def list_primitives() -> list[str]:
 def lookup_primitive(key: str) -> dict:
     """Return the full spec of one primitive: params, verification, template.
 
-    The RLM calls this once it has picked a shape and needs its real
-    parameter names and constraints to fill the plan correctly.
+    context["available_primitives"] usually already carries each primitive's
+    one-line signature (parameter names/types/defaults) — enough to fill most
+    plans without any lookup. Call this only when you need the FULL spec:
+    per-parameter descriptions, constraints, or an unusual primitive whose
+    signature alone is ambiguous.
     """
     import os
     import requests
@@ -121,9 +124,10 @@ def list_skills_replan() -> list[str]:
 def read_skill(name: str) -> str:
     """Load one skill guide into REPL memory `_SKILLS[name]` (and `context['skills'][name]`).
 
-    ALWAYS call read_skill('playbook') as your FIRST action — it contains your
-    operating instructions, tool list, skill read order, and output contract.
-    After reading the playbook, follow its skill read order for subsequent reads.
+    Check `context['skills']` FIRST — your primary guide (playbook /
+    playbook_replan, plus fix guides on a replan) is usually pre-loaded there;
+    re-fetching it wastes a REPL step. Use this tool only for ADDITIONAL guides
+    the pre-load doesn't include (see list_skills for the catalog).
     """
     import os
     import requests
@@ -290,9 +294,10 @@ def fetch_kb_sections(keys: list[str]) -> dict:
 def list_design_reference_index() -> dict:
     """Menu of reusable design references as {key: one-line description}.
 
-    Call this in Step 1 alongside list_primitives(). It is the INDEX, not the
-    content — pick the keys whose descriptions match the request, then call
-    fetch_design_reference([...]) to load only those. Covers three kinds of key:
+    This same index is usually PRE-LOADED at context["reference_index"] — read
+    it from there first; call this tool only if it's missing. It is the INDEX,
+    not the content — pick the keys whose descriptions match the request, then
+    call fetch_design_reference([...]) to load only those. Three kinds of key:
       - standard CSG recipes (e.g. bolt_circle, mounting_plate),
       - `fastener_dims` (metric clearance / tap / counterbore tables),
       - `approved__*` — PAST DESIGNS A USER CONFIRMED CORRECT. Prefer ADAPTING a

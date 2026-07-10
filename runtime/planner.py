@@ -20,6 +20,7 @@ user-facing question.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
@@ -103,28 +104,108 @@ PLANNER_TASK = """\
 You are the PLANNER. Turn the user's request (original_prompt, plus any
 chat_history) into ONE validated PrimitivePlan.
 
-Load your playbook guide first — it has your operating steps, skill read order,
-and output contract. Resolve ambiguity with reasonable defaults; there is no
-option to ask the user. Emit FINAL in as few REPL steps as possible.
+Everything you need for a typical part is ALREADY IN CONTEXT — do not spend
+REPL steps re-fetching it:
+- context["skills"]["playbook"] — your operating guide (steps, output contract)
+- context["available_primitives"] — {name: one-line signature with parameters}
+- context["reference_index"] — {key: description} menu of proven recipes and
+  past user-approved designs; fetch a key's full steps only when one matches.
+
+Aim to emit FINAL in your FIRST repl block: read the context, follow the
+playbook's order of thought inline, and FINAL the plan. Use tools only for
+what is genuinely missing (full spec of an unusual primitive, a KB section,
+fetching a matching reference by key). Resolve ambiguity with reasonable
+defaults; there is no option to ask the user.
 """
+
+
+# skills/ ships alongside runtime/ in both the repo and the docker image —
+# resolve relative to this file, never the CWD.
+_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+
+
+def _skill_content(name: str) -> str | None:
+    """Read one skill's markdown from disk for context pre-injection.
+
+    Pre-injecting the playbook saves the 2 REPL turns every run was measured
+    to burn on fetching + printing it — each turn re-sends the whole growing
+    transcript AND is one more exposure to a provider stall (measured stalls:
+    50-250s per call). Returns None on any failure: the pull tools still
+    exist, so the planner degrades to fetching on demand, never breaks.
+    """
+    try:
+        return (_SKILLS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
+def _primitive_signatures() -> dict[str, str] | None:
+    """Compact {name: signature} catalog for context pre-injection.
+
+    One line per primitive: description + parameter names/types/defaults.
+    ~0.7k tokens for the whole catalog — cheaper than even ONE
+    growing-transcript lookup turn, and it removes the main reason plans
+    hallucinate parameter names (the model guesses when it decides a lookup
+    turn isn't worth it). Full specs (per-parameter descriptions, constraints)
+    stay pull-only for the unusual primitives that need them.
+    """
+    try:
+        from runtime import schema
+
+        library = schema.load_library()
+        catalog: dict[str, str] = {}
+        for name, spec in library.items():
+            params = spec.get("parameters", {}) or {}
+            sig = ", ".join(
+                f"{p}:{(meta or {}).get('type', '?')}"
+                + (f"={meta['default']}" if isinstance(meta, dict) and "default" in meta else "")
+                for p, meta in params.items()
+            )
+            desc = str(spec.get("description", "")).split(". ")[0].strip()
+            catalog[name] = f"{desc} — params: {sig}" if sig else desc
+        return catalog or None
+    except Exception:
+        return None
+
+
+def _reference_index() -> dict[str, str] | None:
+    """Pre-fetch the design-reference index (recipes + approved past designs).
+
+    Same host-side pre-fetch pattern as list_primitives: the menu is tiny
+    (one line per key) and having it VISIBLE in context makes the planner
+    actually consider approved designs instead of needing a discovery turn
+    first. Content stays fetch-by-key. None on failure — the tool remains.
+    """
+    try:
+        return list_design_reference_index()
+    except Exception:
+        return None
 
 
 def build_planner_query(
     original_prompt: str,
     chat_history: list[dict[str, str]],
     *,
-    available_primitives: list[str] | None = None,
+    available_primitives: list[str] | dict[str, str] | None = None,
+    skills: dict[str, str] | None = None,
+    reference_index: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assemble the structured context dict handed to the RLM for one turn.
 
-    MENU by value, CONTENT by reference. available_primitives (the ~30 catalog
-    keys) is tiny — pre-fetching it once and embedding it here is cheaper than
-    making the monolithic root spend an extra REPL step to pull it (each added
-    step re-sends the whole transcript — quadratic cost; MEASURED: removing the
-    menu pushed a complex part from 326k → 464k tokens). The LARGE data — full
-    primitive specs — is NOT injected; the planner pulls only what it needs via
-    lookup_primitive(). The KB menu is likewise pull-only (list_kb_index()) — it
-    is no longer pre-injected. Omitted (None) → the planner falls back to the tools.
+    Pre-inject everything a TYPICAL run needs; keep the LARGE/rare data
+    pull-by-reference. Rationale, all measured live: every extra REPL turn
+    re-sends the whole growing transcript (quadratic cost; removing even the
+    tiny primitives menu pushed a complex part 326k → 464k tokens) AND is one
+    more LLM call that can hit a provider stall (50-250s spikes measured).
+    Runs were burning 4-7 turns fetching the playbook, primitive specs, and
+    the reference index before doing any actual planning — those three now
+    ride in context, aiming the planner at FINAL-in-one-block:
+      - available_primitives: {name: one-line signature} (~0.7k tokens)
+      - skills["playbook"]: the full operating guide (~2.6k tokens)
+      - reference_index: {key: description} incl. approved past designs
+    Full primitive specs and KB sections stay pull-only via the tools. Every
+    field degrades gracefully: None → omitted → the planner falls back to its
+    pull tools (whose docstrings carry the same guidance).
     """
     # task = the planner's standing instruction; the user's actual request lives
     # ONLY in original_prompt/chat_history. (task used to duplicate original_prompt
@@ -136,6 +217,10 @@ def build_planner_query(
     }
     if available_primitives is not None:
         query["available_primitives"] = available_primitives
+    if skills:
+        query["skills"] = skills
+    if reference_index:
+        query["reference_index"] = reference_index
     return query
 
 
@@ -173,26 +258,28 @@ def run_planner_turn(
 
         config = default_config
 
-    # Pre-fetch the tiny MENUS once (catalog keys + KB section index) and embed them
-    # so the monolithic root skips the list_primitives()/list_kb_index() REPL steps —
-    # cheaper than the extra growing-context round-trips (measured). The large CONTENT
-    # is still pulled by reference inside the REPL. The pull tools read
-    # DTCM_BACKEND_URL from the env, so set it before the host-side pre-fetch.
+    # Host-side pre-fetch of everything a typical run needs (see
+    # build_planner_query for the measured rationale): compact primitive
+    # signatures from the library on disk, the playbook from skills/ on disk,
+    # and the reference index over HTTP. The pull tools read DTCM_BACKEND_URL
+    # from the env, so set it before the pre-fetch. kb_index stays pull-only
+    # (a supplementary CadQuery-API menu the planner rarely needs).
     os.environ["DTCM_BACKEND_URL"] = backend_url
-    try:
-        available_primitives: list[str] | None = list_primitives()
-    except Exception:
-        available_primitives = None
-    # kb_index is NOT pre-injected. It's a supplementary CadQuery-API menu the
-    # planner rarely needs (it plans in library primitives, not raw CadQuery),
-    # and pre-injecting it re-sent ~1.5k chars on every growing-transcript REPL
-    # step. The planner pulls it on demand via list_kb_index() if it wants it.
+    available_primitives = _primitive_signatures()
+    if available_primitives is None:
+        try:
+            available_primitives = list_primitives()
+        except Exception:
+            available_primitives = None
+    playbook = _skill_content("playbook")
 
     result = fast_rlm.run(
         build_planner_query(
             original_prompt,
             chat_history,
             available_primitives=available_primitives,
+            skills={"playbook": playbook} if playbook else None,
+            reference_index=_reference_index(),
         ),
         config=config,
         tools=_PLANNER_TOOLS,
@@ -209,9 +296,15 @@ REPLANNER_TASK = """\
 You are the REPLANNER. A plan already exists and needs ONE revision — the request
 is in the last message of chat_history, along with the current plan.
 
-Load your replan playbook guide first — it has your steps and output contract.
-Change only what the request calls for; keep every other step unchanged. Emit
-FINAL in as few REPL steps as possible.
+Your guides are ALREADY IN CONTEXT — do not spend REPL steps re-fetching them:
+- context["skills"]["playbook_replan"] — your steps and output contract
+- context["skills"]["repair_guidance"] / ["refinement_guidance"] — the fix
+  guides; the failure message names which one matches
+- context["available_primitives"] — {name: one-line signature with parameters}
+
+Aim to emit FINAL in your FIRST repl block: read the failure detail and the
+matching guide from context, change only what the failure calls for, keep every
+other step unchanged, and FINAL the corrected plan.
 """
 
 
@@ -250,17 +343,24 @@ def run_replanner_turn(
     if backend_url:
         os.environ["DTCM_BACKEND_URL"] = backend_url
 
-    # Pre-fetch ONLY the primitive-catalog menu (the same measured win as the
-    # planner's pre-inject: skips a list_primitives() REPL step whose growing-
-    # transcript resend costs far more than these ~20 keys). kb_index is NOT
-    # injected — a replan edits an existing plan and rarely needs the KB menu;
-    # the tool remains available if it does.
-    available_primitives: list[str] | None = None
-    if backend_url:
+    # Pre-inject what every replan needs (same measured rationale as the
+    # planner: each avoided REPL turn skips a whole growing-transcript resend
+    # AND one more stall-exposed LLM call). Replans were burning 3-5 turns
+    # fetching playbook_replan + the stage guidance before touching the plan.
+    # BOTH guidance files ride along (repair ~4k chars, refinement ~3k) rather
+    # than threading the failure stage through here — the feedback message
+    # names which one applies. kb_index stays pull-only.
+    available_primitives = _primitive_signatures()
+    if available_primitives is None and backend_url:
         try:
             available_primitives = list_primitives()
         except Exception:
             available_primitives = None
+    skills = {
+        name: content
+        for name in ("playbook_replan", "repair_guidance", "refinement_guidance")
+        if (content := _skill_content(name))
+    }
 
     query: dict[str, Any] = {
         "task": REPLANNER_TASK,
@@ -269,6 +369,8 @@ def run_replanner_turn(
     }
     if available_primitives is not None:
         query["available_primitives"] = available_primitives
+    if skills:
+        query["skills"] = skills
     result = fast_rlm.run(
         query,
         config=config,

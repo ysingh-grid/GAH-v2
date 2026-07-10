@@ -21,14 +21,19 @@ reasonable defaults, and always return a corrected plan.
 - the current plan (the latest one — from the planner or a previous replan attempt)
 - the revision request: the failure stage + concrete detail
 - the original user prompt, for intent
-- read-only lookup tools for guides, primitive specs, reference data — pull only
-  what a specific fix needs; never dump whole catalogs. The reference data
-  includes past designs a user confirmed correct: if one matches the part you are
-  fixing, its proven steps can guide how a feature should be built.
+- your fix guides, PRE-LOADED in `context["skills"]` (the failure message names
+  which one matches), and the primitive catalog with one-line parameter
+  signatures in `context["available_primitives"]`
+- read-only lookup tools for anything beyond that (full primitive specs, KB,
+  reference data) — pull only what a specific fix needs; never dump whole
+  catalogs. The reference data includes past designs a user confirmed correct:
+  if one matches the part you are fixing, its proven steps can guide how a
+  feature should be built.
 
 ## Steps
 
-1. Load the guide that matches your revision request and read it.
+1. Read the guide that matches your revision request from `context["skills"]`
+   (it is already loaded — do not re-fetch it).
 2. Locate the smallest set of plan steps / parameters responsible for the request.
 3. Apply the minimal change. Copy every other step through byte-for-byte.
 4. Re-check the invariants your guide lists (e.g. joined features overlap, cuts
