@@ -198,7 +198,7 @@ class TestInspectActivity:
 
         fake = _fake_tool_module(
             "tools.inspect_mesh", "inspect_mesh",
-            lambda stl: {"passes": True, "is_watertight": True},
+            lambda stl, expected_components=1: {"passes": True, "is_watertight": True},
         )
         monkeypatch.setitem(sys.modules, "tools.inspect_mesh", fake)
         out = inspect_activity(InspectInput(stl_path="/o/solid.stl"))
@@ -212,7 +212,7 @@ class TestRepairActivity:
 
         fake = _fake_tool_module(
             "tools.repair_mesh", "repair_mesh",
-            lambda stl, run_id: {"passes": True, "after": {"is_watertight": True},
+            lambda stl, run_id, expected_components=1: {"passes": True, "after": {"is_watertight": True},
                                  "repaired_stl_path": "/o/solid_repaired.stl"},
         )
         monkeypatch.setitem(sys.modules, "tools.repair_mesh", fake)
@@ -225,7 +225,7 @@ class TestRepairActivity:
 
         fake = _fake_tool_module(
             "tools.repair_mesh", "repair_mesh",
-            lambda stl, run_id: {"passes": False,
+            lambda stl, run_id, expected_components=1: {"passes": False,
                                  "after": {"is_watertight": False, "num_components": 2},
                                  "actions": ["fill_holes"]},
         )

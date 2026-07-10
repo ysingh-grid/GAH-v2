@@ -241,9 +241,17 @@ class DesignWorkflow:
 
                 if not failure_stage:
                     self._stage = DesignStage.INSPECTING
+                    # B-rep shell count = how many mesh components are legit
+                    # (multi-body compounds / closed hollow parts are > 1).
+                    expected_components = int(
+                        execution_result.get("shells_count") or 1
+                    )
                     insp = await workflow.execute_activity(
                         inspect_activity,
-                        InspectInput(stl_path=stl_path),
+                        InspectInput(
+                            stl_path=stl_path,
+                            expected_components=expected_components,
+                        ),
                         schedule_to_close_timeout=_INSPECT_TIMEOUT,
                         retry_policy=_NO_RETRY,
                     )
@@ -253,7 +261,11 @@ class DesignWorkflow:
                         self._stage = DesignStage.REPAIRING
                         rep_mesh = await workflow.execute_activity(
                             repair_activity,
-                            RepairInput(stl_path=stl_path, run_id=inp.run_id),
+                            RepairInput(
+                                stl_path=stl_path,
+                                run_id=inp.run_id,
+                                expected_components=expected_components,
+                            ),
                             schedule_to_close_timeout=_REPAIR_TIMEOUT,
                             heartbeat_timeout=_HEARTBEAT_TIMEOUT,
                             retry_policy=_NO_RETRY,

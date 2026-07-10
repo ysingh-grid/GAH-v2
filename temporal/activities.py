@@ -161,7 +161,7 @@ def inspect_activity(inp: InspectInput) -> InspectOutput:
     """INSPECTING: MeshLib watertight / manifold check (drives the repair branch)."""
     from tools.inspect_mesh import inspect_mesh
 
-    report = inspect_mesh(inp.stl_path)
+    report = inspect_mesh(inp.stl_path, inp.expected_components)
     return InspectOutput(passes=bool(report.get("passes")), mesh_report=report)
 
 
@@ -172,7 +172,7 @@ def repair_activity(inp: RepairInput) -> RepairOutput:
     from tools.repair_mesh import repair_mesh
 
     with _heartbeating():
-        repair = repair_mesh(inp.stl_path, inp.run_id)
+        repair = repair_mesh(inp.stl_path, inp.run_id, inp.expected_components)
     after = repair.get("after", {})
     if not repair.get("passes"):
         return RepairOutput(

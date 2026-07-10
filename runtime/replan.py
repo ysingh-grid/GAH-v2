@@ -235,22 +235,32 @@ def collect_feedback_detail(stage: str, payload: dict[str, Any]) -> str:
     if stage == "visual_mismatch":
         return str(payload.get("feedback", "verifier rejected the geometry"))
     if stage == "mesh_repair":
+        # A REJECTED repair (it degraded the mesh — volume drift / shattering)
+        # carries the strongest signal: the geometry itself is broken in a way
+        # meshing can't fix. Its error message already names the plan-level
+        # causes to look for; lead with it.
+        if payload.get("rejected"):
+            return str(payload.get("error"))
         # repair_mesh returns {success, after, actions, ...} with NO error/feedback
         # key when it ran but the mesh still didn't pass. Surface the actual mesh
         # stats so the replanner can act instead of seeing "unknown failure".
         after = payload.get("after") or {}
         if after:
             actions = ", ".join(payload.get("actions") or []) or "none"
+            expected = after.get("expected_components") or 1
             base = (
                 f"mesh still invalid after repair: "
                 f"watertight={after.get('is_watertight')}, "
                 f"open_holes={after.get('open_holes')}, "
                 f"self_intersections={after.get('self_intersections')}, "
-                f"components={after.get('num_components')}. Repairs tried: {actions}."
+                f"components={after.get('num_components')} "
+                f"(expected {expected}). Repairs tried: {actions}."
             )
-            # >1 component means features didn't fuse — almost always tangent (touching)
-            # instead of overlapping. This is the single most common complex-part defect.
-            if (after.get("num_components") or 1) > 1:
+            # More components than the B-rep predicts means features didn't fuse —
+            # almost always tangent (touching) instead of overlapping. This is the
+            # single most common complex-part defect. (Matching the expected count
+            # is fine: legal multi-body compounds and closed hollow parts are >1.)
+            if (after.get("num_components") or 1) > expected:
                 base += (
                     " CAUSE: disconnected components — unioned features only TOUCH "
                     "instead of overlapping. Extend each union feature ~0.5-1mm INTO "

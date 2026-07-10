@@ -234,7 +234,14 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
     if metrics.get("volume_mm3") is not None:
         parts.append(f"volume_mm3 = {round(float(metrics['volume_mm3']), 1)}")
     if metrics.get("num_components") is not None:
-        parts.append(f"num_components = {metrics['num_components']}")
+        line = f"num_components = {metrics['num_components']}"
+        expected = metrics.get("expected_components")
+        if expected is not None:
+            line += (
+                f" (expected {expected} from the B-rep — a match means any "
+                f"multi-body/hollow split is intended, not a defect)"
+            )
+        parts.append(line)
     if metrics.get("is_watertight") is not None:
         parts.append(f"watertight = {metrics['is_watertight']}")
     if metrics.get("solid_fraction") is not None:

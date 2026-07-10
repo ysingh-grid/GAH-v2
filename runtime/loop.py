@@ -76,6 +76,9 @@ def _merge_metrics(execution_result: dict[str, Any], mesh_report: dict[str, Any]
         "open_holes": mesh_report.get("open_holes"),
         "self_intersections": mesh_report.get("self_intersections"),
         "num_components": mesh_report.get("num_components"),
+        # B-rep shell count: >1 means the multi-body/hollow split is INTENDED
+        # by the geometry, so the judge doesn't flag legal compounds as broken.
+        "expected_components": mesh_report.get("expected_components"),
     }
 
 def _compile_cadquery(
@@ -108,9 +111,12 @@ def _run_geometry(
         return _StageFailure("cadquery_execute", str(art.execution_result.get("error")))
 
     stl_path = art.execution_result["stl_path"]
-    art.mesh_report = inspect_mesh(stl_path)
+    # B-rep shell count = how many mesh components are legit (multi-body
+    # compounds / closed hollow parts are > 1).
+    expected_components = int(art.execution_result.get("shells_count") or 1)
+    art.mesh_report = inspect_mesh(stl_path, expected_components)
     if not art.mesh_report.get("passes"):
-        repair = repair_mesh(stl_path, run_id)
+        repair = repair_mesh(stl_path, run_id, expected_components)
         art.mesh_report = repair.get("after", art.mesh_report)
         if not repair.get("passes"):
             return _StageFailure("mesh_repair", collect_feedback_detail("mesh_repair", repair))

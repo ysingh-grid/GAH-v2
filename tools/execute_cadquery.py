@@ -102,6 +102,13 @@ try:
     volume = shape.Volume()
     bbox = shape.BoundingBox()
     faces_count = len(shape.Faces())
+    # Ground truth for how many connected components the exported MESH should
+    # have. One closed B-rep shell tessellates to exactly one mesh component:
+    # a plain solid = 1, a compound of N disjoint bodies = N, a closed hollow
+    # part = 2 (outer + cavity) — all verified against MeshLib's component
+    # count. Downstream mesh inspection compares against THIS instead of a
+    # hardcoded 1, which wrongly failed every legal multi-body plan.
+    shells_count = len(shape.Shells())
 
     # STRUCTURAL ground-truth signals (viewpoint-independent) so the verifier
     # reasons from geometry, not eyeballed pixels:
@@ -155,6 +162,7 @@ try:
             "xmax": bbox.xmax, "ymax": bbox.ymax, "zmax": bbox.zmax
         }},
         "faces_count": faces_count,
+        "shells_count": shells_count,
         "solid_fraction": solid_fraction,
         "section_profile": section_profile,
         "step_path": step_path,

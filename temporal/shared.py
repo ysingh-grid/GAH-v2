@@ -177,6 +177,10 @@ class ExecuteOutput:
 @dataclass
 class InspectInput:
     stl_path: str
+    # B-rep shell count from execution_result["shells_count"] — how many mesh
+    # components the STL should legitimately have (multi-body compounds and
+    # closed hollow parts are > 1). 1 is only the fallback.
+    expected_components: int = 1
 
 
 @dataclass
@@ -189,6 +193,7 @@ class InspectOutput:
 class RepairInput:
     stl_path: str
     run_id: str
+    expected_components: int = 1  # same source as InspectInput
 
 
 @dataclass
