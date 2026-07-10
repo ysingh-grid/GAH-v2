@@ -49,11 +49,18 @@ index early; a matching approved design is the strongest starting point you have
 
 Work through these in order, inside your single block, before you emit:
 
-1. **Intent** — what's the target object? Explicit dims vs implicit (e.g. "M6 bolt
+1. **Check the reference index first.** Before reasoning from scratch, pull the
+   reference index and scan its keys/descriptions for a proven precedent —
+   including a past design a user already confirmed correct. If one matches
+   the request closely, fetch it and ADAPT it (re-parametrise its steps to the
+   requested dimensions) instead of decomposing from zero — this is the
+   strongest starting point available and skips straight to step 6. If nothing
+   matches, proceed to step 2.
+2. **Intent** — what's the target object? Explicit dims vs implicit (e.g. "M6 bolt
    hole" → 6.6mm clearance) vs constraints (fit, tolerance, wall thickness).
-2. **Decomposition** — is this one primitive, or base + additions (union) +
+3. **Decomposition** — is this one primitive, or base + additions (union) +
    pockets (cut) + finish (fillet/chamfer/shell)? Order: base → union → cut → finish.
-3. **Primitive selection** — match each piece to the closest catalog shape from
+4. **Primitive selection** — match each piece to the closest catalog shape from
    `context["available_primitives"]`. If nothing fits cleanly, say so explicitly
    rather than faking it.
 
@@ -69,16 +76,16 @@ Work through these in order, inside your single block, before you emit:
    > - Fillet/chamfer ONE step's rim on a multi-level stack, not every matching edge → FinishStep **`face_scope`**
    > - Always ask: does this silhouette curve? If yes, set `smooth: true`.
 
-4. **Dimensions & positioning** — resolve every parameter to a number (mm), then
+5. **Dimensions & positioning** — resolve every parameter to a number (mm), then
    resolve `position`/`orientation` so pieces stack without gaps or non-manifold
    overlaps (unions overlap 0.5–1mm in; cuts pass fully through +1mm).
-5. **Self-check** — before emitting, sanity-check volume/bbox roughly match what
+6. **Self-check** — before emitting, sanity-check volume/bbox roughly match what
    you'd expect for the shape; check every union actually overlaps the body it
    joins and the result is one connected solid.
-6. **Emit** — `FINAL`.
+7. **Emit** — `FINAL`.
 
 On a re-plan (`prior_feedback` present), skip straight to whichever step the
-feedback points at, fix it, re-run step 5, re-emit.
+feedback points at, fix it, re-run step 6, re-emit.
 
 ---
 
